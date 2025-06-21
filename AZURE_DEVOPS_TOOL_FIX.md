@@ -19,7 +19,7 @@ The issue was in the function call handling:
 
 ## Solution
 
-We made two changes to fix this issue:
+We made four changes to fix this issue:
 
 1. Modified the `handle_function_call` function in `codex.rs` to specifically recognize function names that start with "azure_devops_" and route them correctly.
 
@@ -27,7 +27,11 @@ We made two changes to fix this issue:
    - The original format: server=`azure_devops`, tool=`query_work_items`
    - The direct format: server=`azure_devops`, tool=`azure_devops_query_work_items`
 
-These changes allow the system to properly handle Azure DevOps tool calls regardless of how they're formatted.
+3. Modified the `handle_azure_devops_tool_call` function in `tool_handler.rs` to use the default project from the configuration when it's not provided in the arguments.
+
+4. Fixed the `build_url` function in `client.rs` to properly format the API version parameter as `api-version=7.0` instead of just `7.0`.
+
+These changes allow the system to properly handle Azure DevOps tool calls regardless of how they're formatted, use the default project when needed, and correctly format the API version parameter in requests.
 
 ## Changes Made
 
@@ -54,18 +58,67 @@ These changes allow the system to properly handle Azure DevOps tool calls regard
    };
    ```
 
+3. Modified `tool_handler.rs` to use the default project from the configuration:
+   ```rust
+   // If the arguments don't include a project and we have a default project in the config,
+   // add the default project to the arguments
+   if !args.is_object() {
+       args = serde_json::Value::Object(serde_json::Map::new());
+   }
+   
+   if args.get("project").is_none() {
+       if let Some(default_project) = &config.default_project {
+           if let serde_json::Value::Object(ref mut map) = args {
+               map.insert("project".to_string(), serde_json::Value::String(default_project.clone()));
+           }
+       }
+   }
+   ```
+
+4. Fixed the `build_url` function in `client.rs` to properly format the API version parameter:
+   ```rust
+   fn build_url(&self, project: Option<&str>, endpoint: &str) -> String {
+       let base_url = &self.auth.organization_url;
+       
+       // Determine the correct separator (? or &) for the API version parameter
+       let separator = if endpoint.contains('?') { "&" } else { "?" };
+       
+       if let Some(project) = project {
+           format!("{}/{}/_apis/{}{}{}", base_url, project, endpoint, separator, format!("api-version={}", self.api_version))
+       } else {
+           format!("{}/_apis/{}{}{}", base_url, endpoint, separator, format!("api-version={}", self.api_version))
+       }
+   }
+   ```
+
 ## Testing
 
 To test this fix:
 
 1. Configure Azure DevOps in your `~/.codex/config.toml` file as described in `AZURE_DEVOPS_USAGE.md`
 2. Set your Azure DevOps PAT in the environment variable
-3. Try querying work items with:
+3. Make sure you have a valid project name in your configuration or query
+4. Try querying work items with:
    ```
    codex "Find all work items assigned to me in the project"
    ```
 
 The tool should now correctly process the Azure DevOps function calls.
+
+### Important Note About Project Names
+
+When using Azure DevOps tools, make sure to use project names that actually exist in your Azure DevOps organization. If you see an error like:
+
+```
+TF200016: The following project does not exist: project-name
+```
+
+You need to either:
+1. Use an existing project name in your query
+2. Set a valid `default_project` in your Azure DevOps configuration
+3. Create the project in your Azure DevOps organization
+
+See the "Common Errors and Solutions" section in `AZURE_DEVOPS_USAGE.md` for more details.
 
 ## Additional Notes
 

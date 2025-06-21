@@ -68,9 +68,9 @@ impl AzureDevOpsClient {
         let separator = if endpoint.contains('?') { "&" } else { "?" };
         
         if let Some(project) = project {
-            format!("{}/{}/_apis/{}{}{}", base_url, project, endpoint, separator, self.api_version)
+            format!("{}/{}/_apis/{}{}{}", base_url, project, endpoint, separator, format!("api-version={}", self.api_version))
         } else {
-            format!("{}/_apis/{}{}{}", base_url, endpoint, separator, self.api_version)
+            format!("{}/_apis/{}{}{}", base_url, endpoint, separator, format!("api-version={}", self.api_version))
         }
     }
 

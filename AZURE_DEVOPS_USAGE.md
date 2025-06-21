@@ -44,6 +44,38 @@ For persistent configuration, add this to your shell profile (`~/.bashrc`, `~/.z
 
 Codex CLI provides the following Azure DevOps tools that can be used by the AI. These tools can be called either with the full name (e.g., `azure_devops_query_work_items`) or with the server/tool split format (server=`azure_devops`, tool=`query_work_items`):
 
+## Common Errors and Solutions
+
+### Project Not Found Error
+
+If you see an error like:
+```
+TF200016: The following project does not exist: project-name. Verify that the name of the project is correct and that the project exists on the specified Azure DevOps Server.
+```
+
+This means the project name you're trying to access doesn't exist in your Azure DevOps organization. To fix this:
+
+1. **Use an existing project name**: Make sure you're using a project name that actually exists in your Azure DevOps organization.
+
+2. **Set a default project in your config**: Add or update the `default_project` setting in your `~/.codex/config.toml`:
+   ```toml
+   [azure_devops]
+   organization_url = "https://dev.azure.com/your-organization"
+   pat_env_var = "AZURE_DEVOPS_PAT"
+   default_project = "YourActualProject"  # Use a project that exists
+   ```
+
+3. **Create the project**: If you want to use a specific project name, you can create it in your Azure DevOps organization.
+
+### API Version Error
+
+If you see an error like:
+```
+No api-version was supplied for the "POST" request. The version must be supplied either as part of the Accept header (e.g. "application/json; api-version=1.0") or as a query parameter (e.g. "?api-version=1.0").
+```
+
+This means the API version is not being properly included in the requests. This has been fixed in the latest version of the code, but if you're still seeing this error, make sure you're using the latest version of Codex CLI.
+
 ### Work Items
 
 - **azure_devops_query_work_items**: Search for work items using WIQL

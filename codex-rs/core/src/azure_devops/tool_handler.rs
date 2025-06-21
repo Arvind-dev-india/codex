@@ -18,7 +18,21 @@ pub async fn handle_azure_devops_tool_call(
     
     // Extract tool name and arguments
     let name = &tool_call.name;
-    let args = tool_call.arguments.clone();
+    let mut args = tool_call.arguments.clone();
+    
+    // If the arguments don't include a project and we have a default project in the config,
+    // add the default project to the arguments
+    if !args.is_object() {
+        args = serde_json::Value::Object(serde_json::Map::new());
+    }
+    
+    if args.get("project").is_none() {
+        if let Some(default_project) = &config.default_project {
+            if let serde_json::Value::Object(ref mut map) = args {
+                map.insert("project".to_string(), serde_json::Value::String(default_project.clone()));
+            }
+        }
+    }
     
     // Dispatch to appropriate tool function
     match name.as_str() {
