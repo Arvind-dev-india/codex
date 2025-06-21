@@ -473,4 +473,56 @@ When Azure DevOps is configured, the following tools become available to the mod
 - `azure_devops_get_wiki_page`: Get content of a wiki page
 - `azure_devops_update_wiki_page`: Update content of a wiki page
 - `azure_devops_run_pipeline`: Run a pipeline
+- `azure_devops_get_pipeline_status`: Get status of a pipeline run# Azure DevOps Configuration
+
+Codex CLI supports integration with Azure DevOps services, allowing you to interact with work items, pull requests, wikis, and pipelines.
+
+## Configuration
+
+Add the following to your `~/.codex/config.toml` file:
+
+```toml
+[azure_devops]
+# Required: URL of your Azure DevOps organization
+organization_url = "https://dev.azure.com/your-organization"
+
+# Authentication: Use one of the following options
+# Option 1: Environment variable containing your PAT (recommended)
+pat_env_var = "AZURE_DEVOPS_PAT"
+# Option 2: Directly specify the PAT (less secure)
+# pat = "your-personal-access-token"
+
+# Optional: Default project to use when not specified in commands
+default_project = "YourProject"
+
+# Optional: API version to use (defaults to "7.0")
+# api_version = "7.0"
+```
+
+## Authentication
+
+You need to create a Personal Access Token (PAT) in Azure DevOps with the following permissions:
+
+- Work Items: Read & Write
+- Code: Read & Write
+- Pull Request Threads: Read & Write
+- Wiki: Read & Write
+- Build: Read & Execute
+
+## Available Tools
+
+When Azure DevOps is configured, the following tools become available to the AI:
+
+- `azure_devops_query_work_items`: Search for work items using WIQL
+- `azure_devops_get_work_item`: Get details of a specific work item
+- `azure_devops_create_work_item`: Create a new work item
+- `azure_devops_update_work_item`: Update an existing work item
+- `azure_devops_query_pull_requests`: Search for pull requests
+- `azure_devops_get_pull_request`: Get details of a specific pull request
+- `azure_devops_comment_on_pull_request`: Add a comment to a pull request
+- `azure_devops_get_wiki_page`: Get content of a wiki page
+- `azure_devops_update_wiki_page`: Update content of a wiki page
+- `azure_devops_run_pipeline`: Run a pipeline
 - `azure_devops_get_pipeline_status`: Get status of a pipeline run
+
+For more details on using these tools, see the [Azure DevOps Usage Guide](../AZURE_DEVOPS_USAGE.md).

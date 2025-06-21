@@ -22,6 +22,7 @@
 - [Memory & project docs](#memory--project-docs)
 - [Non-interactive / CI mode](#non-interactive--ci-mode)
 - [Tracing / verbose logging](#tracing--verbose-logging)
+- [Azure DevOps Integration](#azure-devops-integration)
 - [Recipes](#recipes)
 - [Installation](#installation)
 - [Configuration guide](#configuration-guide)
@@ -262,6 +263,41 @@ DEBUG=true codex
 
 ---
 
+## Azure DevOps Integration
+
+Codex CLI now includes integration with Azure DevOps services, allowing you to:
+
+- Query, create, and update work items
+- Search and comment on pull requests
+- Access and modify wiki pages
+- Run and monitor pipelines
+
+### Setup
+
+Add Azure DevOps configuration to your `~/.codex/config.toml`:
+
+```toml
+[azure_devops]
+organization_url = "https://dev.azure.com/your-organization"
+pat_env_var = "AZURE_DEVOPS_PAT"
+default_project = "YourProject"
+```
+
+### Usage Examples
+
+```bash
+# Query work items
+codex "Find all high priority bugs assigned to me in the current sprint"
+
+# Create a work item
+codex "Create a new task titled 'Update API documentation'"
+
+# Comment on a pull request
+codex "Add a comment to PR #45 saying 'LGTM!'"
+```
+
+For detailed instructions, see the [Azure DevOps Usage Guide](./AZURE_DEVOPS_USAGE.md).
+
 ## Recipes
 
 Below are a few bite-size examples you can copy-paste. Replace the text in quotes with your own task. See the [prompting guide](https://github.com/openai/codex/blob/main/codex-cli/examples/prompting_guide.md) for more tips and usage patterns.
@@ -361,6 +397,15 @@ In the `history` object, you can configure conversation history settings:
 | `sensitivePatterns` | array   | Patterns of sensitive information to filter in history | `[]`          |
 
 ### Configuration examples
+
+#### Azure DevOps Integration
+
+```toml
+[azure_devops]
+organization_url = "https://dev.azure.com/your-organization"
+pat_env_var = "AZURE_DEVOPS_PAT"  # Environment variable containing your PAT
+default_project = "YourProject"   # Optional: Default project to use
+```
 
 1. YAML format (save as `~/.codex/config.yaml`):
 
