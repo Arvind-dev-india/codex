@@ -10,6 +10,10 @@ use wildmatch::WildMatchPattern;
 use serde::Deserialize;
 use serde::Serialize;
 
+// Import Azure DevOps configuration
+mod config_types_azure;
+pub use config_types_azure::AzureDevOpsConfig;
+
 #[derive(Deserialize, Debug, Clone, PartialEq)]
 pub struct McpServerConfig {
     pub command: String,

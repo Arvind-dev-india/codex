@@ -185,6 +185,9 @@ pub(crate) struct Session {
     /// External notifier command (will be passed as args to exec()). When
     /// `None` this feature is disabled.
     notify: Option<Vec<String>>,
+    
+    /// Configuration for the current session
+    config: Arc<Config>,
 
     /// Optional rollout recorder for persisting the conversation transcript so
     /// sessions can be replayed or inspected later.
@@ -664,6 +667,7 @@ async fn submission_loop(
                     writable_roots,
                     mcp_connection_manager,
                     notify,
+                    config: Arc::clone(&config),
                     state: Mutex::new(state),
                     rollout: Mutex::new(rollout_recorder),
                     codex_linux_sandbox_exe: config.codex_linux_sandbox_exe.clone(),
@@ -1010,6 +1014,7 @@ async fn run_turn(
         user_instructions: sess.instructions.clone(),
         store,
         extra_tools,
+        config: (*sess.config).clone(),
     };
 
     let mut retries = 0;

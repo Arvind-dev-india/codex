@@ -3,6 +3,7 @@ use serde_json::json;
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
+use crate::azure_devops::tools::register_azure_devops_tools;
 use crate::client_common::Prompt;
 
 #[derive(Debug, Clone, Serialize)]
@@ -81,10 +82,34 @@ pub(crate) fn create_tools_json_for_responses_api(
     } else {
         &DEFAULT_TOOLS
     };
-    let mut tools_json = Vec::with_capacity(default_tools.len() + prompt.extra_tools.len());
+    
+    // Calculate initial capacity
+    let mut total_capacity = default_tools.len() + prompt.extra_tools.len();
+    
+    // Check if Azure DevOps is configured
+    let azure_devops_tools = if prompt.config.azure_devops.is_some() {
+        let tools = register_azure_devops_tools();
+        total_capacity += tools.len();
+        Some(tools)
+    } else {
+        None
+    };
+    
+    let mut tools_json = Vec::with_capacity(total_capacity);
+    
+    // Add default tools
     for t in default_tools.iter() {
         tools_json.push(serde_json::to_value(t)?);
     }
+    
+    // Add Azure DevOps tools if configured
+    if let Some(tools) = azure_devops_tools {
+        for t in tools.iter() {
+            tools_json.push(serde_json::to_value(t)?);
+        }
+    }
+    
+    // Add extra tools from the prompt
     tools_json.extend(
         prompt
             .extra_tools

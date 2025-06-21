@@ -33,6 +33,9 @@ pub struct Prompt {
     /// the "fully qualified" tool name (i.e., prefixed with the server name),
     /// which should be reported to the model in place of Tool::name.
     pub extra_tools: HashMap<String, mcp_types::Tool>,
+    
+    /// Configuration for the current session
+    pub config: crate::config::Config,
 }
 
 impl Prompt {

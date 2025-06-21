@@ -122,6 +122,9 @@ pub struct Config {
     /// If not "none", the value to use for `reasoning.summary` when making a
     /// request using the Responses API.
     pub model_reasoning_summary: ReasoningSummary,
+    
+    /// Azure DevOps configuration for integration with Azure DevOps services.
+    pub azure_devops: Option<crate::config_types::AzureDevOpsConfig>,
 }
 
 impl Config {
@@ -294,6 +297,10 @@ pub struct ConfigToml {
 
     pub model_reasoning_effort: Option<ReasoningEffort>,
     pub model_reasoning_summary: Option<ReasoningSummary>,
+    
+    /// Azure DevOps configuration for integration with Azure DevOps services.
+    #[serde(default)]
+    pub azure_devops: Option<crate::config_types::AzureDevOpsConfig>,
 }
 
 fn deserialize_sandbox_permissions<'de, D>(
@@ -459,6 +466,7 @@ impl Config {
             hide_agent_reasoning: cfg.hide_agent_reasoning.unwrap_or(false),
             model_reasoning_effort: cfg.model_reasoning_effort.unwrap_or_default(),
             model_reasoning_summary: cfg.model_reasoning_summary.unwrap_or_default(),
+            azure_devops: cfg.azure_devops,
         };
         Ok(config)
     }

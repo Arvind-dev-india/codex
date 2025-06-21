@@ -413,3 +413,64 @@ Options that are specific to the TUI.
 # dragging the mouse to select text.
 disable_mouse_capture = true  # defaults to `false`
 ```
+# Azure DevOps Configuration
+
+Codex CLI now supports integration with Azure DevOps. You can configure it in your `~/.codex/config.toml` file:
+
+```toml
+[azure_devops]
+# Required: Azure DevOps organization URL
+organization_url = "https://dev.azure.com/your-organization"
+
+# Optional: Personal Access Token for authentication
+# Not recommended to set directly in config file for security reasons
+# pat = "your-pat-here"
+
+# Optional: Environment variable name that contains the PAT
+# This is the recommended way to provide authentication
+pat_env_var = "AZURE_DEVOPS_PAT"
+
+# Optional: Default project to use when not specified in commands
+default_project = "YourProject"
+
+# Optional: API version to use (defaults to "7.0")
+# api_version = "7.0"
+```
+
+## Authentication
+
+For security reasons, it's recommended to set your Personal Access Token (PAT) as an environment variable rather than directly in the config file:
+
+```bash
+export AZURE_DEVOPS_PAT="your-pat-here"
+```
+
+## Creating a Personal Access Token
+
+1. Go to your Azure DevOps organization: `https://dev.azure.com/your-organization`
+2. Click on your profile picture in the top right
+3. Select "Personal access tokens"
+4. Click "New Token"
+5. Give it a name and select the following scopes:
+   - Work Items: Read & Write
+   - Code: Read & Write
+   - Pull Request Threads: Read & Write
+   - Wiki: Read & Write
+   - Build: Read & Execute
+6. Click "Create" and copy the token
+
+## Available Tools
+
+When Azure DevOps is configured, the following tools become available to the model:
+
+- `azure_devops_query_work_items`: Search for work items using WIQL
+- `azure_devops_get_work_item`: Get details of a specific work item
+- `azure_devops_create_work_item`: Create a new work item
+- `azure_devops_update_work_item`: Update an existing work item
+- `azure_devops_query_pull_requests`: Search for pull requests
+- `azure_devops_get_pull_request`: Get details of a specific pull request
+- `azure_devops_comment_on_pull_request`: Add a comment to a pull request
+- `azure_devops_get_wiki_page`: Get content of a wiki page
+- `azure_devops_update_wiki_page`: Update content of a wiki page
+- `azure_devops_run_pipeline`: Run a pipeline
+- `azure_devops_get_pipeline_status`: Get status of a pipeline run
