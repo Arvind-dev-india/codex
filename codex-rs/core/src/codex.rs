@@ -614,7 +614,7 @@ async fn submission_loop(
 
                 // Error messages to dispatch after SessionConfigured is sent.
                 let mut mcp_connection_errors = Vec::<Event>::new();
-                let (mcp_connection_manager, failed_clients) =
+                let (mut mcp_connection_manager, failed_clients) =
                     match McpConnectionManager::new(config.mcp_servers.clone()).await {
                         Ok((mgr, failures)) => (mgr, failures),
                         Err(e) => {
@@ -627,6 +627,9 @@ async fn submission_loop(
                             (McpConnectionManager::default(), Default::default())
                         }
                     };
+                    
+                // Set Azure DevOps configuration if available
+                mcp_connection_manager.set_azure_devops_config(config.azure_devops.clone());
 
                 // Surface individual client start-up failures to the user.
                 if !failed_clients.is_empty() {

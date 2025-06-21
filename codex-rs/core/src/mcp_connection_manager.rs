@@ -17,6 +17,10 @@ use mcp_types::ClientCapabilities;
 use mcp_types::Implementation;
 use mcp_types::Tool;
 use tokio::task::JoinSet;
+
+use crate::azure_devops::handle_azure_devops_tool_call;
+use crate::config_types::AzureDevOpsConfig;
+use crate::mcp_tool_call::ToolCall;
 use tracing::info;
 
 use crate::config_types::McpServerConfig;
@@ -55,6 +59,9 @@ pub(crate) struct McpConnectionManager {
     /// The server name originates from the keys of the `mcp_servers` map in
     /// the user configuration.
     clients: HashMap<String, std::sync::Arc<McpClient>>,
+    
+    /// Azure DevOps configuration, if any
+    azure_devops_config: Option<AzureDevOpsConfig>,
 
     /// Fully qualified tool name -> tool instance.
     tools: HashMap<String, Tool>,
@@ -134,13 +141,22 @@ impl McpConnectionManager {
 
         let tools = list_all_tools(&clients).await?;
 
-        Ok((Self { clients, tools }, errors))
+        Ok((Self { 
+            clients, 
+            tools,
+            azure_devops_config: None,
+        }, errors))
     }
 
     /// Returns a single map that contains **all** tools. Each key is the
     /// fully-qualified name for the tool.
     pub fn list_all_tools(&self) -> HashMap<String, Tool> {
         self.tools.clone()
+    }
+    
+    /// Set the Azure DevOps configuration
+    pub fn set_azure_devops_config(&mut self, config: Option<AzureDevOpsConfig>) {
+        self.azure_devops_config = config;
     }
 
     /// Invoke the tool indicated by the (server, tool) pair.
@@ -151,6 +167,31 @@ impl McpConnectionManager {
         arguments: Option<serde_json::Value>,
         timeout: Option<Duration>,
     ) -> Result<mcp_types::CallToolResult> {
+        // Check if this is an Azure DevOps tool
+        if server == "azure_devops" {
+            if let Some(config) = &self.azure_devops_config {
+                let tool_call = ToolCall {
+                    name: tool.to_string(),
+                    arguments: arguments.unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new())),
+                };
+                
+                match handle_azure_devops_tool_call(&tool_call, config).await {
+                    Ok(result) => {
+                        return Ok(mcp_types::CallToolResult {
+                            content: &result,
+                            is_error: None,
+                        });
+                    }
+                    Err(e) => {
+                        return Err(anyhow!("Azure DevOps tool call failed: {}", e));
+                    }
+                }
+            } else {
+                return Err(anyhow!("Azure DevOps is not configured"));
+            }
+        }
+        
+        // Otherwise, use MCP clients
         let client = self
             .clients
             .get(server)

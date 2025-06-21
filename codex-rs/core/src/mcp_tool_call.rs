@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use serde_json::Value;
 use tracing::error;
 
 use crate::codex::Session;
@@ -9,6 +10,15 @@ use crate::protocol::Event;
 use crate::protocol::EventMsg;
 use crate::protocol::McpToolCallBeginEvent;
 use crate::protocol::McpToolCallEndEvent;
+
+/// Represents a tool call with name and arguments
+#[derive(Debug, Clone)]
+pub struct ToolCall {
+    /// Name of the tool to call
+    pub name: String,
+    /// Arguments to pass to the tool
+    pub arguments: Value,
+}
 
 /// Handles the specified tool call dispatches the appropriate
 /// `McpToolCallBegin` and `McpToolCallEnd` events to the `Session`.

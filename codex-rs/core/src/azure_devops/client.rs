@@ -64,10 +64,13 @@ impl AzureDevOpsClient {
     fn build_url(&self, project: Option<&str>, endpoint: &str) -> String {
         let base_url = &self.auth.organization_url;
         
+        // Determine the correct separator (? or &) for the API version parameter
+        let separator = if endpoint.contains('?') { "&" } else { "?" };
+        
         if let Some(project) = project {
-            format!("{}/{}/_apis/{}&api-version={}", base_url, project, endpoint, self.api_version)
+            format!("{}/{}/_apis/{}{}{}", base_url, project, endpoint, separator, self.api_version)
         } else {
-            format!("{}/_apis/{}&api-version={}", base_url, endpoint, self.api_version)
+            format!("{}/_apis/{}{}{}", base_url, endpoint, separator, self.api_version)
         }
     }
 
@@ -153,6 +156,42 @@ impl AzureDevOpsClient {
         
         let response = self.client
             .patch(&url)
+            .headers(headers)
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| CodexErr::Other(format!("Request failed: {}", e)))?;
+            
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Failed to get error response".to_string());
+            return Err(CodexErr::Other(format!(
+                "Azure DevOps API error: {} - {}",
+                status, text
+            )));
+        }
+        
+        response
+            .json::<T>()
+            .await
+            .map_err(|e| CodexErr::Other(format!("Failed to parse response: {}", e)))
+    }
+    
+    /// Make a PUT request to the Azure DevOps API
+    pub async fn put<T: DeserializeOwned, B: Serialize>(
+        &self,
+        project: Option<&str>,
+        endpoint: &str,
+        body: &B,
+    ) -> Result<T> {
+        let url = self.build_url(project, endpoint);
+        let headers = self.create_headers()?;
+        
+        let response = self.client
+            .put(&url)
             .headers(headers)
             .json(body)
             .send()
