@@ -53,7 +53,7 @@ pub enum CodexErr {
     #[error("spawn failed: child stdout/stderr not captured")]
     Spawn,
 
-    /// Returned by run_command_stream when the user pressed Ctrl‑C (SIGINT). Session uses this to
+    /// Returned by run_command_stream when the user pressed Ctrl-C (SIGINT). Session uses this to
     /// surface a polite FunctionCallOutput back to the model instead of crashing the CLI.
     #[error("interrupted (Ctrl-C)")]
     Interrupted,
@@ -73,6 +73,10 @@ pub enum CodexErr {
     /// Sandbox error
     #[error("sandbox error: {0}")]
     Sandbox(#[from] SandboxErr),
+
+    /// Generic error with message
+    #[error("{0}")]
+    Other(String),
 
     #[error("codex-linux-sandbox was required but not provided")]
     LandlockSandboxExecutableNotProvided,

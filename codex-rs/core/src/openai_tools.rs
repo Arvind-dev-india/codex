@@ -7,28 +7,28 @@ use crate::azure_devops::register_azure_devops_tools_with_openai;
 use crate::client_common::Prompt;
 
 #[derive(Debug, Clone, Serialize)]
-pub(crate) struct ResponsesApiTool {
-    name: &'static str,
-    description: &'static str,
-    strict: bool,
-    parameters: JsonSchema,
+pub struct ResponsesApiTool {
+    pub name: &'static str,
+    pub description: &'static str,
+    pub strict: bool,
+    pub parameters: JsonSchema,
 }
 
 /// When serialized as JSON, this produces a valid "Tool" in the OpenAI
 /// Responses API.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type")]
-pub(crate) enum OpenAiTool {
+pub enum OpenAiTool {
     #[serde(rename = "function")]
     Function(ResponsesApiTool),
     #[serde(rename = "local_shell")]
     LocalShell {},
 }
 
-/// Generic JSON‑Schema subset needed for our tool definitions
+/// Generic JSON Schema subset needed for our tool definitions
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
-pub(crate) enum JsonSchema {
+pub enum JsonSchema {
     String,
     Number,
     Array {
@@ -116,6 +116,25 @@ pub(crate) fn create_tools_json_for_responses_api(
     );
 
     Ok(tools_json)
+}
+
+/// Create a function tool for the OpenAI API
+pub fn create_function_tool(
+    name: &'static str,
+    description: &'static str,
+    parameters: BTreeMap<String, JsonSchema>,
+    required: &'static [&'static str],
+) -> OpenAiTool {
+    OpenAiTool::Function(ResponsesApiTool {
+        name,
+        description,
+        strict: false,
+        parameters: JsonSchema::Object {
+            properties: parameters,
+            required,
+            additional_properties: false,
+        },
+    })
 }
 
 /// Returns JSON values that are compatible with Function Calling in the

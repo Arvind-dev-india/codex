@@ -1,9 +1,8 @@
 //! Tool definitions for Azure DevOps operations.
 
-use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
-use crate::openai_tools::{JsonSchema, OpenAiTool, ResponsesApiTool};
+use crate::openai_tools::{JsonSchema, OpenAiTool, create_function_tool};
 
 /// Register all Azure DevOps tools
 pub fn register_azure_devops_tools() -> Vec<OpenAiTool> {
@@ -41,16 +40,12 @@ fn create_query_work_items_tool() -> OpenAiTool {
         JsonSchema::Number,
     );
 
-    OpenAiTool::Function(ResponsesApiTool {
-        name: "azure_devops_query_work_items",
-        description: "Search for work items in Azure DevOps using a WIQL query",
-        strict: false,
-        parameters: JsonSchema::Object {
-            properties,
-            required: &["project", "query"],
-            additional_properties: false,
-        },
-    })
+    create_function_tool(
+        "azure_devops_query_work_items",
+        "Search for work items in Azure DevOps using a WIQL query",
+        properties,
+        &["project", "query"]
+    )
 }
 
 /// Create a tool for getting a specific work item
@@ -67,16 +62,12 @@ fn create_get_work_item_tool() -> OpenAiTool {
         JsonSchema::Number,
     );
 
-    OpenAiTool::Function(ResponsesApiTool {
-        name: "azure_devops_get_work_item",
-        description: "Get details of a specific work item in Azure DevOps",
-        strict: false,
-        parameters: JsonSchema::Object {
-            properties,
-            required: &["project", "id"],
-            additional_properties: false,
-        },
-    })
+    create_function_tool(
+        "azure_devops_get_work_item",
+        "Get details of a specific work item in Azure DevOps",
+        properties,
+        &["project", "id"]
+    )
 }
 
 /// Create a tool for creating a work item
@@ -118,16 +109,12 @@ fn create_create_work_item_tool() -> OpenAiTool {
         JsonSchema::String,
     );
 
-    OpenAiTool::Function(ResponsesApiTool {
-        name: "azure_devops_create_work_item",
-        description: "Create a new work item in Azure DevOps",
-        strict: false,
-        parameters: JsonSchema::Object {
-            properties,
-            required: &["project", "type", "title"],
-            additional_properties: false,
-        },
-    })
+    create_function_tool(
+        "azure_devops_create_work_item",
+        "Create a new work item in Azure DevOps",
+        properties,
+        &["project", "type", "title"]
+    )
 }
 
 /// Create a tool for updating a work item
@@ -164,16 +151,12 @@ fn create_update_work_item_tool() -> OpenAiTool {
         JsonSchema::String,
     );
 
-    OpenAiTool::Function(ResponsesApiTool {
-        name: "azure_devops_update_work_item",
-        description: "Update an existing work item in Azure DevOps",
-        strict: false,
-        parameters: JsonSchema::Object {
-            properties,
-            required: &["project", "id"],
-            additional_properties: false,
-        },
-    })
+    create_function_tool(
+        "azure_devops_update_work_item",
+        "Update an existing work item in Azure DevOps",
+        properties,
+        &["project", "id"]
+    )
 }
 
 /// Create a tool for querying pull requests
@@ -210,16 +193,12 @@ fn create_query_pull_requests_tool() -> OpenAiTool {
         JsonSchema::Number,
     );
 
-    OpenAiTool::Function(ResponsesApiTool {
-        name: "azure_devops_query_pull_requests",
-        description: "Search for pull requests in Azure DevOps",
-        strict: false,
-        parameters: JsonSchema::Object {
-            properties,
-            required: &["project", "repository"],
-            additional_properties: false,
-        },
-    })
+    create_function_tool(
+        "azure_devops_query_pull_requests",
+        "Search for pull requests in Azure DevOps",
+        properties,
+        &["project", "repository"]
+    )
 }
 
 /// Create a tool for getting a specific pull request
@@ -241,16 +220,12 @@ fn create_get_pull_request_tool() -> OpenAiTool {
         JsonSchema::Number,
     );
 
-    OpenAiTool::Function(ResponsesApiTool {
-        name: "azure_devops_get_pull_request",
-        description: "Get details of a specific pull request in Azure DevOps",
-        strict: false,
-        parameters: JsonSchema::Object {
-            properties,
-            required: &["project", "repository", "pull_request_id"],
-            additional_properties: false,
-        },
-    })
+    create_function_tool(
+        "azure_devops_get_pull_request",
+        "Get details of a specific pull request in Azure DevOps",
+        properties,
+        &["project", "repository", "pull_request_id"]
+    )
 }
 
 /// Create a tool for commenting on a pull request
@@ -277,16 +252,12 @@ fn create_comment_on_pull_request_tool() -> OpenAiTool {
         JsonSchema::String,
     );
 
-    OpenAiTool::Function(ResponsesApiTool {
-        name: "azure_devops_comment_on_pull_request",
-        description: "Add a comment to a pull request in Azure DevOps",
-        strict: false,
-        parameters: JsonSchema::Object {
-            properties,
-            required: &["project", "repository", "pull_request_id", "content"],
-            additional_properties: false,
-        },
-    })
+    create_function_tool(
+        "azure_devops_comment_on_pull_request",
+        "Add a comment to a pull request in Azure DevOps",
+        properties,
+        &["project", "repository", "pull_request_id", "content"]
+    )
 }
 
 /// Create a tool for getting a wiki page
@@ -308,16 +279,12 @@ fn create_get_wiki_page_tool() -> OpenAiTool {
         JsonSchema::String,
     );
 
-    OpenAiTool::Function(ResponsesApiTool {
-        name: "azure_devops_get_wiki_page",
-        description: "Get content of a wiki page in Azure DevOps",
-        strict: false,
-        parameters: JsonSchema::Object {
-            properties,
-            required: &["project", "wiki", "path"],
-            additional_properties: false,
-        },
-    })
+    create_function_tool(
+        "azure_devops_get_wiki_page",
+        "Get content of a wiki page in Azure DevOps",
+        properties,
+        &["project", "wiki", "path"]
+    )
 }
 
 /// Create a tool for updating a wiki page
@@ -349,16 +316,12 @@ fn create_update_wiki_page_tool() -> OpenAiTool {
         JsonSchema::String,
     );
 
-    OpenAiTool::Function(ResponsesApiTool {
-        name: "azure_devops_update_wiki_page",
-        description: "Update content of a wiki page in Azure DevOps",
-        strict: false,
-        parameters: JsonSchema::Object {
-            properties,
-            required: &["project", "wiki", "path", "content"],
-            additional_properties: false,
-        },
-    })
+    create_function_tool(
+        "azure_devops_update_wiki_page",
+        "Update content of a wiki page in Azure DevOps",
+        properties,
+        &["project", "wiki", "path", "content"]
+    )
 }
 
 /// Create a tool for running a pipeline
@@ -389,16 +352,12 @@ fn create_run_pipeline_tool() -> OpenAiTool {
         },
     );
 
-    OpenAiTool::Function(ResponsesApiTool {
-        name: "azure_devops_run_pipeline",
-        description: "Run a pipeline in Azure DevOps",
-        strict: false,
-        parameters: JsonSchema::Object {
-            properties,
-            required: &["project", "pipeline_id"],
-            additional_properties: false,
-        },
-    })
+    create_function_tool(
+        "azure_devops_run_pipeline",
+        "Run a pipeline in Azure DevOps",
+        properties,
+        &["project", "pipeline_id"]
+    )
 }
 
 /// Create a tool for getting pipeline status
@@ -415,14 +374,10 @@ fn create_get_pipeline_status_tool() -> OpenAiTool {
         JsonSchema::Number,
     );
 
-    OpenAiTool::Function(ResponsesApiTool {
-        name: "azure_devops_get_pipeline_status",
-        description: "Get status of a pipeline run in Azure DevOps",
-        strict: false,
-        parameters: JsonSchema::Object {
-            properties,
-            required: &["project", "build_id"],
-            additional_properties: false,
-        },
-    })
+    create_function_tool(
+        "azure_devops_get_pipeline_status",
+        "Get status of a pipeline run in Azure DevOps",
+        properties,
+        &["project", "build_id"]
+    )
 }

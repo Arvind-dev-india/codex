@@ -177,8 +177,19 @@ impl McpConnectionManager {
                 
                 match handle_azure_devops_tool_call(&tool_call, config).await {
                     Ok(result) => {
+                        // Create a TextContent with the JSON result
+                        let json_str = serde_json::to_string(&result).unwrap_or_default();
+                        let text_content = mcp_types::TextContent {
+                            annotations: None,
+                            text: json_str,
+                            r#type: "text".to_string(),
+                        };
+                        
+                        // Wrap in CallToolResultContent::TextContent
+                        let content = vec![mcp_types::CallToolResultContent::TextContent(text_content)];
+                        
                         return Ok(mcp_types::CallToolResult {
-                            content: &result,
+                            content,
                             is_error: None,
                         });
                     }

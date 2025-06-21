@@ -12,6 +12,7 @@ pub mod codex;
 pub use codex::Codex;
 pub mod codex_wrapper;
 pub mod config;
+mod config_default;
 pub mod config_profile;
 pub mod config_types;
 mod conversation_history;

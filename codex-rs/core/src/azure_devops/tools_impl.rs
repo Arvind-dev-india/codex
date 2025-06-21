@@ -10,7 +10,7 @@ use crate::error::{CodexErr, Result};
 
 /// Implementation of Azure DevOps tools
 pub struct AzureDevOpsTools {
-    client: Arc<AzureDevOpsClient>,
+    pub client: Arc<AzureDevOpsClient>,
 }
 
 impl AzureDevOpsTools {

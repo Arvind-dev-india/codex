@@ -47,6 +47,18 @@ pub struct ModelProviderInfo {
     pub wire_api: WireApi,
 }
 
+impl Default for ModelProviderInfo {
+    fn default() -> Self {
+        Self {
+            name: "OpenAI".into(),
+            base_url: "https://api.openai.com/v1".into(),
+            env_key: Some("OPENAI_API_KEY".into()),
+            env_key_instructions: Some("Create an API key (https://platform.openai.com) and export it as an environment variable.".into()),
+            wire_api: WireApi::Responses,
+        }
+    }
+}
+
 impl ModelProviderInfo {
     /// If `env_key` is Some, returns the API key for this provider if present
     /// (and non-empty) in the environment. If `env_key` is required but

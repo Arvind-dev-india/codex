@@ -62,7 +62,7 @@ impl AzureDevOpsAuthHandler {
             AzureDevOpsAuth::PersonalAccessToken(pat) => {
                 // Azure DevOps API uses Basic auth with empty username and PAT as password
                 let auth_string = format!(":{}", pat);
-                let encoded = base64::encode(auth_string);
+                let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, auth_string);
                 Some(format!("Basic {}", encoded))
             }
             AzureDevOpsAuth::None => None,
