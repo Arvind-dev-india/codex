@@ -1201,6 +1201,15 @@ async fn handle_function_call(
             };
             handle_container_exec_with_params(params, sess, sub_id, call_id).await
         }
+        // Check for Azure DevOps tools directly
+        name if name.starts_with("azure_devops_") => {
+            // For Azure DevOps tools, use empty server name and the full name as the tool name
+            let timeout = None;
+            handle_mcp_tool_call(
+                sess, &sub_id, call_id, "azure_devops".to_string(), name.to_string(), arguments, timeout,
+            )
+            .await
+        }
         _ => {
             match try_parse_fully_qualified_tool_name(&name) {
                 Some((server, tool_name)) => {
