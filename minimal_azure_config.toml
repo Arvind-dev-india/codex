@@ -1,0 +1,27 @@
+# Minimal configuration for testing Azure DevOps integration
+model = "gpt-4"
+model_provider = "azure_openai"
+
+[model_providers.azure_openai]
+name = "Azure OpenAI"
+base_url = "https://YOUR_RESOURCE_NAME.openai.azure.com"
+api_key_env_var = "AZURE_OPENAI_API_KEY"
+api_version = "2023-12-01-preview"
+deployment_id = "YOUR_DEPLOYMENT_NAME"
+wire_api = "chat"
+
+[azure_devops]
+# Try both URL formats
+organization_url = "https://dev.azure.com/msazure"
+# organization_url = "https://msazure.visualstudio.com"
+pat = "your-personal-access-token"
+default_project = "One"
+
+# Disable sandboxing for testing
+[sandbox_policy]
+type = "none"
+
+# Allow all environment variables
+[shell_environment_policy]
+type = "inherit_all"
+ignore_default_excludes = true

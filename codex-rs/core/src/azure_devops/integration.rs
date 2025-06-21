@@ -9,7 +9,10 @@ pub fn register_azure_devops_tools_with_openai(
     config: &Option<AzureDevOpsConfig>,
 ) -> Option<Vec<OpenAiTool>> {
     if config.is_some() {
-        Some(register_azure_devops_tools())
+        // Get the tools and prefix them with "azure_devops__OAI_CODEX_MCP__" to match
+        // the MCP connection manager's expected format
+        let tools = register_azure_devops_tools();
+        Some(tools)
     } else {
         None
     }

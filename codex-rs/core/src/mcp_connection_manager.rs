@@ -167,11 +167,22 @@ impl McpConnectionManager {
         arguments: Option<serde_json::Value>,
         timeout: Option<Duration>,
     ) -> Result<mcp_types::CallToolResult> {
-        // Check if this is an Azure DevOps tool
-        if server == "azure_devops" {
+        // Check if this is an Azure DevOps tool - either with server="azure_devops" or
+        // with a full tool name that starts with "azure_devops_"
+        let is_azure_devops = server == "azure_devops" || 
+                             (server.is_empty() && tool.starts_with("azure_devops_"));
+        
+        if is_azure_devops {
             if let Some(config) = &self.azure_devops_config {
+                // Extract the actual tool name if it's a full name (azure_devops_query_work_items)
+                let actual_tool_name = if tool.starts_with("azure_devops_") {
+                    tool.to_string()
+                } else {
+                    format!("azure_devops_{}", tool)
+                };
+                
                 let tool_call = ToolCall {
-                    name: tool.to_string(),
+                    name: actual_tool_name,
                     arguments: arguments.unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new())),
                 };
                 

@@ -42,7 +42,7 @@ For persistent configuration, add this to your shell profile (`~/.bashrc`, `~/.z
 
 ## Available Azure DevOps Tools
 
-Codex CLI provides the following Azure DevOps tools that can be used by the AI:
+Codex CLI provides the following Azure DevOps tools that can be used by the AI. These tools can be called either with the full name (e.g., `azure_devops_query_work_items`) or with the server/tool split format (server=`azure_devops`, tool=`query_work_items`):
 
 ### Work Items
 
