@@ -1,0 +1,51 @@
+# Codex CLI Configuration with Azure AI and Azure DevOps
+# Save this file as ~/.codex/config.toml
+
+# Use Azure AI as the model provider
+model = "gpt-4"
+model_provider = "azure_openai"
+
+# Azure OpenAI configuration
+[model_providers.azure_openai]
+name = "Azure OpenAI"
+base_url = "https://YOUR_RESOURCE_NAME.openai.azure.com"
+api_key_env_var = "AZURE_OPENAI_API_KEY"
+api_version = "2023-12-01-preview"
+deployment_id = "YOUR_DEPLOYMENT_NAME"  # Replace with your GPT-4 deployment name
+wire_api = "chat"
+
+# Azure DevOps configuration
+[azure_devops]
+# Required: URL of your Azure DevOps organization
+organization_url = "https://dev.azure.com/your-organization"
+
+# Authentication: Use one of the following options
+# Option 1: Environment variable containing your PAT (recommended)
+pat_env_var = "AZURE_DEVOPS_PAT"
+# Option 2: Directly specify the PAT (less secure)
+# pat = "your-personal-access-token"
+
+# Optional: Default project to use when not specified in commands
+default_project = "YourProject"
+
+# Optional: API version to use (defaults to "7.0")
+# api_version = "7.0"
+
+# Approval policy configuration
+# This determines when Codex will ask for approval before executing commands
+[approval_policy]
+# Options: "always", "never", "auto"
+shell = "auto"
+apply_patch = "auto"
+
+# Sandbox policy configuration
+[sandbox_policy]
+# Options: "landlock", "seatbelt", "none"
+type = "landlock"  # Use "seatbelt" on macOS
+
+# Optional: Configure shell environment
+[shell_environment_policy]
+# Options: "inherit_all", "include_only", "exclude"
+type = "inherit_all"
+# include_only = ["PATH", "HOME", "USER"]
+# exclude = ["AWS_SECRET_ACCESS_KEY", "GITHUB_TOKEN"]
