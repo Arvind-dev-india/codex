@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
 use crate::azure_devops::register_azure_devops_tools_with_openai;
+use crate::code_analysis::register_code_analysis_tools;
 use crate::client_common::Prompt;
 
 #[derive(Debug, Clone, Serialize)]
@@ -92,6 +93,10 @@ pub(crate) fn create_tools_json_for_responses_api(
         total_capacity += tools.len();
     }
     
+    // Get code analysis tools
+    let code_analysis_tools = register_code_analysis_tools();
+    total_capacity += code_analysis_tools.len();
+    
     let mut tools_json = Vec::with_capacity(total_capacity);
     
     // Add default tools
@@ -104,6 +109,11 @@ pub(crate) fn create_tools_json_for_responses_api(
         for t in tools.iter() {
             tools_json.push(serde_json::to_value(t)?);
         }
+    }
+    
+    // Add code analysis tools
+    for t in code_analysis_tools.iter() {
+        tools_json.push(serde_json::to_value(t)?);
     }
     
     // Add extra tools from the prompt

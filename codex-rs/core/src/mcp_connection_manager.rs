@@ -19,6 +19,12 @@ use mcp_types::Tool;
 use tokio::task::JoinSet;
 
 use crate::azure_devops::handle_azure_devops_tool_call;
+use crate::code_analysis::tools::{
+    handle_analyze_code,
+    handle_find_symbol_references,
+    handle_find_symbol_definitions,
+    handle_get_code_graph,
+};
 use crate::config_types::AzureDevOpsConfig;
 use crate::mcp_tool_call::ToolCall;
 use tracing::info;
@@ -210,6 +216,46 @@ impl McpConnectionManager {
                 }
             } else {
                 return Err(anyhow!("Azure DevOps is not configured"));
+            }
+        }
+        
+        // Check if this is a code analysis tool
+        if server.is_empty() {
+            let args = arguments.unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
+            
+            let result = match tool {
+                "analyze_code" => handle_analyze_code(args),
+                "find_symbol_references" => handle_find_symbol_references(args),
+                "find_symbol_definitions" => handle_find_symbol_definitions(args),
+                "get_code_graph" => handle_get_code_graph(args),
+                "get_symbol_subgraph" => handle_get_symbol_subgraph(args),
+                "update_code_graph" => handle_update_code_graph(args),
+                _ => None, // Not a code analysis tool
+            };
+            
+            if let Some(result) = result {
+                match result {
+                    Ok(json_value) => {
+                        // Create a TextContent with the JSON result
+                        let json_str = serde_json::to_string(&json_value).unwrap_or_default();
+                        let text_content = mcp_types::TextContent {
+                            annotations: None,
+                            text: json_str,
+                            r#type: "text".to_string(),
+                        };
+                        
+                        // Wrap in CallToolResultContent::TextContent
+                        let content = vec![mcp_types::CallToolResultContent::TextContent(text_content)];
+                        
+                        return Ok(mcp_types::CallToolResult {
+                            content,
+                            is_error: None,
+                        });
+                    }
+                    Err(e) => {
+                        return Err(anyhow!("Code analysis tool call failed: {}", e));
+                    }
+                }
             }
         }
         

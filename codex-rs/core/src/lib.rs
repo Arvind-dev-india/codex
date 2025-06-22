@@ -40,4 +40,7 @@ pub mod util;
 // Azure DevOps integration
 pub mod azure_devops;
 
+// Code analysis tools
+pub mod code_analysis;
+
 pub use client_common::model_supports_reasoning_summaries;
