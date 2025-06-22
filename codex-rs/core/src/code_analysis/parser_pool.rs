@@ -5,7 +5,7 @@ use std::fs;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
-use tree_sitter::{Language, Parser, Query, QueryCursor, Tree};
+use tree_sitter::{Language, Parser, Query, QueryCursor, Tree, StreamingIterator};
 use once_cell::sync::Lazy;
 
 // Import the tree-sitter language parsers
@@ -25,21 +25,50 @@ pub enum SupportedLanguage {
     // Add more languages as needed
 }
 
+/// Get the query file for a language and query type
+fn get_query_file(language: SupportedLanguage, _query_type: QueryType) -> Result<String, String> {
+    let lang_file = match language {
+        SupportedLanguage::Rust => "rust.scm",
+        SupportedLanguage::JavaScript => "javascript.scm",
+        SupportedLanguage::TypeScript => "typescript.scm",
+        SupportedLanguage::Python => "python.scm",
+        SupportedLanguage::Go => "go.scm",
+        SupportedLanguage::Cpp => "cpp.scm",
+        SupportedLanguage::CSharp => "csharp.scm",
+        SupportedLanguage::Java => "java.scm",
+    };
+    
+    Ok(lang_file.to_string())
+}
+
 impl SupportedLanguage {
     /// Get the file extensions associated with this language
     pub fn get_extensions(&self) -> Vec<&'static str> {
         match self {
             SupportedLanguage::Rust => vec!["rs"],
+            SupportedLanguage::JavaScript => vec!["js", "jsx", "mjs"],
+            SupportedLanguage::TypeScript => vec!["ts", "tsx"],
+            SupportedLanguage::Python => vec!["py", "pyw"],
+            SupportedLanguage::Go => vec!["go"],
+            SupportedLanguage::Cpp => vec!["cpp", "cc", "cxx", "c++", "hpp", "hh", "hxx", "h++", "h"],
+            SupportedLanguage::CSharp => vec!["cs"],
+            SupportedLanguage::Java => vec!["java"],
         }
     }
 
     /// Detect language from file extension
     pub fn from_extension(ext: &str) -> Option<Self> {
         let ext = ext.to_lowercase();
-        if ext == "rs" {
-            Some(SupportedLanguage::Rust)
-        } else {
-            None
+        match ext.as_str() {
+            "rs" => Some(SupportedLanguage::Rust),
+            "js" | "jsx" | "mjs" => Some(SupportedLanguage::JavaScript),
+            "ts" | "tsx" => Some(SupportedLanguage::TypeScript),
+            "py" | "pyw" => Some(SupportedLanguage::Python),
+            "go" => Some(SupportedLanguage::Go),
+            "cpp" | "cc" | "cxx" | "c++" | "hpp" | "hh" | "hxx" | "h++" | "h" | "c" => Some(SupportedLanguage::Cpp),
+            "cs" => Some(SupportedLanguage::CSharp),
+            "java" => Some(SupportedLanguage::Java),
+            _ => None,
         }
     }
 
@@ -95,7 +124,7 @@ impl ParsedFile {
         let mut cursor = QueryCursor::new();
         
         // Execute the query
-        let matches = cursor.matches(
+        let mut matches = cursor.matches(
             query,
             self.tree.root_node(),
             self.source.as_bytes(),
@@ -103,7 +132,8 @@ impl ParsedFile {
         
         // Convert the matches to our QueryMatch struct
         let mut result = Vec::new();
-        for match_ in matches.iter() {
+        // Use next() from StreamingIterator trait
+        while let Some(match_) = matches.next() {
             let mut captures = Vec::new();
             for capture in match_.captures {
                 let node = capture.node;
@@ -159,6 +189,7 @@ pub enum QueryType {
     Methods,
     Variables,
     References,
+    Imports,
     All,
 }
 
@@ -186,20 +217,25 @@ impl ParserPool {
         // Check if we already have the language loaded
         let mut languages = self.languages.lock().unwrap();
         if let Some(lang) = languages.get(&language) {
-            return Ok(*lang);
+            // Language is not Copy, so we need to clone it
+            return Ok(lang.clone());
         }
         
         // Load the language
-        let lang = match language {
-            SupportedLanguage::Rust => tree_sitter_rust::language(),
+        let lang_fn = match language {
+            SupportedLanguage::Rust => tree_sitter_rust::LANGUAGE,
             // Other languages are not currently supported due to dependency issues
             // We'll add them back as we resolve the issues
             _ => return Err(format!("Language parser not available for: {:?}", language)),
         };
         
-        // Store the language
-        languages.insert(language, lang);
+        // Convert LanguageFn to Language
+        let lang: Language = lang_fn.into();
         
+        // Store the language - clone it since we need to return it too
+        languages.insert(language, lang.clone());
+        
+        // Return the language
         Ok(lang)
     }
     
@@ -207,8 +243,20 @@ impl ParserPool {
     fn load_query(&self, language: SupportedLanguage, query_type: QueryType) -> Result<Query, String> {
         // Check if we already have the query loaded
         let mut queries = self.queries.lock().unwrap();
-        if let Some(query) = queries.get(&(language, query_type)) {
-            return Ok(query.clone());
+        if let Some(_query) = queries.get(&(language, query_type)) {
+            // We need to create a new Query since Query doesn't implement Clone
+            // In a real implementation, we would load the query from a file or string
+            // We'll load the query again from the file
+            let lang = self.load_language(language)?;
+            let query_file = get_query_file(language, query_type)?;
+            let query_path = format!("src/code_analysis/queries/{}", query_file);
+            let query_content = fs::read_to_string(&query_path)
+                .map_err(|e| format!("Failed to read query file {}: {}", query_path, e))?;
+            
+            let query = Query::new(&lang, &query_content)
+                .map_err(|e| format!("Failed to parse query: {}", e))?;
+            
+            return Ok(query);
         }
         
         // Load the language
@@ -229,10 +277,14 @@ impl ParserPool {
         let query = Query::new(&lang, &query_content)
             .map_err(|e| format!("Failed to parse query: {}", e))?;
         
-        // Store the query
+        // Store the query and create a new one to return
         queries.insert((language, query_type), query);
         
-        Ok(query)
+        // Create a new query instance to return since Query doesn't implement Clone
+        let return_query = Query::new(&lang, &query_content)
+            .map_err(|e| format!("Failed to parse query: {}", e))?;
+        
+        Ok(return_query)
     }
 
     /// Parse a file and return the parsed result
@@ -245,7 +297,7 @@ impl ParserPool {
         // Get or create a parser for this language
         let mut parsers = self.parsers.lock().unwrap();
         let parser = parsers.entry(language).or_insert_with(|| {
-            let mut parser = Parser::new();
+            let parser = Parser::new();
             // In a real implementation, we would set the language here
             // parser.set_language(&get_language(language)).unwrap();
             parser

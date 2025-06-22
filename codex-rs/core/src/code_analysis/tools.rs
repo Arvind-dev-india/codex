@@ -333,9 +333,8 @@ pub fn handle_find_symbol_definitions(args: Value) -> Option<Result<Value, Strin
 
 /// Handle the get_code_graph tool call
 pub fn handle_get_code_graph(args: Value) -> Option<Result<Value, String>> {
-    Some({
-        let input: GetCodeGraphInput = serde_json::from_value(args)
-            .map_err(|e| format!("Invalid arguments: {}", e))?;
+    Some(match serde_json::from_value::<GetCodeGraphInput>(args) {
+        Ok(input) => {
         
         // In a real implementation, we would:
         // 1. Create a repository mapper
@@ -352,7 +351,9 @@ pub fn handle_get_code_graph(args: Value) -> Option<Result<Value, String>> {
             
             // Map the repository
             if let Some(ref mut mapper) = *repo_mapper_guard {
-                mapper.map_repository()?;
+                if let Err(e) = mapper.map_repository() {
+                    return Some(Err(format!("Failed to map repository: {}", e)));
+                }
             }
         }
         
@@ -360,7 +361,7 @@ pub fn handle_get_code_graph(args: Value) -> Option<Result<Value, String>> {
         let graph = if let Some(ref mapper) = *repo_mapper_guard {
             mapper.get_graph()
         } else {
-            return Err("Failed to create repository mapper".to_string());
+            return Some(Err("Failed to create repository mapper".to_string()));
         };
         
         // Convert the graph to the output format
@@ -394,87 +395,90 @@ pub fn handle_get_code_graph(args: Value) -> Option<Result<Value, String>> {
             "root_path": input.root_path,
             "graph": GraphInfo { nodes, edges },
         }))
+        },
+        Err(e) => Err(format!("Invalid arguments: {}", e))
     })
 }
 
 /// Handle the get_symbol_subgraph tool call
 pub fn handle_get_symbol_subgraph(args: Value) -> Option<Result<Value, String>> {
-    Some({
-        let input: GetSymbolSubgraphInput = serde_json::from_value(args)
-            .map_err(|e| format!("Invalid arguments: {}", e))?;
-        
-        let repo_mapper_guard = REPO_MAPPER.lock().unwrap();
-        
-        // Check if the repository mapper exists
-        if repo_mapper_guard.is_none() {
-            return Err("Repository mapper not initialized. Call get_code_graph first.".to_string());
-        }
-        
-        // Get the subgraph
-        let graph = if let Some(ref mapper) = *repo_mapper_guard {
-            mapper.get_subgraph_bfs(&input.symbol_name, input.max_depth)
-        } else {
-            return Err("Failed to access repository mapper".to_string());
-        };
-        
-        // Convert the graph to the output format
-        let nodes = graph.nodes.iter().map(|node| NodeInfo {
-            id: node.id.clone(),
-            name: node.name.clone(),
-            node_type: match node.node_type {
-                CodeNodeType::File => "file".to_string(),
-                CodeNodeType::Function => "function".to_string(),
-                CodeNodeType::Method => "method".to_string(),
-                CodeNodeType::Class => "class".to_string(),
-                CodeNodeType::Struct => "struct".to_string(),
-                CodeNodeType::Module => "module".to_string(),
-            },
-            file_path: node.file_path.clone(),
-        }).collect::<Vec<_>>();
-        
-        let edges = graph.edges.iter().map(|edge| EdgeInfo {
-            source: edge.source.clone(),
-            target: edge.target.clone(),
-            edge_type: match edge.edge_type {
-                CodeEdgeType::Calls => "calls".to_string(),
-                CodeEdgeType::Imports => "imports".to_string(),
-                CodeEdgeType::Inherits => "inherits".to_string(),
-                CodeEdgeType::Contains => "contains".to_string(),
-                CodeEdgeType::References => "references".to_string(),
-            },
-        }).collect::<Vec<_>>();
-        
-        Ok(json!({
-            "symbol_name": input.symbol_name,
-            "max_depth": input.max_depth,
-            "graph": GraphInfo { nodes, edges },
-        }))
+    Some(match serde_json::from_value::<GetSymbolSubgraphInput>(args) {
+        Ok(input) => {
+            let repo_mapper_guard = REPO_MAPPER.lock().unwrap();
+            
+            // Check if the repository mapper exists
+            if repo_mapper_guard.is_none() {
+                Err("Repository mapper not initialized. Call get_code_graph first.".to_string())
+            } else {
+                // Get the subgraph
+                let graph = if let Some(ref mapper) = *repo_mapper_guard {
+                    mapper.get_subgraph_bfs(&input.symbol_name, input.max_depth)
+                } else {
+                    return Some(Err("Failed to access repository mapper".to_string()));
+                };
+                
+                // Convert the graph to the output format
+                let nodes = graph.nodes.iter().map(|node| NodeInfo {
+                    id: node.id.clone(),
+                    name: node.name.clone(),
+                    node_type: match node.node_type {
+                        CodeNodeType::File => "file".to_string(),
+                        CodeNodeType::Function => "function".to_string(),
+                        CodeNodeType::Method => "method".to_string(),
+                        CodeNodeType::Class => "class".to_string(),
+                        CodeNodeType::Struct => "struct".to_string(),
+                        CodeNodeType::Module => "module".to_string(),
+                    },
+                    file_path: node.file_path.clone(),
+                }).collect::<Vec<_>>();
+                
+                let edges = graph.edges.iter().map(|edge| EdgeInfo {
+                    source: edge.source.clone(),
+                    target: edge.target.clone(),
+                    edge_type: match edge.edge_type {
+                        CodeEdgeType::Calls => "calls".to_string(),
+                        CodeEdgeType::Imports => "imports".to_string(),
+                        CodeEdgeType::Inherits => "inherits".to_string(),
+                        CodeEdgeType::Contains => "contains".to_string(),
+                        CodeEdgeType::References => "references".to_string(),
+                    },
+                }).collect::<Vec<_>>();
+                
+                Ok(json!({
+                    "symbol_name": input.symbol_name,
+                    "max_depth": input.max_depth,
+                    "graph": GraphInfo { nodes, edges },
+                }))
+            }
+        },
+        Err(e) => Err(format!("Invalid arguments: {}", e))
     })
 }
 
 /// Handle the update_code_graph tool call
 pub fn handle_update_code_graph(args: Value) -> Option<Result<Value, String>> {
-    Some({
-        let _input: UpdateCodeGraphInput = serde_json::from_value(args)
-            .map_err(|e| format!("Invalid arguments: {}", e))?;
-        
-        let mut repo_mapper_guard = REPO_MAPPER.lock().unwrap();
-        
-        // Check if the repository mapper exists
-        if repo_mapper_guard.is_none() {
-            return Err("Repository mapper not initialized. Call get_code_graph first.".to_string());
-        }
-        
-        // Update the repository map
-        if let Some(ref mut mapper) = *repo_mapper_guard {
-            mapper.update_repository()?;
+    Some(match serde_json::from_value::<UpdateCodeGraphInput>(args) {
+        Ok(_input) => {
+            let mut repo_mapper_guard = REPO_MAPPER.lock().unwrap();
             
-            Ok(json!({
-                "status": "success",
-                "message": "Code graph updated successfully",
-            }))
-        } else {
-            Err("Failed to access repository mapper".to_string())
-        }
+            // Check if the repository mapper exists
+            if repo_mapper_guard.is_none() {
+                Err("Repository mapper not initialized. Call get_code_graph first.".to_string())
+            } else {
+                // Update the repository map
+                if let Some(ref mut mapper) = *repo_mapper_guard {
+                    match mapper.update_repository() {
+                        Ok(_) => Ok(json!({
+                            "status": "success",
+                            "message": "Code graph updated successfully",
+                        })),
+                        Err(e) => Err(format!("Failed to update repository: {}", e))
+                    }
+                } else {
+                    Err("Failed to access repository mapper".to_string())
+                }
+            }
+        },
+        Err(e) => Err(format!("Invalid arguments: {}", e))
     })
 }

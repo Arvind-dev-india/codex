@@ -24,6 +24,8 @@ use crate::code_analysis::tools::{
     handle_find_symbol_references,
     handle_find_symbol_definitions,
     handle_get_code_graph,
+    handle_get_symbol_subgraph,
+    handle_update_code_graph,
 };
 use crate::config_types::AzureDevOpsConfig;
 use crate::mcp_tool_call::ToolCall;
@@ -221,7 +223,7 @@ impl McpConnectionManager {
         
         // Check if this is a code analysis tool
         if server.is_empty() {
-            let args = arguments.unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
+            let args = arguments.clone().unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
             
             let result = match tool {
                 "analyze_code" => handle_analyze_code(args),
