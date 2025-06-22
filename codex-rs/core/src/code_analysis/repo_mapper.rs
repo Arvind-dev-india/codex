@@ -81,7 +81,8 @@ impl RepoMapper {
 
     /// Map the repository structure
     pub fn map_repository(&mut self) -> Result<(), String> {
-        self.scan_directory(&self.root_path)?;
+        let root_path = self.root_path.clone();
+        self.scan_directory(&root_path)?;
         self.build_graph_from_context();
         Ok(())
     }

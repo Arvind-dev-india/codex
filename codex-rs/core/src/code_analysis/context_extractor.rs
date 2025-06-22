@@ -84,35 +84,41 @@ impl ContextExtractor {
 
         // Parse the file
         let parsed_file = get_parser_pool().parse_file(file_path, &content)?;
-
-        // Track symbols defined in this file
-        let file_symbols = self.file_symbols.entry(file_path.to_string()).or_insert_with(HashSet::new);
         
         // Extract symbols based on the language
-        let result = match parsed_file.language {
-            SupportedLanguage::Rust => self.extract_rust_symbols(&parsed_file),
-            SupportedLanguage::JavaScript | SupportedLanguage::TypeScript => {
-                self.extract_js_ts_symbols(&parsed_file)
-            }
-            SupportedLanguage::Python => self.extract_python_symbols(&parsed_file),
-            SupportedLanguage::CSharp => self.extract_csharp_symbols(&parsed_file),
-            SupportedLanguage::Cpp => self.extract_cpp_symbols(&parsed_file),
-            SupportedLanguage::Java => self.extract_java_symbols(&parsed_file),
-            SupportedLanguage::Go => self.extract_go_symbols(&parsed_file),
-            _ => Ok(()), // Not implemented for other languages yet
-        };
+        let result = self.extract_symbols_from_parsed_file(&parsed_file);
         
         // If extraction was successful, update the file_symbols map
         if result.is_ok() {
             // Find all symbols defined in this file
+            let mut symbols_in_file = HashSet::new();
             for (name, symbol) in &self.symbols {
                 if symbol.file_path == file_path {
-                    file_symbols.insert(name.clone());
+                    symbols_in_file.insert(name.clone());
                 }
             }
+            
+            // Update the file_symbols map
+            self.file_symbols.insert(file_path.to_string(), symbols_in_file);
         }
         
         result
+    }
+    
+    /// Extract symbols from a parsed file
+    fn extract_symbols_from_parsed_file(&mut self, parsed_file: &ParsedFile) -> Result<(), String> {
+        // Extract symbols based on the language
+        match parsed_file.language {
+            SupportedLanguage::Rust => self.extract_rust_symbols(parsed_file),
+            SupportedLanguage::JavaScript | SupportedLanguage::TypeScript => {
+                self.extract_js_ts_symbols(parsed_file)
+            }
+            SupportedLanguage::Python => self.extract_python_symbols(parsed_file),
+            SupportedLanguage::CSharp => self.extract_csharp_symbols(parsed_file),
+            SupportedLanguage::Cpp => self.extract_cpp_symbols(parsed_file),
+            SupportedLanguage::Java => self.extract_java_symbols(parsed_file),
+            SupportedLanguage::Go => self.extract_go_symbols(parsed_file),
+        }
     }
     
     /// Extract symbols from a file using incremental parsing if possible
@@ -120,31 +126,21 @@ impl ContextExtractor {
         // Parse the file if needed
         let parsed_file = get_parser_pool().parse_file_if_needed(file_path)?;
         
-        // Track symbols defined in this file
-        let file_symbols = self.file_symbols.entry(file_path.to_string()).or_insert_with(HashSet::new);
-        
         // Extract symbols based on the language
-        let result = match parsed_file.language {
-            SupportedLanguage::Rust => self.extract_rust_symbols(&parsed_file),
-            SupportedLanguage::JavaScript | SupportedLanguage::TypeScript => {
-                self.extract_js_ts_symbols(&parsed_file)
-            }
-            SupportedLanguage::Python => self.extract_python_symbols(&parsed_file),
-            SupportedLanguage::CSharp => self.extract_csharp_symbols(&parsed_file),
-            SupportedLanguage::Cpp => self.extract_cpp_symbols(&parsed_file),
-            SupportedLanguage::Java => self.extract_java_symbols(&parsed_file),
-            SupportedLanguage::Go => self.extract_go_symbols(&parsed_file),
-            _ => Ok(()), // Not implemented for other languages yet
-        };
+        let result = self.extract_symbols_from_parsed_file(&parsed_file);
         
         // If extraction was successful, update the file_symbols map
         if result.is_ok() {
             // Find all symbols defined in this file
+            let mut symbols_in_file = HashSet::new();
             for (name, symbol) in &self.symbols {
                 if symbol.file_path == file_path {
-                    file_symbols.insert(name.clone());
+                    symbols_in_file.insert(name.clone());
                 }
             }
+            
+            // Update the file_symbols map
+            self.file_symbols.insert(file_path.to_string(), symbols_in_file);
         }
         
         result

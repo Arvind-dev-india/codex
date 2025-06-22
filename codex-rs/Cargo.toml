@@ -36,3 +36,8 @@ lto = "fat"
 # Because we bundle some of these executables with the TypeScript CLI, we
 # remove everything to make the binary as small as possible.
 strip = "symbols"
+
+[patch.crates-io]
+# Force all tree-sitter parsers to use a compatible version of cc
+cc = { git = "https://github.com/rust-lang/cc-rs.git", tag = "1.0.83" }
+

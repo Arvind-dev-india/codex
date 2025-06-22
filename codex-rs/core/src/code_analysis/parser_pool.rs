@@ -8,6 +8,9 @@ use std::time::SystemTime;
 use tree_sitter::{Language, Parser, Query, QueryCursor, Tree};
 use once_cell::sync::Lazy;
 
+// Import the tree-sitter language parsers
+extern crate tree_sitter_rust;
+
 /// Supported languages for parsing
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SupportedLanguage {
@@ -27,13 +30,6 @@ impl SupportedLanguage {
     pub fn get_extensions(&self) -> Vec<&'static str> {
         match self {
             SupportedLanguage::Rust => vec!["rs"],
-            SupportedLanguage::JavaScript => vec!["js", "jsx", "mjs"],
-            SupportedLanguage::TypeScript => vec!["ts", "tsx"],
-            SupportedLanguage::Python => vec!["py"],
-            SupportedLanguage::Go => vec!["go"],
-            SupportedLanguage::Cpp => vec!["cpp", "cc", "cxx", "h", "hpp"],
-            SupportedLanguage::CSharp => vec!["cs"],
-            SupportedLanguage::Java => vec!["java"],
         }
     }
 
@@ -42,20 +38,6 @@ impl SupportedLanguage {
         let ext = ext.to_lowercase();
         if ext == "rs" {
             Some(SupportedLanguage::Rust)
-        } else if ext == "js" || ext == "jsx" || ext == "mjs" {
-            Some(SupportedLanguage::JavaScript)
-        } else if ext == "ts" || ext == "tsx" {
-            Some(SupportedLanguage::TypeScript)
-        } else if ext == "py" {
-            Some(SupportedLanguage::Python)
-        } else if ext == "go" {
-            Some(SupportedLanguage::Go)
-        } else if ext == "cpp" || ext == "cc" || ext == "cxx" || ext == "h" || ext == "hpp" {
-            Some(SupportedLanguage::Cpp)
-        } else if ext == "cs" {
-            Some(SupportedLanguage::CSharp)
-        } else if ext == "java" {
-            Some(SupportedLanguage::Java)
         } else {
             None
         }
@@ -69,6 +51,7 @@ impl SupportedLanguage {
     }
 }
 
+#[derive(Clone)]
 /// Parsed file with its Tree-sitter tree and source code
 pub struct ParsedFile {
     pub path: String,
@@ -87,7 +70,7 @@ impl ParsedFile {
         let lang = parser_pool.load_language(self.language)?;
         
         // Create a query from the query string
-        let query = Query::new(lang, query_str)
+        let query = Query::new(&lang, query_str)
             .map_err(|e| format!("Failed to parse query: {}", e))?;
         
         // Execute the query
@@ -120,7 +103,7 @@ impl ParsedFile {
         
         // Convert the matches to our QueryMatch struct
         let mut result = Vec::new();
-        for match_ in matches {
+        for match_ in matches.iter() {
             let mut captures = Vec::new();
             for capture in match_.captures {
                 let node = capture.node;
@@ -209,14 +192,9 @@ impl ParserPool {
         // Load the language
         let lang = match language {
             SupportedLanguage::Rust => tree_sitter_rust::language(),
-            SupportedLanguage::JavaScript => tree_sitter_javascript::language(),
-            SupportedLanguage::TypeScript => tree_sitter_typescript::language_typescript(),
-            SupportedLanguage::Python => tree_sitter_python::language(),
-            SupportedLanguage::CSharp => tree_sitter_c_sharp::language(),
-            SupportedLanguage::Cpp => tree_sitter_cpp::language(),
-            SupportedLanguage::Java => tree_sitter_java::language(),
-            SupportedLanguage::Go => tree_sitter_go::language(),
-            _ => return Err(format!("Language not supported: {:?}", language)),
+            // Other languages are not currently supported due to dependency issues
+            // We'll add them back as we resolve the issues
+            _ => return Err(format!("Language parser not available for: {:?}", language)),
         };
         
         // Store the language
@@ -239,13 +217,6 @@ impl ParserPool {
         // Get the query file path
         let query_file = match language {
             SupportedLanguage::Rust => "rust.scm",
-            SupportedLanguage::JavaScript => "javascript.scm",
-            SupportedLanguage::TypeScript => "typescript.scm",
-            SupportedLanguage::Python => "python.scm",
-            SupportedLanguage::CSharp => "csharp.scm",
-            SupportedLanguage::Cpp => "cpp.scm",
-            SupportedLanguage::Java => "java.scm",
-            SupportedLanguage::Go => "go.scm",
             _ => return Err(format!("Query not available for language: {:?}", language)),
         };
         
@@ -255,11 +226,11 @@ impl ParserPool {
             .map_err(|e| format!("Failed to read query file {}: {}", query_path, e))?;
         
         // Create the query
-        let query = Query::new(lang, &query_content)
+        let query = Query::new(&lang, &query_content)
             .map_err(|e| format!("Failed to parse query: {}", e))?;
         
         // Store the query
-        queries.insert((language, query_type), query.clone());
+        queries.insert((language, query_type), query);
         
         Ok(query)
     }

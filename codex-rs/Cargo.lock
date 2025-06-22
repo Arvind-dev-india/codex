@@ -626,6 +626,7 @@ dependencies = [
  "maplit",
  "mcp-types",
  "mime_guess",
+ "once_cell",
  "openssl-sys",
  "patch",
  "path-absolutize",
@@ -647,6 +648,7 @@ dependencies = [
  "tracing",
  "tree-sitter",
  "tree-sitter-bash",
+ "tree-sitter-rust",
  "urlencoding",
  "uuid",
  "wildmatch",
@@ -4562,9 +4564,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter"
-version = "0.25.3"
+version = "0.25.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9ac5ea5e7f2f1700842ec071401010b9c59bf735295f6e9fa079c3dc035b167"
+checksum = "a7cf18d43cbf0bfca51f657132cc616a5097edc4424d538bae6fa60142eaf9f0"
 dependencies = [
  "cc",
  "regex",
@@ -4589,6 +4591,16 @@ name = "tree-sitter-language"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c4013970217383f67b18aef68f6fb2e8d409bc5755227092d32efb0422ba24b8"
+
+[[package]]
+name = "tree-sitter-rust"
+version = "0.24.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4b9b18034c684a2420722be8b2a91c9c44f2546b631c039edf575ccba8c61be1"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
 
 [[package]]
 name = "try-lock"
@@ -5441,3 +5453,8 @@ checksum = "99a5bab8d7dedf81405c4bb1f2b83ea057643d9cb28778cea9eecddeedd2e028"
 dependencies = [
  "zune-core",
 ]
+
+[[patch.unused]]
+name = "cc"
+version = "1.0.83"
+source = "git+https://github.com/rust-lang/cc-rs.git?tag=1.0.83#bfc3ba414e896f48a70d55d9be1097e2945e17ad"

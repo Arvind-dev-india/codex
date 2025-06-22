@@ -3,6 +3,6 @@
 mod parser_pool;
 mod context_extractor;
 mod repo_mapper;
-mod tools;
+pub mod tools;
 
 pub use tools::register_code_analysis_tools;

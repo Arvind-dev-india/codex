@@ -311,6 +311,28 @@ When using these tools with an LLM, the LLM can make function calls to analyze c
 - The `get_symbol_subgraph` tool allows limiting the size of the graph by specifying a maximum depth
 - The `update_code_graph` tool allows updating the graph without rebuilding it from scratch
 
+## Dependency Resolution
+
+The code analysis tools use Tree-sitter parsers for different programming languages. We use the latest available versions of tree-sitter and its language parsers to ensure compatibility and access to the latest features.
+
+In our Cargo.toml, we specify the versions of all tree-sitter dependencies:
+
+```toml
+# Use the latest available versions of tree-sitter and its parsers
+tree-sitter = "0.25.6"
+tree-sitter-bash = "0.23.3"
+tree-sitter-rust = "0.24.0"
+tree-sitter-javascript = "0.23.1"
+tree-sitter-typescript = "0.23.2"
+tree-sitter-python = "0.20.4"
+tree-sitter-c-sharp = "0.20.0"
+tree-sitter-cpp = "0.20.3"
+tree-sitter-java = "0.20.2"
+tree-sitter-go = "0.20.0"
+```
+
+Note that for TypeScript, we use the `language_typescript()` function from the `tree-sitter-typescript` package, which provides the TypeScript grammar specifically (as opposed to TSX).
+
 ## Adding Support for Additional Languages
 
 If you want to add support for additional programming languages, you'll need to:
@@ -322,6 +344,8 @@ If you want to add support for additional programming languages, you'll need to:
    ```toml
    tree-sitter-<language> = "<version>"
    ```
+   
+   Use the latest available version that's compatible with our tree-sitter version (0.25.6).
 
 2. **Create a Query File**
 

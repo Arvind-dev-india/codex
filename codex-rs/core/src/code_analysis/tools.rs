@@ -131,7 +131,7 @@ fn create_get_symbol_subgraph_tool() -> OpenAiTool {
 
 /// Create a tool for updating the code graph
 fn create_update_code_graph_tool() -> OpenAiTool {
-    let mut properties = BTreeMap::new();
+    let properties = BTreeMap::new();
     
     create_function_tool(
         "update_code_graph",
@@ -233,9 +233,8 @@ struct EdgeInfo {
 
 /// Handle the analyze_code tool call
 pub fn handle_analyze_code(args: Value) -> Option<Result<Value, String>> {
-    Some({
-        let input: AnalyzeCodeInput = serde_json::from_value(args)
-            .map_err(|e| format!("Invalid arguments: {}", e))?;
+    Some(match serde_json::from_value::<AnalyzeCodeInput>(args) {
+        Ok(input) => {
         
         // In a real implementation, we would:
         // 1. Parse the file
@@ -266,14 +265,15 @@ pub fn handle_analyze_code(args: Value) -> Option<Result<Value, String>> {
             "file_path": input.file_path,
             "symbols": symbols,
         }))
+        },
+        Err(e) => Err(format!("Invalid arguments: {}", e)),
     })
 }
 
 /// Handle the find_symbol_references tool call
 pub fn handle_find_symbol_references(args: Value) -> Option<Result<Value, String>> {
-    Some({
-        let input: FindSymbolReferencesInput = serde_json::from_value(args)
-            .map_err(|e| format!("Invalid arguments: {}", e))?;
+    Some(match serde_json::from_value::<FindSymbolReferencesInput>(args) {
+        Ok(input) => {
         
         // In a real implementation, we would:
         // 1. Look up the symbol in the context extractor
@@ -300,14 +300,15 @@ pub fn handle_find_symbol_references(args: Value) -> Option<Result<Value, String
             "symbol_name": input.symbol_name,
             "references": references,
         }))
+        },
+        Err(e) => Err(format!("Invalid arguments: {}", e)),
     })
 }
 
 /// Handle the find_symbol_definitions tool call
 pub fn handle_find_symbol_definitions(args: Value) -> Option<Result<Value, String>> {
-    Some({
-        let input: FindSymbolDefinitionsInput = serde_json::from_value(args)
-            .map_err(|e| format!("Invalid arguments: {}", e))?;
+    Some(match serde_json::from_value::<FindSymbolDefinitionsInput>(args) {
+        Ok(input) => {
         
         // In a real implementation, we would:
         // 1. Look up the symbol in the context extractor
@@ -325,6 +326,8 @@ pub fn handle_find_symbol_definitions(args: Value) -> Option<Result<Value, Strin
             "symbol_name": input.symbol_name,
             "definition": definition,
         }))
+        },
+        Err(e) => Err(format!("Invalid arguments: {}", e)),
     })
 }
 
