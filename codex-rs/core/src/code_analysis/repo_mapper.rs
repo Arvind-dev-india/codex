@@ -176,7 +176,7 @@ impl RepoMapper {
     /// Build the graph from the extracted context
     fn build_graph_from_context(&mut self) {
         // Create nodes for all symbols
-        for (symbol_name, symbol) in self.context_extractor.get_symbols() {
+        for (fqn, symbol) in self.context_extractor.get_symbols() {
             let node_type = match symbol.symbol_type {
                 super::context_extractor::SymbolType::Function => CodeNodeType::Function,
                 super::context_extractor::SymbolType::Method => CodeNodeType::Method,
@@ -187,21 +187,21 @@ impl RepoMapper {
             };
 
             let node = CodeNode {
-                id: format!("symbol:{}", symbol_name),
-                name: symbol_name.clone(),
+                id: format!("symbol:{}", fqn),
+                name: symbol.name.clone(),
                 node_type,
                 file_path: symbol.file_path.clone(),
                 start_line: symbol.start_line,
                 end_line: symbol.end_line,
             };
 
-            self.symbol_nodes.insert(symbol_name.clone(), node);
+            self.symbol_nodes.insert(fqn.clone(), node);
 
             // Create a "contains" edge from the file to the symbol
             if let Some(file_node) = self.file_nodes.get(&symbol.file_path) {
                 self.edges.push(CodeEdge {
                     source: file_node.id.clone(),
-                    target: format!("symbol:{}", symbol_name),
+                    target: format!("symbol:{}", fqn),
                     edge_type: CodeEdgeType::Contains,
                 });
             }
@@ -220,7 +220,23 @@ impl RepoMapper {
             // This is a simplification - in a real implementation, we would need to find the
             // exact symbol containing this reference
             if let Some(file_node) = self.file_nodes.get(&reference.reference_file) {
-                if let Some(target_node) = self.symbol_nodes.get(&reference.symbol_name) {
+                // Use the FQN if available, otherwise fall back to the symbol name
+                let target_key = if !reference.symbol_fqn.is_empty() {
+                    &reference.symbol_fqn
+                } else {
+                    // Try to find the FQN from the name
+                    if let Some(fqns) = self.context_extractor.get_name_to_fqns().get(&reference.symbol_name) {
+                        if !fqns.is_empty() {
+                            &fqns[0]
+                        } else {
+                            continue;
+                        }
+                    } else {
+                        continue;
+                    }
+                };
+                
+                if let Some(target_node) = self.symbol_nodes.get(target_key) {
                     self.edges.push(CodeEdge {
                         source: file_node.id.clone(),
                         target: target_node.id.clone(),
@@ -331,8 +347,8 @@ impl RepoMapper {
         } 
         // Check if it's a symbol node
         else if id.starts_with("symbol:") {
-            let symbol_name = id.strip_prefix("symbol:")?;
-            return self.symbol_nodes.get(symbol_name);
+            let fqn = id.strip_prefix("symbol:")?;
+            return self.symbol_nodes.get(fqn);
         }
         
         None

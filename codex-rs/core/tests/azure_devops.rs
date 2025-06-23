@@ -59,7 +59,7 @@ mod tests {
             "https://dev.azure.com/test-org",
         );
         
-        let client = AzureDevOpsClient::new(auth_handler);
+        let _client = AzureDevOpsClient::new(auth_handler);
         
         // This is testing an internal method, so we can't directly call it
         // Instead, we'll need to modify the client to expose this method for testing

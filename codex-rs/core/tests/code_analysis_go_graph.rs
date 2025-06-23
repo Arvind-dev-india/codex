@@ -150,7 +150,9 @@ impl Person {
     
     // Get the code graph for the project
     let input = GetCodeGraphInput {
-        directory: dir.path().to_str().unwrap().to_string(),
+        root_path: dir.path().to_str().unwrap().to_string(),
+        include_files: None,
+        exclude_patterns: None,
     };
     
     let result = get_code_graph_handler(input);
@@ -161,8 +163,9 @@ impl Person {
     let graph = result.unwrap();
     
     // Check that the graph contains nodes for all files and symbols
-    let nodes = graph.get("nodes").expect("No nodes found in graph");
-    let edges = graph.get("edges").expect("No edges found in graph");
+    let graph_data = graph.get("graph").expect("No graph data found");
+    let nodes = graph_data.get("nodes").expect("No nodes found in graph");
+    let edges = graph_data.get("edges").expect("No edges found in graph");
     
     let nodes_array = nodes.as_array().expect("Nodes is not an array");
     let edges_array = edges.as_array().expect("Edges is not an array");
@@ -206,9 +209,7 @@ pub mod age_calculator;
     fs::write(utils_mod_path, updated_utils_mod_rs).unwrap();
     
     // Update the code graph
-    let update_input = UpdateCodeGraphInput {
-        directory: dir.path().to_str().unwrap().to_string(),
-    };
+    let update_input = UpdateCodeGraphInput {};
     
     let update_result = update_code_graph_handler(update_input);
     
@@ -218,7 +219,8 @@ pub mod age_calculator;
     let updated_graph = update_result.unwrap();
     
     // Check that the updated graph contains the new file and function
-    let updated_nodes = updated_graph.get("nodes").expect("No nodes found in updated graph");
+    let updated_graph_data = updated_graph.get("graph").expect("No graph data found in updated graph");
+    let updated_nodes = updated_graph_data.get("nodes").expect("No nodes found in updated graph");
     let updated_nodes_array = updated_nodes.as_array().expect("Updated nodes is not an array");
     
     let has_age_calculator_file = updated_nodes_array.iter().any(|n| {
