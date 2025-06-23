@@ -1210,6 +1210,26 @@ async fn handle_function_call(
             )
             .await
         }
+        // Check for Code Analysis tools directly (both qualified and unqualified names)
+        "analyze_code" | "find_symbol_references" | "find_symbol_definitions" | 
+        "get_code_graph" | "get_symbol_subgraph" | "update_code_graph" |
+        "code_analysis.analyze_code" | "code_analysis.find_symbol_references" | "code_analysis.find_symbol_definitions" | 
+        "code_analysis.get_code_graph" | "code_analysis.get_symbol_subgraph" | "code_analysis.update_code_graph" => {
+            // For Code Analysis tools, use "code_analysis" as server name
+            let timeout = None;
+            
+            // Extract the tool name without the prefix if it has one
+            let tool_name = if name.starts_with("code_analysis.") {
+                name.strip_prefix("code_analysis.").unwrap().to_string()
+            } else {
+                name.to_string()
+            };
+            
+            handle_mcp_tool_call(
+                sess, &sub_id, call_id, "code_analysis".to_string(), tool_name, arguments, timeout,
+            )
+            .await
+        }
         _ => {
             match try_parse_fully_qualified_tool_name(&name) {
                 Some((server, tool_name)) => {

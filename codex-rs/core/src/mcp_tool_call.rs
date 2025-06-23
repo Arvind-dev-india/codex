@@ -3,12 +3,6 @@ use std::time::Duration;
 use serde_json::Value;
 use tracing::error;
 
-use crate::code_analysis::tools::{
-    handle_analyze_code,
-    handle_find_symbol_references,
-    handle_find_symbol_definitions,
-    handle_get_code_graph,
-};
 
 use crate::codex::Session;
 use crate::models::FunctionCallOutputPayload;

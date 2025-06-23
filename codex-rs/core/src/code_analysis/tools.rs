@@ -29,7 +29,7 @@ fn create_analyze_code_tool() -> OpenAiTool {
     );
     
     create_function_tool(
-        "analyze_code",
+        "code_analysis.analyze_code",
         "Analyzes the code in a file and returns information about functions, classes, and other symbols.",
         properties,
         &["file_path"],
@@ -46,7 +46,7 @@ fn create_find_symbol_references_tool() -> OpenAiTool {
     );
     
     create_function_tool(
-        "find_symbol_references",
+        "code_analysis.find_symbol_references",
         "Finds all references to a symbol (function, class, variable, etc.) in the codebase.",
         properties,
         &["symbol_name"],
@@ -63,7 +63,7 @@ fn create_find_symbol_definitions_tool() -> OpenAiTool {
     );
     
     create_function_tool(
-        "find_symbol_definitions",
+        "code_analysis.find_symbol_definitions",
         "Finds the definition of a symbol (function, class, variable, etc.) in the codebase.",
         properties,
         &["symbol_name"],
@@ -94,7 +94,7 @@ fn create_get_code_graph_tool() -> OpenAiTool {
     );
     
     create_function_tool(
-        "get_code_graph",
+        "code_analysis.get_code_graph",
         "Generates a graph of code references and dependencies.",
         properties,
         &["root_path"],
@@ -116,7 +116,7 @@ fn create_get_symbol_subgraph_tool() -> OpenAiTool {
     );
     
     create_function_tool(
-        "get_symbol_subgraph",
+        "code_analysis.get_symbol_subgraph",
         "Generates a subgraph of code references starting from a specific symbol, with a maximum traversal depth.",
         properties,
         &["symbol_name", "max_depth"],
@@ -128,7 +128,7 @@ fn create_update_code_graph_tool() -> OpenAiTool {
     let properties = BTreeMap::new();
     
     create_function_tool(
-        "update_code_graph",
+        "code_analysis.update_code_graph",
         "Updates the code graph by re-parsing any files that have changed since the last parse.",
         properties,
         &[],
@@ -272,13 +272,72 @@ pub fn handle_analyze_code(args: Value) -> Option<Result<Value, String>> {
                             let parts: Vec<&str> = line.trim().split('(').collect();
                             if parts.len() > 0 {
                                 let fn_name = parts[0].trim_start_matches("fn ").trim();
+                                
+                                // Try to find the end of the function
+                                let mut end_line = line_num;
+                                let mut brace_count = 0;
+                                let mut in_function = false;
+                                
+                                // Look for the opening brace
+                                if line.contains('{') {
+                                    brace_count = 1;
+                                    in_function = true;
+                                }
+                                
+                                // If the opening brace is not on the same line, look for it
+                                if !in_function {
+                                    for (i, next_line) in file_content.lines().enumerate().skip(line_num) {
+                                        if next_line.contains('{') {
+                                            brace_count = 1;
+                                            in_function = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                                
+                                // If we found the opening brace, look for the closing brace
+                                if in_function {
+                                    for (i, next_line) in file_content.lines().enumerate().skip(line_num) {
+                                        if next_line.contains('{') {
+                                            brace_count += next_line.matches('{').count();
+                                        }
+                                        if next_line.contains('}') {
+                                            brace_count -= next_line.matches('}').count();
+                                            if brace_count == 0 {
+                                                end_line = i + 1; // 1-based line numbers
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                // Find parent (module or impl block)
+                                let mut parent = None;
+                                let lines: Vec<&str> = file_content.lines().collect();
+                                for i in (0..line_num - 1).rev() {
+                                    let prev_line = lines[i];
+                                    if prev_line.trim().starts_with("impl ") {
+                                        let impl_parts: Vec<&str> = prev_line.trim().split_whitespace().collect();
+                                        if impl_parts.len() > 1 {
+                                            parent = Some(impl_parts[1].trim_end_matches('{').trim().to_string());
+                                            break;
+                                        }
+                                    } else if prev_line.trim().starts_with("mod ") {
+                                        let mod_parts: Vec<&str> = prev_line.trim().split_whitespace().collect();
+                                        if mod_parts.len() > 1 {
+                                            parent = Some(mod_parts[1].trim_end_matches('{').trim().to_string());
+                                            break;
+                                        }
+                                    }
+                                }
+                                
                                 symbols.push(SymbolInfo {
                                     name: fn_name.to_string(),
                                     symbol_type: "function".to_string(),
                                     file_path: file_path.clone(),
                                     start_line: line_num,
-                                    end_line: line_num,
-                                    parent: None,
+                                    end_line: end_line,
+                                    parent: parent,
                                 });
                             }
                         }
@@ -288,13 +347,66 @@ pub fn handle_analyze_code(args: Value) -> Option<Result<Value, String>> {
                             let parts: Vec<&str> = line.trim().split('{').collect();
                             if parts.len() > 0 {
                                 let struct_name = parts[0].trim_start_matches("struct ").trim();
+                                
+                                // Try to find the end of the struct
+                                let mut end_line = line_num;
+                                let mut brace_count = 0;
+                                let mut in_struct = false;
+                                
+                                // Look for the opening brace
+                                if line.contains('{') {
+                                    brace_count = 1;
+                                    in_struct = true;
+                                }
+                                
+                                // If the opening brace is not on the same line, look for it
+                                if !in_struct {
+                                    for (i, next_line) in file_content.lines().enumerate().skip(line_num) {
+                                        if next_line.contains('{') {
+                                            brace_count = 1;
+                                            in_struct = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                                
+                                // If we found the opening brace, look for the closing brace
+                                if in_struct {
+                                    for (i, next_line) in file_content.lines().enumerate().skip(line_num) {
+                                        if next_line.contains('{') {
+                                            brace_count += next_line.matches('{').count();
+                                        }
+                                        if next_line.contains('}') {
+                                            brace_count -= next_line.matches('}').count();
+                                            if brace_count == 0 {
+                                                end_line = i + 1; // 1-based line numbers
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                // Find parent (module)
+                                let mut parent = None;
+                                let lines: Vec<&str> = file_content.lines().collect();
+                                for i in (0..line_num - 1).rev() {
+                                    let prev_line = lines[i];
+                                    if prev_line.trim().starts_with("mod ") {
+                                        let mod_parts: Vec<&str> = prev_line.trim().split_whitespace().collect();
+                                        if mod_parts.len() > 1 {
+                                            parent = Some(mod_parts[1].trim_end_matches('{').trim().to_string());
+                                            break;
+                                        }
+                                    }
+                                }
+                                
                                 symbols.push(SymbolInfo {
                                     name: struct_name.to_string(),
                                     symbol_type: "struct".to_string(),
                                     file_path: file_path.clone(),
                                     start_line: line_num,
-                                    end_line: line_num,
-                                    parent: None,
+                                    end_line: end_line,
+                                    parent: parent,
                                 });
                             }
                         }
@@ -304,13 +416,66 @@ pub fn handle_analyze_code(args: Value) -> Option<Result<Value, String>> {
                             let parts: Vec<&str> = line.trim().split('(').collect();
                             if parts.len() > 0 && parts[0].contains("fn ") {
                                 let method_name = parts[0].split("fn ").last().unwrap_or("").trim();
+                                
+                                // Try to find the end of the method
+                                let mut end_line = line_num;
+                                let mut brace_count = 0;
+                                let mut in_method = false;
+                                
+                                // Look for the opening brace
+                                if line.contains('{') {
+                                    brace_count = 1;
+                                    in_method = true;
+                                }
+                                
+                                // If the opening brace is not on the same line, look for it
+                                if !in_method {
+                                    for (i, next_line) in file_content.lines().enumerate().skip(line_num) {
+                                        if next_line.contains('{') {
+                                            brace_count = 1;
+                                            in_method = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                                
+                                // If we found the opening brace, look for the closing brace
+                                if in_method {
+                                    for (i, next_line) in file_content.lines().enumerate().skip(line_num) {
+                                        if next_line.contains('{') {
+                                            brace_count += next_line.matches('{').count();
+                                        }
+                                        if next_line.contains('}') {
+                                            brace_count -= next_line.matches('}').count();
+                                            if brace_count == 0 {
+                                                end_line = i + 1; // 1-based line numbers
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                // Find parent (impl block)
+                                let mut parent = None;
+                                let lines: Vec<&str> = file_content.lines().collect();
+                                for i in (0..line_num - 1).rev() {
+                                    let prev_line = lines[i];
+                                    if prev_line.trim().starts_with("impl ") {
+                                        let impl_parts: Vec<&str> = prev_line.trim().split_whitespace().collect();
+                                        if impl_parts.len() > 1 {
+                                            parent = Some(impl_parts[1].trim_end_matches('{').trim().to_string());
+                                            break;
+                                        }
+                                    }
+                                }
+                                
                                 symbols.push(SymbolInfo {
                                     name: method_name.to_string(),
                                     symbol_type: "method".to_string(),
                                     file_path: file_path.clone(),
                                     start_line: line_num,
-                                    end_line: line_num,
-                                    parent: None,
+                                    end_line: end_line,
+                                    parent: parent,
                                 });
                             }
                         }
@@ -877,11 +1042,10 @@ pub fn handle_get_code_graph(args: Value) -> Option<Result<Value, String>> {
                 },
             ];
             
-            let graph = GraphInfo { nodes, edges };
-            
             Ok(json!({
                 "root_path": input.root_path,
-                "graph": graph,
+                "nodes": nodes,
+                "edges": edges
             }))
         },
         Err(e) => Err(format!("Invalid arguments: {}", e))
