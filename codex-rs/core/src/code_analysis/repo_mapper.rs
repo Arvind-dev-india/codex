@@ -353,6 +353,36 @@ impl RepoMapper {
         
         None
     }
+    
+    /// Find references to a symbol by name
+    pub fn find_symbol_references(&self, symbol_name: &str) -> Vec<&SymbolReference> {
+        self.context_extractor.find_references(symbol_name)
+    }
+    
+    /// Find references to a symbol by FQN
+    pub fn find_symbol_references_by_fqn(&self, fqn: &str) -> Vec<&SymbolReference> {
+        self.context_extractor.find_references_by_fqn(fqn)
+    }
+    
+    /// Find symbol definitions by name
+    pub fn find_symbol_definitions(&self, symbol_name: &str) -> Vec<&CodeSymbol> {
+        self.context_extractor.find_symbols_by_name(symbol_name)
+    }
+    
+    /// Find symbol definition by FQN
+    pub fn find_symbol_definition_by_fqn(&self, fqn: &str) -> Option<&CodeSymbol> {
+        self.context_extractor.find_symbol_by_fqn(fqn)
+    }
+    
+    /// Get all symbols with their FQNs
+    pub fn get_all_symbols(&self) -> &std::collections::HashMap<String, CodeSymbol> {
+        self.context_extractor.get_symbols()
+    }
+    
+    /// Get mapping from symbol names to FQNs
+    pub fn get_name_to_fqns(&self) -> &std::collections::HashMap<String, Vec<String>> {
+        self.context_extractor.get_name_to_fqns()
+    }
 }
 
 /// Create a new repository mapper
