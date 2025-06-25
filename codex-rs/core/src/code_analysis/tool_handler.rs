@@ -21,96 +21,90 @@ static CODE_GRAPH_INITIALIZED: AtomicBool = AtomicBool::new(false);
 static INIT: Once = Once::new();
 
 /// Initialize the code graph by scanning the repository
-fn initialize_code_graph() {
+fn initialize_code_graph_with_path(root_path: &str) {
     // Only initialize once
     INIT.call_once(|| {
-        // Get the current working directory
-        if let Ok(current_dir) = std::env::current_dir() {
-            // Call update_code_graph with the current directory
-            let args = json!({
-                "root_path": current_dir.to_string_lossy().to_string()
-            });
-            
-            if let Some(result) = handle_update_code_graph(args) {
-                match result {
-                    Ok(_) => {
-                        // Set the flag to indicate that the code graph has been initialized
-                        CODE_GRAPH_INITIALIZED.store(true, Ordering::SeqCst);
-                        println!("Code graph initialized successfully");
-                    },
-                    Err(e) => {
-                        eprintln!("Failed to initialize code graph: {}", e);
-                    }
+        // Call update_code_graph with the specified root path
+        let args = json!({
+            "root_path": root_path
+        });
+        
+        if let Some(result) = handle_update_code_graph(args) {
+            match result {
+                Ok(_) => {
+                    // Set the flag to indicate that the code graph has been initialized
+                    CODE_GRAPH_INITIALIZED.store(true, Ordering::SeqCst);
+                    println!("Code graph initialized successfully for path: {}", root_path);
+                },
+                Err(e) => {
+                    eprintln!("Failed to initialize code graph for path {}: {}", root_path, e);
                 }
             }
         }
     });
 }
 
+/// Initialize the code graph by scanning the current working directory (fallback)
+fn initialize_code_graph() {
+    // Get the current working directory as fallback
+    if let Ok(current_dir) = std::env::current_dir() {
+        initialize_code_graph_with_path(&current_dir.to_string_lossy().to_string());
+    }
+}
+
 /// Handle Code Analysis tool calls
 pub async fn handle_code_analysis_tool_call(
     tool_call: &ToolCall,
 ) -> Result<Value> {
-    // Initialize the code graph if it hasn't been initialized yet
-    if !CODE_GRAPH_INITIALIZED.load(Ordering::SeqCst) {
-        initialize_code_graph();
-    }
-    
     // Extract tool name and arguments
     let name = &tool_call.name;
     let mut args = tool_call.arguments.clone();
     
+    // Initialize the code graph if it hasn't been initialized yet
+    // Try to get the root path from the arguments first
+    if !CODE_GRAPH_INITIALIZED.load(Ordering::SeqCst) {
+        if let Some(obj) = args.as_object() {
+            if let Some(root_path_value) = obj.get("root_path") {
+                if let Some(root_path) = root_path_value.as_str() {
+                    initialize_code_graph_with_path(root_path);
+                } else {
+                    initialize_code_graph();
+                }
+            } else {
+                initialize_code_graph();
+            }
+        } else {
+            initialize_code_graph();
+        }
+    }
+    
     // Fix file paths in the arguments if needed
-    if name.as_str() == "code_analysis.analyze_code" || name.as_str() == "code_analysis.get_code_graph" {
+    if name.as_str() == "code_analysis.analyze_code" {
         if let Some(obj) = args.as_object_mut() {
-            // Check file_path for analyze_code or root_path for get_code_graph
-            let path_key = if name.as_str() == "code_analysis.analyze_code" { "file_path" } else { "root_path" };
-            
-            // Get the file path value
-            let mut new_path_value = None;
-            
-            if let Some(file_path_value) = obj.get(path_key) {
+            if let Some(file_path_value) = obj.get("file_path") {
                 if let Some(file_path) = file_path_value.as_str() {
                     // Check if the file exists at the given path
                     let path = Path::new(file_path);
                     if !path.exists() {
-                        // Try to find the file relative to the current working directory
+                        // Try to resolve the path relative to the current working directory
                         if let Ok(current_dir) = std::env::current_dir() {
-                            // First, check if the path starts with "codex-rs/"
-                            if file_path.starts_with("codex-rs/") {
-                                // Remove the "codex-rs/" prefix if we're already in the codex-rs directory
-                                let dir_name = current_dir.file_name()
+                            let absolute_path = current_dir.join(file_path);
+                            if absolute_path.exists() {
+                                obj.insert("file_path".to_string(), json!(absolute_path.to_string_lossy().to_string()));
+                            } else {
+                                // Try without any prefixes (in case the path has unnecessary prefixes)
+                                let file_name = Path::new(file_path).file_name()
                                     .and_then(|name| name.to_str())
-                                    .unwrap_or("");
+                                    .unwrap_or(file_path);
                                 
-                                if dir_name == "codex-rs" {
-                                    new_path_value = Some(file_path.strip_prefix("codex-rs/").unwrap_or(file_path).to_string());
-                                }
-                            }
-                            
-                            // Special case for "codex-rs/src/lib.rs" which doesn't exist
-                            // Instead, we have multiple lib.rs files in different subdirectories
-                            if file_path == "codex-rs/src/lib.rs" || file_path == "src/lib.rs" {
-                                // Use the core/src/lib.rs as a fallback
-                                new_path_value = Some("core/src/lib.rs".to_string());
-                            }
-                            
-                            // Special case for "README.md" which might be at the root
-                            if file_path == "README.md" {
-                                // Check if README.md exists in the current directory
-                                let readme_path = current_dir.join("README.md");
-                                if readme_path.exists() {
-                                    new_path_value = Some("README.md".to_string());
+                                // Search for the file in the current directory tree
+                                if let Some(found_path) = find_file_in_directory(&current_dir, file_name) {
+                                    obj.insert("file_path".to_string(), json!(found_path));
                                 }
                             }
                         }
                     }
                 }
-            }
-            
-            // Apply the new path if we found one
-            if let Some(new_path) = new_path_value {
-                obj.insert(path_key.to_string(), json!(new_path));
             }
         }
     }
@@ -151,4 +145,42 @@ pub async fn handle_code_analysis_tool_call(
             Err(CodexErr::Other(format!("Unknown Code Analysis tool: {}", name)))
         }
     }
+}
+
+/// Helper function to find a file by name in a directory tree
+fn find_file_in_directory(dir: &Path, file_name: &str) -> Option<String> {
+    use std::fs;
+    
+    // Check if the file exists directly in this directory
+    let direct_path = dir.join(file_name);
+    if direct_path.exists() {
+        return Some(direct_path.to_string_lossy().to_string());
+    }
+    
+    // Search recursively in subdirectories (with depth limit to avoid infinite loops)
+    fn search_recursive(dir: &Path, file_name: &str, depth: usize) -> Option<String> {
+        if depth > 10 {  // Limit recursion depth
+            return None;
+        }
+        
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() && path.file_name().and_then(|n| n.to_str()) == Some(file_name) {
+                    return Some(path.to_string_lossy().to_string());
+                } else if path.is_dir() {
+                    // Skip hidden directories and common directories to ignore
+                    let dir_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                    if !dir_name.starts_with('.') && !["node_modules", "target", "dist"].contains(&dir_name) {
+                        if let Some(found) = search_recursive(&path, file_name, depth + 1) {
+                            return Some(found);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+    
+    search_recursive(dir, file_name, 0)
 }

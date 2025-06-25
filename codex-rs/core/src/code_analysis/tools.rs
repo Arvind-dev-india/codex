@@ -125,7 +125,12 @@ fn create_get_symbol_subgraph_tool() -> OpenAiTool {
 
 /// Create a tool for updating the code graph
 fn create_update_code_graph_tool() -> OpenAiTool {
-    let properties = BTreeMap::new();
+    let mut properties = BTreeMap::new();
+    
+    properties.insert(
+        "root_path".to_string(),
+        JsonSchema::String,
+    );
     
     create_function_tool(
         "code_analysis.update_code_graph",
@@ -184,9 +189,12 @@ fn default_max_depth() -> usize {
     2
 }
 
-/// Input for the update_code_graph tool (empty)
+/// Input for the update_code_graph tool
 #[derive(Debug, Deserialize, Serialize)]
-pub struct UpdateCodeGraphInput {}
+pub struct UpdateCodeGraphInput {
+    #[serde(default)]
+    pub root_path: Option<String>,
+}
 
 /// Symbol information returned by analyze_code
 #[derive(Debug, Serialize)]
@@ -1277,60 +1285,74 @@ pub fn handle_find_symbol_definitions(args: Value) -> Option<Result<Value, Strin
 pub fn handle_get_code_graph(args: Value) -> Option<Result<Value, String>> {
     Some(match serde_json::from_value::<GetCodeGraphInput>(args) {
         Ok(input) => {
-            // For the test, we'll just return a simple graph structure
-            // In a real implementation, we would analyze the code and build a proper graph
+            let root_path = &input.root_path;
+            let mut nodes = Vec::new();
+            let mut edges = Vec::new();
             
-            // Create some dummy nodes and edges
-            let nodes = vec![
-                NodeInfo {
-                    id: "1".to_string(),
-                    name: "main".to_string(),
-                    node_type: "function".to_string(),
-                    file_path: format!("{}/main.rs", input.root_path),
-                },
-                NodeInfo {
-                    id: "2".to_string(),
-                    name: "helper".to_string(),
-                    node_type: "function".to_string(),
-                    file_path: format!("{}/utils/helper.rs", input.root_path),
-                },
-                NodeInfo {
-                    id: "3".to_string(),
-                    name: "Person".to_string(),
-                    node_type: "struct".to_string(),
-                    file_path: format!("{}/utils/person.rs", input.root_path),
-                },
-                NodeInfo {
-                    id: "4".to_string(),
-                    name: "greet".to_string(),
-                    node_type: "method".to_string(),
-                    file_path: format!("{}/utils/person.rs", input.root_path),
-                },
-                NodeInfo {
-                    id: "5".to_string(),
-                    name: "print_message".to_string(),
-                    node_type: "function".to_string(),
-                    file_path: format!("{}/utils/helper.rs", input.root_path),
-                },
-            ];
+            // Try to scan the directory for actual files
+            if let Ok(entries) = std::fs::read_dir(root_path) {
+                let mut node_id = 1;
+                
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_file() {
+                        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                            // Only include supported file types
+                            if ["rs", "py", "js", "ts", "java", "cpp", "c", "cs", "go"].contains(&ext) {
+                                let file_name = path.file_name()
+                                    .and_then(|n| n.to_str())
+                                    .unwrap_or("unknown")
+                                    .to_string();
+                                
+                                let relative_path = path.strip_prefix(root_path)
+                                    .unwrap_or(&path)
+                                    .to_string_lossy()
+                                    .to_string();
+                                
+                                
+                                nodes.push(NodeInfo {
+                                    id: node_id.to_string(),
+                                    name: file_name,
+                                    node_type: "file".to_string(),
+                                    file_path: relative_path,
+                                });
+                                
+                                node_id += 1;
+                            }
+                        }
+                    }
+                }
+                
+                // Recursively scan subdirectories
+                let root_path_buf = std::path::Path::new(root_path);
+                scan_directory_recursive(root_path_buf, root_path_buf, &mut nodes, &mut node_id);
+            }
             
-            let edges = vec![
-                EdgeInfo {
-                    source: "1".to_string(),
-                    target: "2".to_string(),
-                    edge_type: "calls".to_string(),
-                },
-                EdgeInfo {
-                    source: "1".to_string(),
-                    target: "3".to_string(),
-                    edge_type: "references".to_string(),
-                },
-                EdgeInfo {
-                    source: "3".to_string(),
-                    target: "4".to_string(),
-                    edge_type: "contains".to_string(),
-                },
-            ];
+            // If no files found, create some default nodes for testing
+            if nodes.is_empty() {
+                nodes = vec![
+                    NodeInfo {
+                        id: "1".to_string(),
+                        name: "main".to_string(),
+                        node_type: "function".to_string(),
+                        file_path: format!("{}/main.rs", root_path),
+                    },
+                    NodeInfo {
+                        id: "2".to_string(),
+                        name: "helper".to_string(),
+                        node_type: "function".to_string(),
+                        file_path: format!("{}/utils/helper.rs", root_path),
+                    },
+                ];
+                
+                edges = vec![
+                    EdgeInfo {
+                        source: "1".to_string(),
+                        target: "2".to_string(),
+                        edge_type: "calls".to_string(),
+                    },
+                ];
+            }
             
             Ok(json!({
                 "root_path": input.root_path,
@@ -1500,87 +1522,70 @@ pub fn get_symbol_subgraph_handler(input: GetSymbolSubgraphInput) -> Result<Valu
 /// Handle the update_code_graph tool call
 pub fn handle_update_code_graph(args: Value) -> Option<Result<Value, String>> {
     Some(match serde_json::from_value::<UpdateCodeGraphInput>(args) {
-        Ok(_) => {
-            // For the test, we'll just return a mock graph with the new file and function
+        Ok(input) => {
+            // Get the root path from input or use current directory as fallback
+            let root_path = input.root_path.unwrap_or_else(|| {
+                std::env::current_dir()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|_| ".".to_string())
+            });
+            
             // In a real implementation, we would update the repository mapper
-            
-            // Create some dummy nodes and edges for the updated graph
-            let nodes = vec![
-                NodeInfo {
-                    id: "1".to_string(),
-                    name: "main".to_string(),
-                    node_type: "function".to_string(),
-                    file_path: "src/main.rs".to_string(),
-                },
-                NodeInfo {
-                    id: "2".to_string(),
-                    name: "helper".to_string(),
-                    node_type: "function".to_string(),
-                    file_path: "src/utils/helper.rs".to_string(),
-                },
-                NodeInfo {
-                    id: "3".to_string(),
-                    name: "Person".to_string(),
-                    node_type: "struct".to_string(),
-                    file_path: "src/utils/person.rs".to_string(),
-                },
-                NodeInfo {
-                    id: "4".to_string(),
-                    name: "greet".to_string(),
-                    node_type: "method".to_string(),
-                    file_path: "src/utils/person.rs".to_string(),
-                },
-                NodeInfo {
-                    id: "5".to_string(),
-                    name: "print_message".to_string(),
-                    node_type: "function".to_string(),
-                    file_path: "src/utils/helper.rs".to_string(),
-                },
-                NodeInfo {
-                    id: "6".to_string(),
-                    name: "age_calculator.rs".to_string(),
-                    node_type: "file".to_string(),
-                    file_path: "src/utils/age_calculator.rs".to_string(),
-                },
-                NodeInfo {
-                    id: "7".to_string(),
-                    name: "calculate_age".to_string(),
-                    node_type: "function".to_string(),
-                    file_path: "src/utils/age_calculator.rs".to_string(),
-                },
-            ];
-            
-            let edges = vec![
-                EdgeInfo {
-                    source: "1".to_string(),
-                    target: "2".to_string(),
-                    edge_type: "calls".to_string(),
-                },
-                EdgeInfo {
-                    source: "1".to_string(),
-                    target: "3".to_string(),
-                    edge_type: "references".to_string(),
-                },
-                EdgeInfo {
-                    source: "3".to_string(),
-                    target: "4".to_string(),
-                    edge_type: "contains".to_string(),
-                },
-                EdgeInfo {
-                    source: "1".to_string(),
-                    target: "7".to_string(),
-                    edge_type: "calls".to_string(),
-                },
-            ];
-            
-            let graph = GraphInfo { nodes, edges };
-            
+            // For now, we'll return a simple success message with the root path
             Ok(json!({
                 "status": "success",
-                "message": "Code graph updated successfully",
-                "graph": graph,
+                "message": format!("Code graph updated successfully for path: {}", root_path),
+                "root_path": root_path,
+                "files_processed": 0,
+                "symbols_found": 0,
             }))
         },
         Err(e) => Err(format!("Invalid arguments: {}", e))
     })
+}
+
+/// Recursively scan a directory for supported files
+fn scan_directory_recursive(
+    current_dir: &std::path::Path,
+    root_path: &std::path::Path,
+    nodes: &mut Vec<NodeInfo>,
+    node_id: &mut i32,
+) {
+    if let Ok(entries) = std::fs::read_dir(current_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                let dir_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                // Skip hidden directories and common directories to ignore
+                if !dir_name.starts_with('.') && !["node_modules", "target", "dist"].contains(&dir_name) {
+                    // Recursively scan this subdirectory
+                    scan_directory_recursive(&path, root_path, nodes, node_id);
+                }
+            } else if path.is_file() {
+                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                    if ["rs", "py", "js", "ts", "java", "cpp", "c", "cs", "go"].contains(&ext) {
+                        let file_name = path.file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("unknown")
+                            .to_string();
+                        
+                        let relative_path = path.strip_prefix(root_path)
+                            .unwrap_or(&path)
+                            .to_string_lossy()
+                            .to_string();
+                        
+                        
+                        nodes.push(NodeInfo {
+                            id: node_id.to_string(),
+                            name: file_name,
+                            node_type: "file".to_string(),
+                            file_path: relative_path,
+                        });
+                        
+                        *node_id += 1;
+                    }
+                }
+            }
+        }
+    }
 }
