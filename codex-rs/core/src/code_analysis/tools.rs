@@ -906,8 +906,10 @@ pub fn handle_find_symbol_references(args: Value) -> Option<Result<Value, String
                             // Recursively search subdirectories
                             search_directory_for_references(&entry.path(), &input.symbol_name, &mut references);
                         } else if let Some(extension) = entry.path().extension() {
-                            if extension == "rs" {
-                                search_file_for_references(&entry.path(), &input.symbol_name, &mut references);
+                            if let Some(ext_str) = extension.to_str() {
+                                if ["rs", "py", "js", "ts", "java", "cpp", "c", "cs", "go", "h", "hpp", "cc", "cxx"].contains(&ext_str) {
+                                    search_file_for_references(&entry.path(), &input.symbol_name, &mut references);
+                                }
                             }
                         }
                     }
@@ -920,47 +922,8 @@ pub fn handle_find_symbol_references(args: Value) -> Option<Result<Value, String
                 search_directory_for_references(&src_dir, &input.symbol_name, &mut references);
             }
             
-            if references.is_empty() {
-                // Fallback to hardcoded test data for specific symbols
-                if input.symbol_name == "Person" {
-                    references = vec![
-                        ReferenceInfo {
-                            file_path: "src/main.rs".to_string(),
-                            line: 15,
-                            column: 10,
-                            reference_type: "usage".to_string(),
-                        },
-                        ReferenceInfo {
-                            file_path: "src/main.rs".to_string(),
-                            line: 25,
-                            column: 5,
-                            reference_type: "usage".to_string(),
-                        },
-                        ReferenceInfo {
-                            file_path: "src/utils/person.rs".to_string(),
-                            line: 1,
-                            column: 1,
-                            reference_type: "declaration".to_string(),
-                        },
-                    ];
-                } else {
-                    // Default response for other symbols
-                    references = vec![
-                        ReferenceInfo {
-                            file_path: "src/main.rs".to_string(),
-                            line: 15,
-                            column: 10,
-                            reference_type: "call".to_string(),
-                        },
-                        ReferenceInfo {
-                            file_path: "src/lib.rs".to_string(),
-                            line: 25,
-                            column: 5,
-                            reference_type: "usage".to_string(),
-                        },
-                    ];
-                }
-            }
+            // If no references found, return empty array instead of hardcoded fallback
+            // The hardcoded fallback was causing issues when working in different directories
             
             Ok(Value::Array(references.into_iter().map(|r| {
                 json!({
@@ -983,8 +946,10 @@ fn search_directory_for_references(dir: &std::path::Path, symbol_name: &str, ref
                 if metadata.is_dir() {
                     search_directory_for_references(&entry.path(), symbol_name, references);
                 } else if let Some(extension) = entry.path().extension() {
-                    if extension == "rs" {
-                        search_file_for_references(&entry.path(), symbol_name, references);
+                    if let Some(ext_str) = extension.to_str() {
+                        if ["rs", "py", "js", "ts", "java", "cpp", "c", "cs", "go", "h", "hpp", "cc", "cxx"].contains(&ext_str) {
+                            search_file_for_references(&entry.path(), symbol_name, references);
+                        }
                     }
                 }
             }
@@ -996,34 +961,12 @@ fn search_directory_for_references(dir: &std::path::Path, symbol_name: &str, ref
 fn search_file_for_references(file_path: &std::path::Path, symbol_name: &str, references: &mut Vec<ReferenceInfo>) {
     if let Ok(content) = std::fs::read_to_string(file_path) {
         let file_path_str = file_path.to_string_lossy().to_string();
+        let file_extension = file_path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
         
         for (line_num, line) in content.lines().enumerate() {
             let line_num = line_num + 1; // 1-based line numbers
             
-            // Look for struct definitions (these are also references)
-            if line.trim().starts_with("struct ") || line.trim().starts_with("pub struct ") {
-                let parts: Vec<&str> = line.trim().split_whitespace().collect();
-                if parts.len() >= 2 {
-                    let struct_name = if parts[0] == "pub" && parts[1] == "struct" && parts.len() >= 3 {
-                        parts[2].trim_end_matches('{').trim()
-                    } else if parts[0] == "struct" {
-                        parts[1].trim_end_matches('{').trim()
-                    } else {
-                        continue;
-                    };
-                    
-                    if struct_name == symbol_name {
-                        references.push(ReferenceInfo {
-                            file_path: file_path_str.clone(),
-                            line: line_num,
-                            column: line.find(symbol_name).unwrap_or(0) + 1, // 1-based column
-                            reference_type: "definition".to_string(),
-                        });
-                    }
-                }
-            }
-            
-            // Look for any other occurrences of the symbol name
+            // Look for any occurrences of the symbol name
             if let Some(pos) = line.find(symbol_name) {
                 // Make sure it's a word boundary (not part of another word)
                 let is_word_boundary = {
@@ -1034,16 +977,8 @@ fn search_file_for_references(file_path: &std::path::Path, symbol_name: &str, re
                 };
                 
                 if is_word_boundary {
-                    // Determine the reference type based on context
-                    let reference_type = if line.trim().starts_with("struct ") || line.trim().starts_with("pub struct ") {
-                        "definition"
-                    } else if line.contains("::") && line.contains(symbol_name) {
-                        "usage"
-                    } else if line.contains("let ") && line.contains(symbol_name) {
-                        "instantiation"
-                    } else {
-                        "usage"
-                    };
+                    // Determine the reference type based on context and language
+                    let reference_type = determine_reference_type(line, symbol_name, file_extension);
                     
                     references.push(ReferenceInfo {
                         file_path: file_path_str.clone(),
@@ -1057,6 +992,114 @@ fn search_file_for_references(file_path: &std::path::Path, symbol_name: &str, re
     }
 }
 
+/// Determine the type of reference based on the line content and file extension
+fn determine_reference_type(line: &str, symbol_name: &str, file_extension: &str) -> &'static str {
+    let trimmed_line = line.trim();
+    
+    match file_extension {
+        "rs" => {
+            if trimmed_line.starts_with("struct ") || trimmed_line.starts_with("pub struct ") {
+                "definition"
+            } else if trimmed_line.starts_with("fn ") || trimmed_line.starts_with("pub fn ") {
+                "definition"
+            } else if trimmed_line.starts_with("impl ") {
+                "implementation"
+            } else if line.contains("::") && line.contains(symbol_name) {
+                "usage"
+            } else if line.contains("let ") && line.contains(symbol_name) {
+                "instantiation"
+            } else {
+                "usage"
+            }
+        },
+        "py" => {
+            if trimmed_line.starts_with("def ") && trimmed_line.contains(symbol_name) {
+                "definition"
+            } else if trimmed_line.starts_with("class ") && trimmed_line.contains(symbol_name) {
+                "definition"
+            } else if trimmed_line.contains("import ") && trimmed_line.contains(symbol_name) {
+                "import"
+            } else {
+                "usage"
+            }
+        },
+        "js" | "ts" => {
+            if trimmed_line.starts_with("function ") && trimmed_line.contains(symbol_name) {
+                "definition"
+            } else if trimmed_line.starts_with("class ") && trimmed_line.contains(symbol_name) {
+                "definition"
+            } else if trimmed_line.contains("const ") && trimmed_line.contains(symbol_name) {
+                "definition"
+            } else if trimmed_line.contains("let ") && trimmed_line.contains(symbol_name) {
+                "definition"
+            } else if trimmed_line.contains("var ") && trimmed_line.contains(symbol_name) {
+                "definition"
+            } else if trimmed_line.contains("import ") && trimmed_line.contains(symbol_name) {
+                "import"
+            } else {
+                "usage"
+            }
+        },
+        "java" => {
+            if trimmed_line.contains("class ") && trimmed_line.contains(symbol_name) {
+                "definition"
+            } else if trimmed_line.contains("interface ") && trimmed_line.contains(symbol_name) {
+                "definition"
+            } else if trimmed_line.contains("public ") && trimmed_line.contains(symbol_name) && trimmed_line.contains("(") {
+                "definition"
+            } else if trimmed_line.contains("private ") && trimmed_line.contains(symbol_name) && trimmed_line.contains("(") {
+                "definition"
+            } else if trimmed_line.contains("import ") && trimmed_line.contains(symbol_name) {
+                "import"
+            } else {
+                "usage"
+            }
+        },
+        "cpp" | "c" | "cc" | "cxx" | "h" | "hpp" => {
+            if trimmed_line.contains("class ") && trimmed_line.contains(symbol_name) {
+                "definition"
+            } else if trimmed_line.contains("struct ") && trimmed_line.contains(symbol_name) {
+                "definition"
+            } else if trimmed_line.contains("#include") && trimmed_line.contains(symbol_name) {
+                "include"
+            } else if trimmed_line.contains("void ") && trimmed_line.contains(symbol_name) && trimmed_line.contains("(") {
+                "definition"
+            } else if trimmed_line.contains("int ") && trimmed_line.contains(symbol_name) && trimmed_line.contains("(") {
+                "definition"
+            } else {
+                "usage"
+            }
+        },
+        "cs" => {
+            if trimmed_line.contains("class ") && trimmed_line.contains(symbol_name) {
+                "definition"
+            } else if trimmed_line.contains("interface ") && trimmed_line.contains(symbol_name) {
+                "definition"
+            } else if trimmed_line.contains("public ") && trimmed_line.contains(symbol_name) && trimmed_line.contains("(") {
+                "definition"
+            } else if trimmed_line.contains("private ") && trimmed_line.contains(symbol_name) && trimmed_line.contains("(") {
+                "definition"
+            } else if trimmed_line.contains("using ") && trimmed_line.contains(symbol_name) {
+                "import"
+            } else {
+                "usage"
+            }
+        },
+        "go" => {
+            if trimmed_line.starts_with("func ") && trimmed_line.contains(symbol_name) {
+                "definition"
+            } else if trimmed_line.starts_with("type ") && trimmed_line.contains(symbol_name) {
+                "definition"
+            } else if trimmed_line.contains("import ") && trimmed_line.contains(symbol_name) {
+                "import"
+            } else {
+                "usage"
+            }
+        },
+        _ => "usage"
+    }
+}
+
 /// Search a directory recursively for symbol definitions
 fn search_directory_for_definitions(dir: &std::path::Path, symbol_name: &str, definitions: &mut Vec<DefinitionInfo>) {
     if let Ok(entries) = std::fs::read_dir(dir) {
@@ -1065,8 +1108,10 @@ fn search_directory_for_definitions(dir: &std::path::Path, symbol_name: &str, de
                 if metadata.is_dir() {
                     search_directory_for_definitions(&entry.path(), symbol_name, definitions);
                 } else if let Some(extension) = entry.path().extension() {
-                    if extension == "rs" {
-                        search_file_for_definitions(&entry.path(), symbol_name, definitions);
+                    if let Some(ext_str) = extension.to_str() {
+                        if ["rs", "py", "js", "ts", "java", "cpp", "c", "cs", "go", "h", "hpp", "cc", "cxx"].contains(&ext_str) {
+                            search_file_for_definitions(&entry.path(), symbol_name, definitions);
+                        }
                     }
                 }
             }
@@ -1078,12 +1123,32 @@ fn search_directory_for_definitions(dir: &std::path::Path, symbol_name: &str, de
 fn search_file_for_definitions(file_path: &std::path::Path, symbol_name: &str, definitions: &mut Vec<DefinitionInfo>) {
     if let Ok(content) = std::fs::read_to_string(file_path) {
         let file_path_str = file_path.to_string_lossy().to_string();
+        let file_extension = file_path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
         
         for (line_num, line) in content.lines().enumerate() {
             let line_num = line_num + 1; // 1-based line numbers
             
-            // Look for struct definitions
-            if line.trim().starts_with("struct ") || line.trim().starts_with("pub struct ") {
+            // Search for definitions based on the file type
+            if let Some((symbol_type, start_line, end_line)) = find_definition_in_line(line, symbol_name, file_extension, line_num) {
+                definitions.push(DefinitionInfo {
+                    file_path: file_path_str.clone(),
+                    start_line,
+                    end_line,
+                    symbol_type,
+                });
+            }
+        }
+    }
+}
+
+/// Find a definition in a line based on the programming language
+fn find_definition_in_line(line: &str, symbol_name: &str, file_extension: &str, line_num: usize) -> Option<(String, usize, usize)> {
+    let trimmed_line = line.trim();
+    
+    match file_extension {
+        "rs" => {
+            // Rust definitions
+            if (trimmed_line.starts_with("struct ") || trimmed_line.starts_with("pub struct ")) && trimmed_line.contains(symbol_name) {
                 let parts: Vec<&str> = line.trim().split_whitespace().collect();
                 if parts.len() >= 2 {
                     let struct_name = if parts[0] == "pub" && parts[1] == "struct" && parts.len() >= 3 {
@@ -1091,61 +1156,15 @@ fn search_file_for_definitions(file_path: &std::path::Path, symbol_name: &str, d
                     } else if parts[0] == "struct" {
                         parts[1].trim_end_matches('{').trim()
                     } else {
-                        continue;
+                        return None;
                     };
                     
                     if struct_name == symbol_name {
-                        // Find the end of the struct
-                        let mut end_line = line_num;
-                        let mut brace_count = 0;
-                        let mut found_opening_brace = false;
-                        
-                        // Check if opening brace is on the same line
-                        if line.contains('{') {
-                            brace_count = line.matches('{').count() as i32;
-                            found_opening_brace = true;
-                        }
-                        
-                        // Look for the opening brace if not found
-                        if !found_opening_brace {
-                            for (i, next_line) in content.lines().enumerate().skip(line_num) {
-                                if next_line.contains('{') {
-                                    brace_count = next_line.matches('{').count() as i32;
-                                    found_opening_brace = true;
-                                    break;
-                                }
-                            }
-                        }
-                        
-                        // Find the closing brace
-                        if found_opening_brace {
-                            for (i, next_line) in content.lines().enumerate().skip(line_num) {
-                                if next_line.contains('{') {
-                                    brace_count += next_line.matches('{').count() as i32;
-                                }
-                                if next_line.contains('}') {
-                                    brace_count -= next_line.matches('}').count() as i32;
-                                    if brace_count <= 0 {
-                                        end_line = i + 1;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        
-                        definitions.push(DefinitionInfo {
-                            file_path: file_path_str.clone(),
-                            start_line: line_num,
-                            end_line,
-                            symbol_type: "struct".to_string(),
-                        });
+                        return Some(("struct".to_string(), line_num, line_num + 5));
                     }
                 }
-            }
-            
-            // Look for function definitions
-            if line.trim().starts_with("fn ") || line.trim().starts_with("pub fn ") {
-                let parts: Vec<&str> = line.trim().split('(').collect();
+            } else if (trimmed_line.starts_with("fn ") || trimmed_line.starts_with("pub fn ")) && trimmed_line.contains(symbol_name) {
+                let parts: Vec<&str> = trimmed_line.split('(').collect();
                 if parts.len() > 0 {
                     let fn_part = parts[0];
                     let fn_parts: Vec<&str> = fn_part.split_whitespace().collect();
@@ -1154,59 +1173,153 @@ fn search_file_for_definitions(file_path: &std::path::Path, symbol_name: &str, d
                     } else if fn_parts.len() >= 2 && fn_parts[0] == "fn" {
                         fn_parts[1]
                     } else {
-                        continue;
+                        return None;
                     };
                     
                     if fn_name == symbol_name {
-                        // Find the end of the function
-                        let mut end_line = line_num;
-                        let mut brace_count = 0;
-                        let mut found_opening_brace = false;
-                        
-                        // Check if opening brace is on the same line
-                        if line.contains('{') {
-                            brace_count = line.matches('{').count() as i32;
-                            found_opening_brace = true;
-                        }
-                        
-                        // Look for the opening brace if not found
-                        if !found_opening_brace {
-                            for (i, next_line) in content.lines().enumerate().skip(line_num) {
-                                if next_line.contains('{') {
-                                    brace_count = next_line.matches('{').count() as i32;
-                                    found_opening_brace = true;
-                                    break;
-                                }
-                            }
-                        }
-                        
-                        // Find the closing brace
-                        if found_opening_brace {
-                            for (i, next_line) in content.lines().enumerate().skip(line_num) {
-                                if next_line.contains('{') {
-                                    brace_count += next_line.matches('{').count() as i32;
-                                }
-                                if next_line.contains('}') {
-                                    brace_count -= next_line.matches('}').count() as i32;
-                                    if brace_count <= 0 {
-                                        end_line = i + 1;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        
-                        definitions.push(DefinitionInfo {
-                            file_path: file_path_str.clone(),
-                            start_line: line_num,
-                            end_line,
-                            symbol_type: "function".to_string(),
-                        });
+                        return Some(("function".to_string(), line_num, line_num + 10));
                     }
                 }
             }
-        }
+        },
+        "py" => {
+            // Python definitions - simplified pattern matching
+            if trimmed_line.starts_with("def ") && trimmed_line.contains(symbol_name) {
+                if let Some(start) = trimmed_line.find("def ") {
+                    let after_def = &trimmed_line[start + 4..];
+                    if let Some(end) = after_def.find('(') {
+                        let fn_name = after_def[..end].trim();
+                        if fn_name == symbol_name {
+                            return Some(("function".to_string(), line_num, line_num + 10));
+                        }
+                    }
+                }
+            } else if trimmed_line.starts_with("class ") && trimmed_line.contains(symbol_name) {
+                if let Some(start) = trimmed_line.find("class ") {
+                    let after_class = &trimmed_line[start + 6..];
+                    let class_name = if let Some(end) = after_class.find(['(', ':']).or_else(|| after_class.find(' ')) {
+                        after_class[..end].trim()
+                    } else {
+                        after_class.trim()
+                    };
+                    if class_name == symbol_name {
+                        return Some(("class".to_string(), line_num, line_num + 20));
+                    }
+                }
+            }
+        },
+        "js" | "ts" => {
+            // JavaScript/TypeScript definitions
+            if trimmed_line.starts_with("function ") && trimmed_line.contains(symbol_name) {
+                if let Some(start) = trimmed_line.find("function ") {
+                    let after_func = &trimmed_line[start + 9..];
+                    if let Some(end) = after_func.find('(') {
+                        let fn_name = after_func[..end].trim();
+                        if fn_name == symbol_name {
+                            return Some(("function".to_string(), line_num, line_num + 10));
+                        }
+                    }
+                }
+            } else if trimmed_line.starts_with("class ") && trimmed_line.contains(symbol_name) {
+                if let Some(start) = trimmed_line.find("class ") {
+                    let after_class = &trimmed_line[start + 6..];
+                    let class_name = if let Some(end) = after_class.find([' ', '{', '(']) {
+                        after_class[..end].trim()
+                    } else {
+                        after_class.trim()
+                    };
+                    if class_name == symbol_name {
+                        return Some(("class".to_string(), line_num, line_num + 20));
+                    }
+                }
+            }
+        },
+        "java" | "cs" => {
+            // Java/C# definitions
+            if trimmed_line.contains("class ") && trimmed_line.contains(symbol_name) {
+                if let Some(start) = trimmed_line.find("class ") {
+                    let after_class = &trimmed_line[start + 6..];
+                    let class_name = if let Some(end) = after_class.find([' ', '{', '<', ':']) {
+                        after_class[..end].trim()
+                    } else {
+                        after_class.trim()
+                    };
+                    if class_name == symbol_name {
+                        return Some(("class".to_string(), line_num, line_num + 20));
+                    }
+                }
+            } else if (trimmed_line.contains("public ") || trimmed_line.contains("private ") || trimmed_line.contains("protected ")) 
+                && trimmed_line.contains("(") && trimmed_line.contains(symbol_name) {
+                // Simple method name extraction
+                let parts: Vec<&str> = trimmed_line.split_whitespace().collect();
+                for part in parts {
+                    if part.contains('(') {
+                        let method_name = part.split('(').next().unwrap_or("");
+                        if method_name == symbol_name {
+                            return Some(("method".to_string(), line_num, line_num + 10));
+                        }
+                    }
+                }
+            }
+        },
+        "cpp" | "c" | "cc" | "cxx" | "h" | "hpp" => {
+            // C/C++ definitions
+            if trimmed_line.contains("class ") && trimmed_line.contains(symbol_name) {
+                if let Some(start) = trimmed_line.find("class ") {
+                    let after_class = &trimmed_line[start + 6..];
+                    let class_name = if let Some(end) = after_class.find([' ', '{', ':', ';']) {
+                        after_class[..end].trim()
+                    } else {
+                        after_class.trim()
+                    };
+                    if class_name == symbol_name {
+                        return Some(("class".to_string(), line_num, line_num + 20));
+                    }
+                }
+            } else if trimmed_line.contains("struct ") && trimmed_line.contains(symbol_name) {
+                if let Some(start) = trimmed_line.find("struct ") {
+                    let after_struct = &trimmed_line[start + 7..];
+                    let struct_name = if let Some(end) = after_struct.find([' ', '{', ':', ';']) {
+                        after_struct[..end].trim()
+                    } else {
+                        after_struct.trim()
+                    };
+                    if struct_name == symbol_name {
+                        return Some(("struct".to_string(), line_num, line_num + 10));
+                    }
+                }
+            }
+        },
+        "go" => {
+            // Go definitions
+            if trimmed_line.starts_with("func ") && trimmed_line.contains(symbol_name) {
+                if let Some(start) = trimmed_line.find("func ") {
+                    let after_func = &trimmed_line[start + 5..];
+                    if let Some(end) = after_func.find('(') {
+                        let func_name = after_func[..end].trim();
+                        if func_name == symbol_name {
+                            return Some(("function".to_string(), line_num, line_num + 10));
+                        }
+                    }
+                }
+            } else if trimmed_line.starts_with("type ") && trimmed_line.contains(symbol_name) {
+                if let Some(start) = trimmed_line.find("type ") {
+                    let after_type = &trimmed_line[start + 5..];
+                    let type_name = if let Some(end) = after_type.find(' ') {
+                        after_type[..end].trim()
+                    } else {
+                        after_type.trim()
+                    };
+                    if type_name == symbol_name {
+                        return Some(("type".to_string(), line_num, line_num + 10));
+                    }
+                }
+            }
+        },
+        _ => {}
     }
+    
+    None
 }
 
 /// Handle the find_symbol_definitions tool call
@@ -1230,8 +1343,10 @@ pub fn handle_find_symbol_definitions(args: Value) -> Option<Result<Value, Strin
                             // Recursively search subdirectories
                             search_directory_for_definitions(&entry.path(), &input.symbol_name, &mut definitions);
                         } else if let Some(extension) = entry.path().extension() {
-                            if extension == "rs" {
-                                search_file_for_definitions(&entry.path(), &input.symbol_name, &mut definitions);
+                            if let Some(ext_str) = extension.to_str() {
+                                if ["rs", "py", "js", "ts", "java", "cpp", "c", "cs", "go", "h", "hpp", "cc", "cxx"].contains(&ext_str) {
+                                    search_file_for_definitions(&entry.path(), &input.symbol_name, &mut definitions);
+                                }
                             }
                         }
                     }
@@ -1244,29 +1359,8 @@ pub fn handle_find_symbol_definitions(args: Value) -> Option<Result<Value, Strin
                 search_directory_for_definitions(&src_dir, &input.symbol_name, &mut definitions);
             }
             
-            if definitions.is_empty() {
-                // Fallback to hardcoded test data for specific symbols
-                if input.symbol_name == "greet" {
-                    let definition = DefinitionInfo {
-                        file_path: "src/utils/person.rs".to_string(),
-                        start_line: 15,
-                        end_line: 17,
-                        symbol_type: "method".to_string(),
-                    };
-                    
-                    definitions.push(definition);
-                } else {
-                    // Default response for other symbols
-                    let definition = DefinitionInfo {
-                        file_path: "src/lib.rs".to_string(),
-                        start_line: 10,
-                        end_line: 20,
-                        symbol_type: "function".to_string(),
-                    };
-                    
-                    definitions.push(definition);
-                }
-            }
+            // If no definitions found, return empty array instead of hardcoded fallback
+            // The hardcoded fallback was causing issues when working in different directories
             
             Ok(Value::Array(definitions.into_iter().map(|d| {
                 json!({
