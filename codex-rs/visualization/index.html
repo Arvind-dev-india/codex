@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Code Symbol Graph Visualizer</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            height: 100vh;
+        }
+        
+        #sidebar {
+            width: 300px;
+            padding: 20px;
+            background-color: #f5f5f5;
+            overflow-y: auto;
+            border-right: 1px solid #ddd;
+        }
+        
+        #graph-container {
+            flex: 1;
+            overflow: hidden;
+            position: relative;
+        }
+        
+        #graph {
+            width: 100%;
+            height: 100%;
+        }
+        
+        .node {
+            cursor: pointer;
+        }
+        
+        .node circle {
+            stroke: #fff;
+            stroke-width: 2px;
+        }
+        
+        .node text {
+            font-size: 12px;
+        }
+        
+        .node.selected circle {
+            stroke: #ff6b6b;
+            stroke-width: 3px;
+        }
+        
+        .link {
+            fill: none;
+            stroke: #999;
+            stroke-opacity: 0.6;
+            stroke-width: 1.5px;
+        }
+        
+        .symbol-details {
+            margin-bottom: 20px;
+        }
+        
+        .symbol-details h2 {
+            margin-top: 0;
+            font-size: 18px;
+        }
+        
+        .symbol-details p {
+            margin: 5px 0;
+            font-size: 14px;
+        }
+        
+        .symbol-details .label {
+            font-weight: bold;
+        }
+        
+        .controls {
+            margin-bottom: 20px;
+        }
+        
+        .controls input[type="text"] {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 10px;
+        }
+        
+        .controls button {
+            padding: 8px 12px;
+            margin-right: 5px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        
+        .controls button:hover {
+            background-color: #45a049;
+        }
+        
+        .legend {
+            margin-top: 20px;
+            padding-top: 10px;
+            border-top: 1px solid #ddd;
+        }
+        
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 5px;
+        }
+        
+        .legend-color {
+            width: 15px;
+            height: 15px;
+            margin-right: 8px;
+            border-radius: 50%;
+        }
+        
+        .tooltip {
+            position: absolute;
+            background-color: rgba(255, 255, 255, 0.9);
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 10px;
+            font-size: 12px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+    </style>
+</head>
+<body>
+    <div id="sidebar">
+        <div class="controls">
+            <h2>Code Symbol Graph</h2>
+            
+            <div style="margin-bottom: 10px;">
+                <label for="jsonFile">Load Graph Data:</label>
+                <input type="file" id="jsonFile" accept=".json" style="width: 100%; margin-top: 5px;">
+            </div>
+            
+            <div style="margin-bottom: 10px;">
+                <label for="symbolSelect">Select Symbol:</label>
+                <select id="symbolSelect" style="width: 100%; padding: 5px; margin-top: 5px;" disabled>
+                    <option value="">-- Select a symbol --</option>
+                </select>
+            </div>
+            
+            <div style="margin-bottom: 10px;">
+                <label for="symbolTypeFilter">Filter by Type:</label>
+                <select id="symbolTypeFilter" style="width: 100%; padding: 5px; margin-top: 5px;" disabled>
+                    <option value="">All Types</option>
+                </select>
+            </div>
+            
+            <input type="text" id="search" placeholder="Search for symbols..." style="margin-bottom: 10px;">
+            <button id="reset-zoom">Reset View</button>
+            <button id="toggle-physics">Toggle Physics</button>
+            <button id="toggle-labels">Toggle Labels</button>
+        </div>
+        
+        <div class="symbol-details" id="symbol-details">
+            <h2>Select a node to view details</h2>
+        </div>
+        
+        <div class="legend">
+            <h3>Symbol Types</h3>
+            <div class="legend-item">
+                <div class="legend-color" style="background-color: #4285F4;"></div>
+                <span>Function</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background-color: #EA4335;"></div>
+                <span>Method</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background-color: #FBBC05;"></div>
+                <span>Class</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background-color: #34A853;"></div>
+                <span>Struct</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background-color: #9C27B0;"></div>
+                <span>Interface</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background-color: #FF9800;"></div>
+                <span>Module</span>
+            </div>
+            
+            <h3>Edge Types</h3>
+            <div class="legend-item">
+                <div style="height: 2px; width: 20px; background-color: #4285F4; margin-right: 8px;"></div>
+                <span>Call</span>
+            </div>
+            <div class="legend-item">
+                <div style="height: 2px; width: 20px; background-color: #EA4335; margin-right: 8px;"></div>
+                <span>Implementation</span>
+            </div>
+            <div class="legend-item">
+                <div style="height: 2px; width: 20px; background-color: #34A853; margin-right: 8px;"></div>
+                <span>Usage</span>
+            </div>
+        </div>
+    </div>
+    
+    <div id="graph-container">
+        <div id="graph"></div>
+        <div class="tooltip" id="tooltip"></div>
+    </div>
+    
+    <script src="graph_visualizer.js"></script>
+    <script>
+        // Auto-load the code_graph.json file when page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            // Show loading message
+            const symbolDetails = document.getElementById('symbol-details');
+            symbolDetails.innerHTML = '<h2>Loading graph data...</h2>';
+            
+            // Try to load the default code_graph.json file
+            fetch('./code_graph.json')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    console.log('Successfully loaded code_graph.json');
+                    loadGraphData(data);
+                })
+                .catch(error => {
+                    console.error('Failed to load code_graph.json:', error);
+                    
+                    let errorMessage = error.message;
+                    let instructions = 'Please use the "Load Graph Data" file input above to manually load a JSON file.';
+                    
+                    if (error.message.includes('Failed to fetch') || error.message.includes('CORS')) {
+                        errorMessage = 'CORS restriction - cannot load local files directly';
+                        instructions = `
+                            <strong>To fix this issue, use one of these options:</strong><br>
+                            1. <strong>Use HTTP server (recommended):</strong><br>
+                               &nbsp;&nbsp;&nbsp;Run: <code>python3 serve.py</code><br>
+                               &nbsp;&nbsp;&nbsp;Then open: <code>http://localhost:8000/index.html</code><br><br>
+                            2. <strong>Manual file upload:</strong><br>
+                               &nbsp;&nbsp;&nbsp;Use the "Load Graph Data" file input above to select <code>code_graph.json</code>
+                        `;
+                    }
+                    
+                    symbolDetails.innerHTML = `
+                        <h2>Failed to load default graph data</h2>
+                        <p><span class="label">Error:</span> ${errorMessage}</p>
+                        <div style="margin-top: 15px;">${instructions}</div>
+                    `;
+                });
+        });
+    </script>
+</body>
+</html>

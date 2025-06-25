@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visualization Test</title>
+</head>
+<body>
+    <h1>Testing Visualization</h1>
+    <div id="test-results"></div>
+    
+    <script>
+        // Test if the JSON file can be loaded
+        fetch('code_graph.json')
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return response.json();
+            })
+            .then(data => {
+                const results = document.getElementById('test-results');
+                results.innerHTML = `
+                    <h2>✅ JSON Loading Test Passed</h2>
+                    <p>Nodes: ${data.nodes ? data.nodes.length : 'missing'}</p>
+                    <p>Edges: ${data.edges ? data.edges.length : 'missing'}</p>
+                    <p>Data structure is valid!</p>
+                    <p><a href="index.html">Open Visualization</a></p>
+                `;
+            })
+            .catch(error => {
+                const results = document.getElementById('test-results');
+                results.innerHTML = `
+                    <h2>❌ JSON Loading Test Failed</h2>
+                    <p>Error: ${error.message}</p>
+                    <p>Try using the HTTP server: <code>python3 serve.py</code></p>
+                `;
+            });
+    </script>
+</body>
+</html>

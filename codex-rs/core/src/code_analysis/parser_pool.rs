@@ -260,9 +260,28 @@ impl ParserPool {
             // We'll load the query again from the file
             let lang = self.load_language(language)?;
             let query_file = get_query_file(language, query_type)?;
-            let query_path = format!("src/code_analysis/queries/{}", query_file);
-            let query_content = fs::read_to_string(&query_path)
-                .map_err(|e| format!("Failed to read query file {}: {}", query_path, e))?;
+            
+            // Try multiple possible paths
+            let possible_paths = [
+                format!("src/code_analysis/queries/{}", query_file),
+                format!("core/src/code_analysis/queries/{}", query_file),
+                format!("codex-rs/core/src/code_analysis/queries/{}", query_file),
+            ];
+            
+            let mut query_content = String::new();
+            let mut found = false;
+            
+            for query_path in &possible_paths {
+                if let Ok(content) = fs::read_to_string(query_path) {
+                    query_content = content;
+                    found = true;
+                    break;
+                }
+            }
+            
+            if !found {
+                return Err(format!("Failed to find query file {} in any of the expected locations", query_file));
+            }
             
             let query = Query::new(&lang, &query_content)
                 .map_err(|e| format!("Failed to parse query: {}", e))?;
@@ -285,10 +304,27 @@ impl ParserPool {
             SupportedLanguage::Go => "go.scm",
         };
         
-        // Load the query file
-        let query_path = format!("src/code_analysis/queries/{}", query_file);
-        let query_content = fs::read_to_string(&query_path)
-            .map_err(|e| format!("Failed to read query file {}: {}", query_path, e))?;
+        // Load the query file - try multiple possible paths
+        let possible_paths = [
+            format!("src/code_analysis/queries/{}", query_file),
+            format!("core/src/code_analysis/queries/{}", query_file),
+            format!("codex-rs/core/src/code_analysis/queries/{}", query_file),
+        ];
+        
+        let mut query_content = String::new();
+        let mut found = false;
+        
+        for query_path in &possible_paths {
+            if let Ok(content) = fs::read_to_string(query_path) {
+                query_content = content;
+                found = true;
+                break;
+            }
+        }
+        
+        if !found {
+            return Err(format!("Failed to find query file {} in any of the expected locations", query_file));
+        }
         
         // Create the query
         let query = Query::new(&lang, &query_content)

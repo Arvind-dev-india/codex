@@ -151,122 +151,163 @@ impl ContextExtractor {
         
         eprintln!("Rust query found {} matches", matches.len());
         
-        // Process the matches
+        // Process the matches to extract symbols
+        self.process_matches(&matches, parsed_file)?;
+        
+        Ok(())
+    }
+    
+    /// Process Tree-sitter query matches to extract symbols and references
+    fn process_matches(&mut self, matches: &[super::parser_pool::QueryMatch], parsed_file: &ParsedFile) -> Result<(), String> {
         for match_ in matches {
+            // Group captures by their base type (definition, reference)
+            let mut definition_captures: HashMap<&str, &super::parser_pool::QueryCapture> = HashMap::new();
+            let mut name_definition_captures: HashMap<&str, &super::parser_pool::QueryCapture> = HashMap::new();
+            let mut reference_captures: HashMap<&str, &super::parser_pool::QueryCapture> = HashMap::new();
+            let mut name_reference_captures: HashMap<&str, &super::parser_pool::QueryCapture> = HashMap::new();
+            
+            // First pass: collect all captures by type
             for capture in &match_.captures {
                 eprintln!("Processing capture: {} = '{}'", capture.name, capture.text);
-                match capture.name.as_str() {
-                    "definition.function" | "function.definition" => {
-                        // Find the function name
-                        let name = match_.captures.iter()
-                            .find(|c| c.name == "function.name")
-                            .map(|c| c.text.clone())
-                            .unwrap_or_default();
-                        
-                        // Create a symbol for the function
-                        let symbol_type = SymbolType::Function;
-                        let parent = None;
-                        let fqn = self.generate_fqn(&name, &symbol_type, &parsed_file.path, &parent);
-                        
-                        let symbol = CodeSymbol {
-                            name: name.clone(),
-                            symbol_type,
-                            file_path: parsed_file.path.clone(),
-                            start_line: capture.start_point.0,
-                            end_line: capture.end_point.0,
-                            start_col: capture.start_point.1,
-                            end_col: capture.end_point.1,
-                            parent,
-                            fqn: fqn.clone(),
-                        };
-                        
-                        // Add the symbol to the map using FQN as key
-                        self.symbols.insert(fqn.clone(), symbol);
-                        
-                        // Update the name_to_fqns map
-                        self.name_to_fqns.entry(name.clone())
-                            .or_insert_with(Vec::new)
-                            .push(fqn.clone());
-                            
-                        // Update file_symbols map
-                        self.file_symbols.entry(parsed_file.path.clone())
-                            .or_insert_with(HashSet::new)
-                            .insert(fqn);
-                    }
-                    "struct.definition" => {
-                        // Find the struct name
-                        let name = match_.captures.iter()
-                            .find(|c| c.name == "struct.name")
-                            .map(|c| c.text.clone())
-                            .unwrap_or_default();
-                        
-                        // Create a symbol for the struct
-                        let symbol_type = SymbolType::Struct;
-                        let parent = None;
-                        let fqn = self.generate_fqn(&name, &symbol_type, &parsed_file.path, &parent);
-                        
-                        let symbol = CodeSymbol {
-                            name: name.clone(),
-                            symbol_type,
-                            file_path: parsed_file.path.clone(),
-                            start_line: capture.start_point.0,
-                            end_line: capture.end_point.0,
-                            start_col: capture.start_point.1,
-                            end_col: capture.end_point.1,
-                            parent,
-                            fqn: fqn.clone(),
-                        };
-                        
-                        // Add the symbol to the map using FQN as key
-                        self.symbols.insert(fqn.clone(), symbol);
-                        
-                        // Update the name_to_fqns map
-                        self.name_to_fqns.entry(name.clone())
-                            .or_insert_with(Vec::new)
-                            .push(fqn.clone());
-                            
-                        // Update file_symbols map
-                        self.file_symbols.entry(parsed_file.path.clone())
-                            .or_insert_with(HashSet::new)
-                            .insert(fqn);
-                    }
-                    "call.expression" => {
-                        // Find the function being called
-                        let function_name = match_.captures.iter()
-                            .find(|c| c.name == "call.function" || c.name == "call.method")
-                            .map(|c| c.text.clone())
-                            .unwrap_or_default();
-                        
-                        // Try to find the FQN of the function being called
-                        // For now, we'll just use the name, but in a more advanced implementation
-                        // we would try to resolve the actual symbol being referenced
-                        let symbol_fqn = if let Some(fqns) = self.name_to_fqns.get(&function_name) {
-                            if !fqns.is_empty() {
-                                fqns[0].clone()
-                            } else {
-                                String::new()
-                            }
-                        } else {
-                            String::new()
-                        };
-                        
-                        // Create a reference to the function
-                        let reference = SymbolReference {
-                            symbol_name: function_name,
-                            symbol_fqn,
-                            reference_file: parsed_file.path.clone(),
-                            reference_line: capture.start_point.0,
-                            reference_col: capture.start_point.1,
-                            reference_type: ReferenceType::Call,
-                        };
-                        
-                        // Add the reference
-                        self.references.push(reference);
-                    }
-                    _ => {}
+                
+                if capture.name.starts_with("definition.") {
+                    let symbol_type = &capture.name[11..]; // Remove "definition." prefix
+                    definition_captures.insert(symbol_type, capture);
+                } else if capture.name.starts_with("name.definition.") {
+                    let symbol_type = &capture.name[16..]; // Remove "name.definition." prefix
+                    name_definition_captures.insert(symbol_type, capture);
+                } else if capture.name.starts_with("reference.") {
+                    let ref_type = &capture.name[10..]; // Remove "reference." prefix
+                    reference_captures.insert(ref_type, capture);
+                } else if capture.name.starts_with("name.reference.") {
+                    let ref_type = &capture.name[15..]; // Remove "name.reference." prefix
+                    name_reference_captures.insert(ref_type, capture);
+                }
+            }
+            
+            // Second pass: create symbols when we have both definition and name captures
+            for (symbol_type, def_capture) in definition_captures.iter() {
+                if let Some(name_capture) = name_definition_captures.get(symbol_type) {
+                    // Create symbol with both definition and name captures
+                    self.create_symbol_from_captures(def_capture, name_capture, symbol_type, parsed_file)?;
+                }
+            }
+            
+            // Third pass: create references when we have both reference and name captures
+            for (ref_type, ref_capture) in reference_captures.iter() {
+                if let Some(name_capture) = name_reference_captures.get(ref_type) {
+                    // Create reference with both reference and name captures
+                    self.create_reference_from_captures(ref_capture, name_capture, ref_type, parsed_file)?;
                 }
             }
         }
+        
+        Ok(())
+    }
+    
+    /// Create a symbol from definition and name captures
+    fn create_symbol_from_captures(
+        &mut self, 
+        def_capture: &super::parser_pool::QueryCapture, 
+        name_capture: &super::parser_pool::QueryCapture,
+        symbol_type_str: &str,
+        parsed_file: &ParsedFile
+    ) -> Result<(), String> {
+        let symbol_type = match symbol_type_str {
+            "function" => SymbolType::Function,
+            "method" => SymbolType::Method,
+            "class" => SymbolType::Class,
+            "struct" => SymbolType::Struct,
+            "enum" => SymbolType::Enum,
+            "interface" => SymbolType::Interface,
+            "variable" => SymbolType::Variable,
+            "constant" => SymbolType::Constant,
+            "module" => SymbolType::Module,
+            "type" => SymbolType::Class, // Map type definitions to class for now
+            _ => {
+                eprintln!("Unknown symbol type: {}", symbol_type_str);
+                return Ok(());
+            }
+        };
+        
+        let name = name_capture.text.clone();
+        let parent = None; // TODO: Extract parent information from context
+        let fqn = self.generate_fqn(&name, &symbol_type, &parsed_file.path, &parent);
+        
+        let symbol = CodeSymbol {
+            name: name.clone(),
+            symbol_type,
+            file_path: parsed_file.path.clone(),
+            start_line: def_capture.start_point.0,
+            end_line: def_capture.end_point.0,
+            start_col: def_capture.start_point.1,
+            end_col: def_capture.end_point.1,
+            parent,
+            fqn: fqn.clone(),
+        };
+        
+        // Add the symbol to the map using FQN as key
+        self.symbols.insert(fqn.clone(), symbol);
+        
+        // Update the name_to_fqns map
+        self.name_to_fqns.entry(name.clone())
+            .or_insert_with(Vec::new)
+            .push(fqn.clone());
+            
+        // Update file_symbols map
+        self.file_symbols.entry(parsed_file.path.clone())
+            .or_insert_with(HashSet::new)
+            .insert(fqn);
+            
+        Ok(())
+    }
+    
+    /// Create a reference from reference and name captures
+    fn create_reference_from_captures(
+        &mut self,
+        ref_capture: &super::parser_pool::QueryCapture,
+        name_capture: &super::parser_pool::QueryCapture,
+        ref_type_str: &str,
+        parsed_file: &ParsedFile
+    ) -> Result<(), String> {
+        let reference_type = match ref_type_str {
+            "call" => ReferenceType::Call,
+            "class" => ReferenceType::Usage,
+            "interface" => ReferenceType::Usage,
+            "implementation" => ReferenceType::Implementation,
+            "type" => ReferenceType::Usage,
+            "send" => ReferenceType::Call,
+            _ => {
+                eprintln!("Unknown reference type: {}", ref_type_str);
+                return Ok(());
+            }
+        };
+        
+        let symbol_name = name_capture.text.clone();
+        
+        // Try to find the FQN of the symbol being referenced
+        let symbol_fqn = if let Some(fqns) = self.name_to_fqns.get(&symbol_name) {
+            if !fqns.is_empty() {
+                fqns[0].clone()
+            } else {
+                String::new()
+            }
+        } else {
+            String::new()
+        };
+        
+        // Create a reference to the symbol
+        let reference = SymbolReference {
+            symbol_name,
+            symbol_fqn,
+            reference_file: parsed_file.path.clone(),
+            reference_line: ref_capture.start_point.0,
+            reference_col: ref_capture.start_point.1,
+            reference_type,
+        };
+        
+        // Add the reference
+        self.references.push(reference);
         
         Ok(())
     }
@@ -276,119 +317,8 @@ impl ContextExtractor {
         // Execute the query to find functions, classes, etc.
         let matches = parsed_file.execute_predefined_query(QueryType::All)?;
         
-        // Process the matches
-        for match_ in matches {
-            for capture in &match_.captures {
-                match capture.name.as_str() {
-                    "function.definition" => {
-                        // Find the function name
-                        let name = match_.captures.iter()
-                            .find(|c| c.name == "function.name")
-                            .map(|c| c.text.clone())
-                            .unwrap_or_default();
-                        
-                        // Create a symbol for the function
-                        let symbol_type = SymbolType::Function;
-                        let parent = None;
-                        let fqn = self.generate_fqn(&name, &symbol_type, &parsed_file.path, &parent);
-                        
-                        let symbol = CodeSymbol {
-                            name: name.clone(),
-                            symbol_type,
-                            file_path: parsed_file.path.clone(),
-                            start_line: capture.start_point.0,
-                            end_line: capture.end_point.0,
-                            start_col: capture.start_point.1,
-                            end_col: capture.end_point.1,
-                            parent,
-                            fqn: fqn.clone(),
-                        };
-                        
-                        // Add the symbol to the map using FQN as key
-                        self.symbols.insert(fqn.clone(), symbol);
-                        
-                        // Update the name_to_fqns map
-                        self.name_to_fqns.entry(name.clone())
-                            .or_insert_with(Vec::new)
-                            .push(fqn.clone());
-                            
-                        // Update file_symbols map
-                        self.file_symbols.entry(parsed_file.path.clone())
-                            .or_insert_with(HashSet::new)
-                            .insert(fqn);
-                    }
-                    "class.definition" => {
-                        // Find the class name
-                        let name = match_.captures.iter()
-                            .find(|c| c.name == "class.name")
-                            .map(|c| c.text.clone())
-                            .unwrap_or_default();
-                        
-                        // Create a symbol for the class
-                        let symbol_type = SymbolType::Class;
-                        let parent = None;
-                        let fqn = self.generate_fqn(&name, &symbol_type, &parsed_file.path, &parent);
-                        
-                        let symbol = CodeSymbol {
-                            name: name.clone(),
-                            symbol_type,
-                            file_path: parsed_file.path.clone(),
-                            start_line: capture.start_point.0,
-                            end_line: capture.end_point.0,
-                            start_col: capture.start_point.1,
-                            end_col: capture.end_point.1,
-                            parent,
-                            fqn: fqn.clone(),
-                        };
-                        
-                        // Add the symbol to the map using FQN as key
-                        self.symbols.insert(fqn.clone(), symbol);
-                        
-                        // Update the name_to_fqns map
-                        self.name_to_fqns.entry(name.clone())
-                            .or_insert_with(Vec::new)
-                            .push(fqn.clone());
-                            
-                        // Update file_symbols map
-                        self.file_symbols.entry(parsed_file.path.clone())
-                            .or_insert_with(HashSet::new)
-                            .insert(fqn);
-                    }
-                    "call.expression" => {
-                        // Find the function being called
-                        let function_name = match_.captures.iter()
-                            .find(|c| c.name == "call.function" || c.name == "call.method")
-                            .map(|c| c.text.clone())
-                            .unwrap_or_default();
-                        
-                        // Try to find the FQN of the function being called
-                        let symbol_fqn = if let Some(fqns) = self.name_to_fqns.get(&function_name) {
-                            if !fqns.is_empty() {
-                                fqns[0].clone()
-                            } else {
-                                String::new()
-                            }
-                        } else {
-                            String::new()
-                        };
-                        
-                        // Create a reference to the function
-                        let reference = SymbolReference {
-                            symbol_name: function_name,
-                            symbol_fqn,
-                            reference_file: parsed_file.path.clone(),
-                            reference_line: capture.start_point.0,
-                            reference_col: capture.start_point.1,
-                            reference_type: ReferenceType::Call,
-                        };
-                        
-                        // Add the reference
-                        self.references.push(reference);
-                    }
-                    _ => {}
-                }
-            }
-        }
+        // Process the matches to extract symbols
+        self.process_matches(&matches, parsed_file)?;
         
         Ok(())
     }
@@ -398,119 +328,8 @@ impl ContextExtractor {
         // Execute the query to find functions, classes, etc.
         let matches = parsed_file.execute_predefined_query(QueryType::All)?;
         
-        // Process the matches
-        for match_ in matches {
-            for capture in &match_.captures {
-                match capture.name.as_str() {
-                    "function.definition" => {
-                        // Find the function name
-                        let name = match_.captures.iter()
-                            .find(|c| c.name == "function.name")
-                            .map(|c| c.text.clone())
-                            .unwrap_or_default();
-                        
-                        // Create a symbol for the function
-                        let symbol_type = SymbolType::Function;
-                        let parent = None;
-                        let fqn = self.generate_fqn(&name, &symbol_type, &parsed_file.path, &parent);
-                        
-                        let symbol = CodeSymbol {
-                            name: name.clone(),
-                            symbol_type,
-                            file_path: parsed_file.path.clone(),
-                            start_line: capture.start_point.0,
-                            end_line: capture.end_point.0,
-                            start_col: capture.start_point.1,
-                            end_col: capture.end_point.1,
-                            parent,
-                            fqn: fqn.clone(),
-                        };
-                        
-                        // Add the symbol to the map using FQN as key
-                        self.symbols.insert(fqn.clone(), symbol);
-                        
-                        // Update the name_to_fqns map
-                        self.name_to_fqns.entry(name.clone())
-                            .or_insert_with(Vec::new)
-                            .push(fqn.clone());
-                            
-                        // Update file_symbols map
-                        self.file_symbols.entry(parsed_file.path.clone())
-                            .or_insert_with(HashSet::new)
-                            .insert(fqn);
-                    }
-                    "class.definition" => {
-                        // Find the class name
-                        let name = match_.captures.iter()
-                            .find(|c| c.name == "class.name")
-                            .map(|c| c.text.clone())
-                            .unwrap_or_default();
-                        
-                        // Create a symbol for the class
-                        let symbol_type = SymbolType::Class;
-                        let parent = None;
-                        let fqn = self.generate_fqn(&name, &symbol_type, &parsed_file.path, &parent);
-                        
-                        let symbol = CodeSymbol {
-                            name: name.clone(),
-                            symbol_type,
-                            file_path: parsed_file.path.clone(),
-                            start_line: capture.start_point.0,
-                            end_line: capture.end_point.0,
-                            start_col: capture.start_point.1,
-                            end_col: capture.end_point.1,
-                            parent,
-                            fqn: fqn.clone(),
-                        };
-                        
-                        // Add the symbol to the map using FQN as key
-                        self.symbols.insert(fqn.clone(), symbol);
-                        
-                        // Update the name_to_fqns map
-                        self.name_to_fqns.entry(name.clone())
-                            .or_insert_with(Vec::new)
-                            .push(fqn.clone());
-                            
-                        // Update file_symbols map
-                        self.file_symbols.entry(parsed_file.path.clone())
-                            .or_insert_with(HashSet::new)
-                            .insert(fqn);
-                    }
-                    "call.expression" => {
-                        // Find the function being called
-                        let function_name = match_.captures.iter()
-                            .find(|c| c.name == "call.function" || c.name == "call.method")
-                            .map(|c| c.text.clone())
-                            .unwrap_or_default();
-                        
-                        // Try to find the FQN of the function being called
-                        let symbol_fqn = if let Some(fqns) = self.name_to_fqns.get(&function_name) {
-                            if !fqns.is_empty() {
-                                fqns[0].clone()
-                            } else {
-                                String::new()
-                            }
-                        } else {
-                            String::new()
-                        };
-                        
-                        // Create a reference to the function
-                        let reference = SymbolReference {
-                            symbol_name: function_name,
-                            symbol_fqn,
-                            reference_file: parsed_file.path.clone(),
-                            reference_line: capture.start_point.0,
-                            reference_col: capture.start_point.1,
-                            reference_type: ReferenceType::Call,
-                        };
-                        
-                        // Add the reference
-                        self.references.push(reference);
-                    }
-                    _ => {}
-                }
-            }
-        }
+        // Process the matches to extract symbols
+        self.process_matches(&matches, parsed_file)?;
         
         Ok(())
     }
@@ -520,156 +339,8 @@ impl ContextExtractor {
         // Execute the query to find functions, classes, etc.
         let matches = parsed_file.execute_predefined_query(QueryType::All)?;
         
-        // Process the matches
-        for match_ in matches {
-            for capture in &match_.captures {
-                match capture.name.as_str() {
-                    "function.definition" => {
-                        // Find the function name
-                        let name = match_.captures.iter()
-                            .find(|c| c.name == "function.name")
-                            .map(|c| c.text.clone())
-                            .unwrap_or_default();
-                        
-                        // Create a symbol for the function
-                        let symbol_type = SymbolType::Function;
-                        let parent = None;
-                        let fqn = self.generate_fqn(&name, &symbol_type, &parsed_file.path, &parent);
-                        
-                        let symbol = CodeSymbol {
-                            name: name.clone(),
-                            symbol_type,
-                            file_path: parsed_file.path.clone(),
-                            start_line: capture.start_point.0,
-                            end_line: capture.end_point.0,
-                            start_col: capture.start_point.1,
-                            end_col: capture.end_point.1,
-                            parent,
-                            fqn: fqn.clone(),
-                        };
-                        
-                        // Add the symbol to the map using FQN as key
-                        self.symbols.insert(fqn.clone(), symbol);
-                        
-                        // Update the name_to_fqns map
-                        self.name_to_fqns.entry(name.clone())
-                            .or_insert_with(Vec::new)
-                            .push(fqn.clone());
-                            
-                        // Update file_symbols map
-                        self.file_symbols.entry(parsed_file.path.clone())
-                            .or_insert_with(HashSet::new)
-                            .insert(fqn);
-                    }
-                    "class.definition" => {
-                        // Find the class name
-                        let name = match_.captures.iter()
-                            .find(|c| c.name == "class.name")
-                            .map(|c| c.text.clone())
-                            .unwrap_or_default();
-                        
-                        // Create a symbol for the class
-                        let symbol_type = SymbolType::Class;
-                        let parent = None;
-                        let fqn = self.generate_fqn(&name, &symbol_type, &parsed_file.path, &parent);
-                        
-                        let symbol = CodeSymbol {
-                            name: name.clone(),
-                            symbol_type,
-                            file_path: parsed_file.path.clone(),
-                            start_line: capture.start_point.0,
-                            end_line: capture.end_point.0,
-                            start_col: capture.start_point.1,
-                            end_col: capture.end_point.1,
-                            parent,
-                            fqn: fqn.clone(),
-                        };
-                        
-                        // Add the symbol to the map using FQN as key
-                        self.symbols.insert(fqn.clone(), symbol);
-                        
-                        // Update the name_to_fqns map
-                        self.name_to_fqns.entry(name.clone())
-                            .or_insert_with(Vec::new)
-                            .push(fqn.clone());
-                            
-                        // Update file_symbols map
-                        self.file_symbols.entry(parsed_file.path.clone())
-                            .or_insert_with(HashSet::new)
-                            .insert(fqn);
-                    }
-                    "struct.definition" => {
-                        // Find the struct name
-                        let name = match_.captures.iter()
-                            .find(|c| c.name == "struct.name")
-                            .map(|c| c.text.clone())
-                            .unwrap_or_default();
-                        
-                        // Create a symbol for the struct
-                        let symbol_type = SymbolType::Struct;
-                        let parent = None;
-                        let fqn = self.generate_fqn(&name, &symbol_type, &parsed_file.path, &parent);
-                        
-                        let symbol = CodeSymbol {
-                            name: name.clone(),
-                            symbol_type,
-                            file_path: parsed_file.path.clone(),
-                            start_line: capture.start_point.0,
-                            end_line: capture.end_point.0,
-                            start_col: capture.start_point.1,
-                            end_col: capture.end_point.1,
-                            parent,
-                            fqn: fqn.clone(),
-                        };
-                        
-                        // Add the symbol to the map using FQN as key
-                        self.symbols.insert(fqn.clone(), symbol);
-                        
-                        // Update the name_to_fqns map
-                        self.name_to_fqns.entry(name.clone())
-                            .or_insert_with(Vec::new)
-                            .push(fqn.clone());
-                            
-                        // Update file_symbols map
-                        self.file_symbols.entry(parsed_file.path.clone())
-                            .or_insert_with(HashSet::new)
-                            .insert(fqn);
-                    }
-                    "call.expression" => {
-                        // Find the function being called
-                        let function_name = match_.captures.iter()
-                            .find(|c| c.name == "call.function" || c.name == "call.method")
-                            .map(|c| c.text.clone())
-                            .unwrap_or_default();
-                        
-                        // Try to find the FQN of the function being called
-                        let symbol_fqn = if let Some(fqns) = self.name_to_fqns.get(&function_name) {
-                            if !fqns.is_empty() {
-                                fqns[0].clone()
-                            } else {
-                                String::new()
-                            }
-                        } else {
-                            String::new()
-                        };
-                        
-                        // Create a reference to the function
-                        let reference = SymbolReference {
-                            symbol_name: function_name,
-                            symbol_fqn,
-                            reference_file: parsed_file.path.clone(),
-                            reference_line: capture.start_point.0,
-                            reference_col: capture.start_point.1,
-                            reference_type: ReferenceType::Call,
-                        };
-                        
-                        // Add the reference
-                        self.references.push(reference);
-                    }
-                    _ => {}
-                }
-            }
-        }
+        // Process the matches to extract symbols
+        self.process_matches(&matches, parsed_file)?;
         
         Ok(())
     }
@@ -679,156 +350,8 @@ impl ContextExtractor {
         // Execute the query to find methods, classes, etc.
         let matches = parsed_file.execute_predefined_query(QueryType::All)?;
         
-        // Process the matches
-        for match_ in matches {
-            for capture in &match_.captures {
-                match capture.name.as_str() {
-                    "method.definition" => {
-                        // Find the method name
-                        let name = match_.captures.iter()
-                            .find(|c| c.name == "method.name")
-                            .map(|c| c.text.clone())
-                            .unwrap_or_default();
-                        
-                        // Create a symbol for the method
-                        let symbol_type = SymbolType::Method;
-                        let parent = None;
-                        let fqn = self.generate_fqn(&name, &symbol_type, &parsed_file.path, &parent);
-                        
-                        let symbol = CodeSymbol {
-                            name: name.clone(),
-                            symbol_type,
-                            file_path: parsed_file.path.clone(),
-                            start_line: capture.start_point.0,
-                            end_line: capture.end_point.0,
-                            start_col: capture.start_point.1,
-                            end_col: capture.end_point.1,
-                            parent,
-                            fqn: fqn.clone(),
-                        };
-                        
-                        // Add the symbol to the map using FQN as key
-                        self.symbols.insert(fqn.clone(), symbol);
-                        
-                        // Update the name_to_fqns map
-                        self.name_to_fqns.entry(name.clone())
-                            .or_insert_with(Vec::new)
-                            .push(fqn.clone());
-                            
-                        // Update file_symbols map
-                        self.file_symbols.entry(parsed_file.path.clone())
-                            .or_insert_with(HashSet::new)
-                            .insert(fqn);
-                    }
-                    "class.definition" => {
-                        // Find the class name
-                        let name = match_.captures.iter()
-                            .find(|c| c.name == "class.name")
-                            .map(|c| c.text.clone())
-                            .unwrap_or_default();
-                        
-                        // Create a symbol for the class
-                        let symbol_type = SymbolType::Class;
-                        let parent = None;
-                        let fqn = self.generate_fqn(&name, &symbol_type, &parsed_file.path, &parent);
-                        
-                        let symbol = CodeSymbol {
-                            name: name.clone(),
-                            symbol_type,
-                            file_path: parsed_file.path.clone(),
-                            start_line: capture.start_point.0,
-                            end_line: capture.end_point.0,
-                            start_col: capture.start_point.1,
-                            end_col: capture.end_point.1,
-                            parent,
-                            fqn: fqn.clone(),
-                        };
-                        
-                        // Add the symbol to the map using FQN as key
-                        self.symbols.insert(fqn.clone(), symbol);
-                        
-                        // Update the name_to_fqns map
-                        self.name_to_fqns.entry(name.clone())
-                            .or_insert_with(Vec::new)
-                            .push(fqn.clone());
-                            
-                        // Update file_symbols map
-                        self.file_symbols.entry(parsed_file.path.clone())
-                            .or_insert_with(HashSet::new)
-                            .insert(fqn);
-                    }
-                    "interface.definition" => {
-                        // Find the interface name
-                        let name = match_.captures.iter()
-                            .find(|c| c.name == "interface.name")
-                            .map(|c| c.text.clone())
-                            .unwrap_or_default();
-                        
-                        // Create a symbol for the interface
-                        let symbol_type = SymbolType::Interface;
-                        let parent = None;
-                        let fqn = self.generate_fqn(&name, &symbol_type, &parsed_file.path, &parent);
-                        
-                        let symbol = CodeSymbol {
-                            name: name.clone(),
-                            symbol_type,
-                            file_path: parsed_file.path.clone(),
-                            start_line: capture.start_point.0,
-                            end_line: capture.end_point.0,
-                            start_col: capture.start_point.1,
-                            end_col: capture.end_point.1,
-                            parent,
-                            fqn: fqn.clone(),
-                        };
-                        
-                        // Add the symbol to the map using FQN as key
-                        self.symbols.insert(fqn.clone(), symbol);
-                        
-                        // Update the name_to_fqns map
-                        self.name_to_fqns.entry(name.clone())
-                            .or_insert_with(Vec::new)
-                            .push(fqn.clone());
-                            
-                        // Update file_symbols map
-                        self.file_symbols.entry(parsed_file.path.clone())
-                            .or_insert_with(HashSet::new)
-                            .insert(fqn);
-                    }
-                    "call.expression" => {
-                        // Find the method being called
-                        let method_name = match_.captures.iter()
-                            .find(|c| c.name == "call.method")
-                            .map(|c| c.text.clone())
-                            .unwrap_or_default();
-                        
-                        // Try to find the FQN of the method being called
-                        let symbol_fqn = if let Some(fqns) = self.name_to_fqns.get(&method_name) {
-                            if !fqns.is_empty() {
-                                fqns[0].clone()
-                            } else {
-                                String::new()
-                            }
-                        } else {
-                            String::new()
-                        };
-                        
-                        // Create a reference to the method
-                        let reference = SymbolReference {
-                            symbol_name: method_name,
-                            symbol_fqn,
-                            reference_file: parsed_file.path.clone(),
-                            reference_line: capture.start_point.0,
-                            reference_col: capture.start_point.1,
-                            reference_type: ReferenceType::Call,
-                        };
-                        
-                        // Add the reference
-                        self.references.push(reference);
-                    }
-                    _ => {}
-                }
-            }
-        }
+        // Process the matches to extract symbols
+        self.process_matches(&matches, parsed_file)?;
         
         Ok(())
     }
@@ -838,156 +361,8 @@ impl ContextExtractor {
         // Execute the query to find methods, classes, etc.
         let matches = parsed_file.execute_predefined_query(QueryType::All)?;
         
-        // Process the matches
-        for match_ in matches {
-            for capture in &match_.captures {
-                match capture.name.as_str() {
-                    "method.definition" => {
-                        // Find the method name
-                        let name = match_.captures.iter()
-                            .find(|c| c.name == "method.name")
-                            .map(|c| c.text.clone())
-                            .unwrap_or_default();
-                        
-                        // Create a symbol for the method
-                        let symbol_type = SymbolType::Method;
-                        let parent = None;
-                        let fqn = self.generate_fqn(&name, &symbol_type, &parsed_file.path, &parent);
-                        
-                        let symbol = CodeSymbol {
-                            name: name.clone(),
-                            symbol_type,
-                            file_path: parsed_file.path.clone(),
-                            start_line: capture.start_point.0,
-                            end_line: capture.end_point.0,
-                            start_col: capture.start_point.1,
-                            end_col: capture.end_point.1,
-                            parent,
-                            fqn: fqn.clone(),
-                        };
-                        
-                        // Add the symbol to the map using FQN as key
-                        self.symbols.insert(fqn.clone(), symbol);
-                        
-                        // Update the name_to_fqns map
-                        self.name_to_fqns.entry(name.clone())
-                            .or_insert_with(Vec::new)
-                            .push(fqn.clone());
-                            
-                        // Update file_symbols map
-                        self.file_symbols.entry(parsed_file.path.clone())
-                            .or_insert_with(HashSet::new)
-                            .insert(fqn);
-                    }
-                    "class.definition" => {
-                        // Find the class name
-                        let name = match_.captures.iter()
-                            .find(|c| c.name == "class.name")
-                            .map(|c| c.text.clone())
-                            .unwrap_or_default();
-                        
-                        // Create a symbol for the class
-                        let symbol_type = SymbolType::Class;
-                        let parent = None;
-                        let fqn = self.generate_fqn(&name, &symbol_type, &parsed_file.path, &parent);
-                        
-                        let symbol = CodeSymbol {
-                            name: name.clone(),
-                            symbol_type,
-                            file_path: parsed_file.path.clone(),
-                            start_line: capture.start_point.0,
-                            end_line: capture.end_point.0,
-                            start_col: capture.start_point.1,
-                            end_col: capture.end_point.1,
-                            parent,
-                            fqn: fqn.clone(),
-                        };
-                        
-                        // Add the symbol to the map using FQN as key
-                        self.symbols.insert(fqn.clone(), symbol);
-                        
-                        // Update the name_to_fqns map
-                        self.name_to_fqns.entry(name.clone())
-                            .or_insert_with(Vec::new)
-                            .push(fqn.clone());
-                            
-                        // Update file_symbols map
-                        self.file_symbols.entry(parsed_file.path.clone())
-                            .or_insert_with(HashSet::new)
-                            .insert(fqn);
-                    }
-                    "interface.definition" => {
-                        // Find the interface name
-                        let name = match_.captures.iter()
-                            .find(|c| c.name == "interface.name")
-                            .map(|c| c.text.clone())
-                            .unwrap_or_default();
-                        
-                        // Create a symbol for the interface
-                        let symbol_type = SymbolType::Interface;
-                        let parent = None;
-                        let fqn = self.generate_fqn(&name, &symbol_type, &parsed_file.path, &parent);
-                        
-                        let symbol = CodeSymbol {
-                            name: name.clone(),
-                            symbol_type,
-                            file_path: parsed_file.path.clone(),
-                            start_line: capture.start_point.0,
-                            end_line: capture.end_point.0,
-                            start_col: capture.start_point.1,
-                            end_col: capture.end_point.1,
-                            parent,
-                            fqn: fqn.clone(),
-                        };
-                        
-                        // Add the symbol to the map using FQN as key
-                        self.symbols.insert(fqn.clone(), symbol);
-                        
-                        // Update the name_to_fqns map
-                        self.name_to_fqns.entry(name.clone())
-                            .or_insert_with(Vec::new)
-                            .push(fqn.clone());
-                            
-                        // Update file_symbols map
-                        self.file_symbols.entry(parsed_file.path.clone())
-                            .or_insert_with(HashSet::new)
-                            .insert(fqn);
-                    }
-                    "call.expression" => {
-                        // Find the method being called
-                        let method_name = match_.captures.iter()
-                            .find(|c| c.name == "call.function" || c.name == "call.method")
-                            .map(|c| c.text.clone())
-                            .unwrap_or_default();
-                        
-                        // Try to find the FQN of the method being called
-                        let symbol_fqn = if let Some(fqns) = self.name_to_fqns.get(&method_name) {
-                            if !fqns.is_empty() {
-                                fqns[0].clone()
-                            } else {
-                                String::new()
-                            }
-                        } else {
-                            String::new()
-                        };
-                        
-                        // Create a reference to the method
-                        let reference = SymbolReference {
-                            symbol_name: method_name,
-                            symbol_fqn,
-                            reference_file: parsed_file.path.clone(),
-                            reference_line: capture.start_point.0,
-                            reference_col: capture.start_point.1,
-                            reference_type: ReferenceType::Call,
-                        };
-                        
-                        // Add the reference
-                        self.references.push(reference);
-                    }
-                    _ => {}
-                }
-            }
-        }
+        // Process the matches to extract symbols
+        self.process_matches(&matches, parsed_file)?;
         
         Ok(())
     }
@@ -997,193 +372,8 @@ impl ContextExtractor {
         // Execute the query to find functions, methods, etc.
         let matches = parsed_file.execute_predefined_query(QueryType::All)?;
         
-        // Process the matches
-        for match_ in matches {
-            for capture in &match_.captures {
-                match capture.name.as_str() {
-                    "function.definition" => {
-                        // Find the function name
-                        let name = match_.captures.iter()
-                            .find(|c| c.name == "function.name")
-                            .map(|c| c.text.clone())
-                            .unwrap_or_default();
-                        
-                        // Create a symbol for the function
-                        let symbol_type = SymbolType::Function;
-                        let parent = None;
-                        let fqn = self.generate_fqn(&name, &symbol_type, &parsed_file.path, &parent);
-                        
-                        let symbol = CodeSymbol {
-                            name: name.clone(),
-                            symbol_type,
-                            file_path: parsed_file.path.clone(),
-                            start_line: capture.start_point.0,
-                            end_line: capture.end_point.0,
-                            start_col: capture.start_point.1,
-                            end_col: capture.end_point.1,
-                            parent,
-                            fqn: fqn.clone(),
-                        };
-                        
-                        // Add the symbol to the map using FQN as key
-                        self.symbols.insert(fqn.clone(), symbol);
-                        
-                        // Update the name_to_fqns map
-                        self.name_to_fqns.entry(name.clone())
-                            .or_insert_with(Vec::new)
-                            .push(fqn.clone());
-                            
-                        // Update file_symbols map
-                        self.file_symbols.entry(parsed_file.path.clone())
-                            .or_insert_with(HashSet::new)
-                            .insert(fqn);
-                    }
-                    "method.definition" => {
-                        // Find the method name
-                        let name = match_.captures.iter()
-                            .find(|c| c.name == "method.name")
-                            .map(|c| c.text.clone())
-                            .unwrap_or_default();
-                        
-                        // Create a symbol for the method
-                        let symbol_type = SymbolType::Method;
-                        let parent = None;
-                        let fqn = self.generate_fqn(&name, &symbol_type, &parsed_file.path, &parent);
-                        
-                        let symbol = CodeSymbol {
-                            name: name.clone(),
-                            symbol_type,
-                            file_path: parsed_file.path.clone(),
-                            start_line: capture.start_point.0,
-                            end_line: capture.end_point.0,
-                            start_col: capture.start_point.1,
-                            end_col: capture.end_point.1,
-                            parent,
-                            fqn: fqn.clone(),
-                        };
-                        
-                        // Add the symbol to the map using FQN as key
-                        self.symbols.insert(fqn.clone(), symbol);
-                        
-                        // Update the name_to_fqns map
-                        self.name_to_fqns.entry(name.clone())
-                            .or_insert_with(Vec::new)
-                            .push(fqn.clone());
-                            
-                        // Update file_symbols map
-                        self.file_symbols.entry(parsed_file.path.clone())
-                            .or_insert_with(HashSet::new)
-                            .insert(fqn);
-                    }
-                    "struct.definition" => {
-                        // Find the struct name
-                        let name = match_.captures.iter()
-                            .find(|c| c.name == "struct.name")
-                            .map(|c| c.text.clone())
-                            .unwrap_or_default();
-                        
-                        // Create a symbol for the struct
-                        let symbol_type = SymbolType::Struct;
-                        let parent = None;
-                        let fqn = self.generate_fqn(&name, &symbol_type, &parsed_file.path, &parent);
-                        
-                        let symbol = CodeSymbol {
-                            name: name.clone(),
-                            symbol_type,
-                            file_path: parsed_file.path.clone(),
-                            start_line: capture.start_point.0,
-                            end_line: capture.end_point.0,
-                            start_col: capture.start_point.1,
-                            end_col: capture.end_point.1,
-                            parent,
-                            fqn: fqn.clone(),
-                        };
-                        
-                        // Add the symbol to the map using FQN as key
-                        self.symbols.insert(fqn.clone(), symbol);
-                        
-                        // Update the name_to_fqns map
-                        self.name_to_fqns.entry(name.clone())
-                            .or_insert_with(Vec::new)
-                            .push(fqn.clone());
-                            
-                        // Update file_symbols map
-                        self.file_symbols.entry(parsed_file.path.clone())
-                            .or_insert_with(HashSet::new)
-                            .insert(fqn);
-                    }
-                    "interface.definition" => {
-                        // Find the interface name
-                        let name = match_.captures.iter()
-                            .find(|c| c.name == "interface.name")
-                            .map(|c| c.text.clone())
-                            .unwrap_or_default();
-                        
-                        // Create a symbol for the interface
-                        let symbol_type = SymbolType::Interface;
-                        let parent = None;
-                        let fqn = self.generate_fqn(&name, &symbol_type, &parsed_file.path, &parent);
-                        
-                        let symbol = CodeSymbol {
-                            name: name.clone(),
-                            symbol_type,
-                            file_path: parsed_file.path.clone(),
-                            start_line: capture.start_point.0,
-                            end_line: capture.end_point.0,
-                            start_col: capture.start_point.1,
-                            end_col: capture.end_point.1,
-                            parent,
-                            fqn: fqn.clone(),
-                        };
-                        
-                        // Add the symbol to the map using FQN as key
-                        self.symbols.insert(fqn.clone(), symbol);
-                        
-                        // Update the name_to_fqns map
-                        self.name_to_fqns.entry(name.clone())
-                            .or_insert_with(Vec::new)
-                            .push(fqn.clone());
-                            
-                        // Update file_symbols map
-                        self.file_symbols.entry(parsed_file.path.clone())
-                            .or_insert_with(HashSet::new)
-                            .insert(fqn);
-                    }
-                    "call.expression" => {
-                        // Find the function being called
-                        let function_name = match_.captures.iter()
-                            .find(|c| c.name == "call.function" || c.name == "call.method")
-                            .map(|c| c.text.clone())
-                            .unwrap_or_default();
-                        
-                        // Try to find the FQN of the function being called
-                        let symbol_fqn = if let Some(fqns) = self.name_to_fqns.get(&function_name) {
-                            if !fqns.is_empty() {
-                                fqns[0].clone()
-                            } else {
-                                String::new()
-                            }
-                        } else {
-                            String::new()
-                        };
-                        
-                        // Create a reference to the function
-                        let reference = SymbolReference {
-                            symbol_name: function_name,
-                            symbol_fqn,
-                            reference_file: parsed_file.path.clone(),
-                            reference_line: capture.start_point.0,
-                            reference_col: capture.start_point.1,
-                            reference_type: ReferenceType::Call,
-                        };
-                        
-                        // Add the reference
-                        self.references.push(reference);
-                    }
-                    _ => {}
-                }
-            }
-        }
+        // Process the matches to extract symbols
+        self.process_matches(&matches, parsed_file)?;
         
         Ok(())
     }

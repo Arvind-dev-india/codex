@@ -7,6 +7,10 @@ edition = "2024"
 name = "codex_core"
 path = "src/lib.rs"
 
+[[bin]]
+name = "generate_code_graph"
+path = "src/bin/generate_code_graph.rs"
+
 [lints]
 workspace = true
 

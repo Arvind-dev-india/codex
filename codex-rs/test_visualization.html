@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Visualization</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+</head>
+<body>
+    <h1>Test Visualization</h1>
+    <div id="test-area" style="width: 800px; height: 600px; border: 1px solid #ccc;">
+        <svg id="test-svg" width="800" height="600"></svg>
+    </div>
+    
+    <script>
+        // Test data
+        const testData = {
+            nodes: [
+                {id: "node1", name: "Function A", symbol_type: "Function", color: "#4CAF50", size: 8},
+                {id: "node2", name: "Function B", symbol_type: "Function", color: "#4CAF50", size: 8},
+                {id: "node3", name: "Class C", symbol_type: "Class", color: "#FF9800", size: 12}
+            ],
+            edges: [
+                {source: "node1", target: "node2", edge_type: "Call"},
+                {source: "node2", target: "node3", edge_type: "Usage"}
+            ]
+        };
+        
+        // Create SVG
+        const svg = d3.select("#test-svg");
+        const width = 800;
+        const height = 600;
+        
+        // Create simulation
+        const simulation = d3.forceSimulation(testData.nodes)
+            .force("link", d3.forceLink(testData.edges).id(d => d.id).distance(100))
+            .force("charge", d3.forceManyBody().strength(-300))
+            .force("center", d3.forceCenter(width / 2, height / 2));
+        
+        // Create links
+        const link = svg.append("g")
+            .selectAll("line")
+            .data(testData.edges)
+            .enter().append("line")
+            .style("stroke", "#999")
+            .style("stroke-width", 2);
+        
+        // Create nodes
+        const node = svg.append("g")
+            .selectAll("circle")
+            .data(testData.nodes)
+            .enter().append("circle")
+            .attr("r", d => d.size)
+            .style("fill", d => d.color)
+            .style("stroke", "#fff")
+            .style("stroke-width", 2);
+        
+        // Add labels
+        const label = svg.append("g")
+            .selectAll("text")
+            .data(testData.nodes)
+            .enter().append("text")
+            .text(d => d.name)
+            .style("font-size", "12px")
+            .style("text-anchor", "middle");
+        
+        // Update positions on tick
+        simulation.on("tick", () => {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                .attr("x2", d => d.target.x)
+                .attr("y2", d => d.target.y);
+            
+            node
+                .attr("cx", d => d.x)
+                .attr("cy", d => d.y);
+                
+            label
+                .attr("x", d => d.x)
+                .attr("y", d => d.y + 5);
+        });
+        
+        console.log("Test visualization loaded");
+    </script>
+</body>
+</html>
