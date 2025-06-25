@@ -1,58 +1,46 @@
-;; Methods
-(method_declaration
-  name: (identifier) @method.name
-  parameters: (parameter_list) @method.parameters
-  body: (block) @method.body) @method.definition
-
-;; Classes
 (class_declaration
-  name: (identifier) @class.name
-  body: (declaration_list) @class.body) @class.definition
+ name: (identifier) @name.definition.class
+ ) @definition.class
 
-;; Interfaces
+(class_declaration
+   bases: (base_list (_) @name.reference.class)
+ ) @reference.class
+
 (interface_declaration
-  name: (identifier) @interface.name
-  body: (declaration_list) @interface.body) @interface.definition
+ name: (identifier) @name.definition.interface
+ ) @definition.interface
 
-;; Structs
-(struct_declaration
-  name: (identifier) @struct.name
-  body: (declaration_list) @struct.body) @struct.definition
+(interface_declaration
+ bases: (base_list (_) @name.reference.interface)
+ ) @reference.interface
 
-;; Enums
-(enum_declaration
-  name: (identifier) @enum.name
-  body: (enum_member_declaration_list) @enum.body) @enum.definition
+(method_declaration
+ name: (identifier) @name.definition.method
+ ) @definition.method
 
-;; Properties
-(property_declaration
-  name: (identifier) @property.name
-  accessors: (accessor_list) @property.accessors) @property.definition
+(object_creation_expression
+ type: (identifier) @name.reference.class
+ ) @reference.class
 
-;; Fields
-(field_declaration
-  (variable_declaration
-    (variable_declarator
-      name: (identifier) @field.name))) @field.definition
+(type_parameter_constraints_clause
+ target: (identifier) @name.reference.class
+ ) @reference.class
 
-;; Namespaces
-(namespace_declaration
-  name: (qualified_name) @namespace.name
-  body: (declaration_list) @namespace.body) @namespace.definition
+(type_constraint
+ type: (identifier) @name.reference.class
+ ) @reference.class
 
-;; Using directives
-(using_directive) @using.directive
-
-;; Method invocations
-(invocation_expression
-  expression: [
-    (identifier) @call.function
-    (member_access_expression
-      name: (identifier) @call.method)
-  ]) @call.expression
-
-;; Variable declarations
 (variable_declaration
-  (variable_declarator
-    name: (identifier) @variable.name
-    value: (_)? @variable.value)) @variable.declaration
+ type: (identifier) @name.reference.class
+ ) @reference.class
+
+(invocation_expression
+ function:
+  (member_access_expression
+    name: (identifier) @name.reference.send
+ )
+) @reference.send
+
+(namespace_declaration
+ name: (identifier) @name.definition.module
+) @definition.module

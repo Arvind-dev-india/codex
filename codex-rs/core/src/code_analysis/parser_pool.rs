@@ -10,6 +10,13 @@ use once_cell::sync::Lazy;
 
 // Import the tree-sitter language parsers
 extern crate tree_sitter_rust;
+extern crate tree_sitter_c_sharp;
+extern crate tree_sitter_python;
+extern crate tree_sitter_javascript;
+extern crate tree_sitter_typescript;
+extern crate tree_sitter_java;
+extern crate tree_sitter_cpp;
+extern crate tree_sitter_go;
 
 /// Supported languages for parsing
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -224,9 +231,13 @@ impl ParserPool {
         // Load the language
         let lang_fn = match language {
             SupportedLanguage::Rust => tree_sitter_rust::LANGUAGE,
-            // Other languages are not currently supported due to dependency issues
-            // We'll add them back as we resolve the issues
-            _ => return Err(format!("Language parser not available for: {:?}", language)),
+            SupportedLanguage::CSharp => tree_sitter_c_sharp::LANGUAGE,
+            SupportedLanguage::Python => tree_sitter_python::LANGUAGE,
+            SupportedLanguage::JavaScript => tree_sitter_javascript::LANGUAGE,
+            SupportedLanguage::TypeScript => tree_sitter_typescript::LANGUAGE_TYPESCRIPT,
+            SupportedLanguage::Java => tree_sitter_java::LANGUAGE,
+            SupportedLanguage::Cpp => tree_sitter_cpp::LANGUAGE,
+            SupportedLanguage::Go => tree_sitter_go::LANGUAGE,
         };
         
         // Convert LanguageFn to Language
@@ -265,7 +276,13 @@ impl ParserPool {
         // Get the query file path
         let query_file = match language {
             SupportedLanguage::Rust => "rust.scm",
-            _ => return Err(format!("Query not available for language: {:?}", language)),
+            SupportedLanguage::CSharp => "csharp.scm",
+            SupportedLanguage::Python => "python.scm",
+            SupportedLanguage::JavaScript => "javascript.scm",
+            SupportedLanguage::TypeScript => "typescript.scm",
+            SupportedLanguage::Java => "java.scm",
+            SupportedLanguage::Cpp => "cpp.scm",
+            SupportedLanguage::Go => "go.scm",
         };
         
         // Load the query file
@@ -294,12 +311,14 @@ impl ParserPool {
         let language = SupportedLanguage::from_path(path_obj)
             .ok_or_else(|| format!("Unsupported file extension: {}", path))?;
 
+        // Load the language first
+        let lang = self.load_language(language)?;
+        
         // Get or create a parser for this language
         let mut parsers = self.parsers.lock().unwrap();
         let parser = parsers.entry(language).or_insert_with(|| {
-            let parser = Parser::new();
-            // In a real implementation, we would set the language here
-            // parser.set_language(&get_language(language)).unwrap();
+            let mut parser = Parser::new();
+            parser.set_language(&lang).unwrap();
             parser
         });
 

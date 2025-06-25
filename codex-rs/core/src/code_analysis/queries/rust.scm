@@ -1,54 +1,60 @@
-;; Functions
-(function_item
-  name: (identifier) @function.name
-  parameters: (parameters) @function.parameters
-  body: (block) @function.body) @function.definition
+; ADT definitions
 
-;; Methods
-(impl_item
-  (function_item
-    name: (identifier) @method.name
-    parameters: (parameters) @method.parameters
-    body: (block) @method.body)) @method.definition
-
-;; Structs
 (struct_item
-  name: (type_identifier) @struct.name
-  body: (field_declaration_list)? @struct.body) @struct.definition
+    name: (type_identifier) @name.definition.class) @definition.class
 
-;; Enums
 (enum_item
-  name: (type_identifier) @enum.name
-  body: (enum_variant_list) @enum.body) @enum.definition
+    name: (type_identifier) @name.definition.class) @definition.class
 
-;; Traits
+(union_item
+    name: (type_identifier) @name.definition.class) @definition.class
+
+; type aliases
+
+(type_item
+    name: (type_identifier) @name.definition.class) @definition.class
+
+; method definitions
+
+(declaration_list
+    (function_item
+        name: (identifier) @name.definition.method)) @definition.method
+
+; function definitions
+
+(function_item
+    name: (identifier) @name.definition.function) @definition.function
+
+; trait definitions
 (trait_item
-  name: (type_identifier) @trait.name
-  body: (declaration_list) @trait.body) @trait.definition
+    name: (type_identifier) @name.definition.interface) @definition.interface
 
-;; Implementations
-(impl_item
-  trait: (type_identifier)? @impl.trait
-  type: (type_identifier) @impl.type) @impl.definition
-
-;; Modules
+; module definitions
 (mod_item
-  name: (identifier) @module.name
-  body: (declaration_list)? @module.body) @module.definition
+    name: (identifier) @name.definition.module) @definition.module
 
-;; Use statements
-(use_declaration) @use.declaration
+; macro definitions
 
-;; Function calls
+(macro_definition
+    name: (identifier) @name.definition.macro) @definition.macro
+
+; references
+
 (call_expression
-  function: [
-    (identifier) @call.function
-    (field_expression
-      field: (field_identifier) @call.method)
-  ]) @call.expression
+    function: (identifier) @name.reference.call) @reference.call
 
-;; Variable declarations
-(let_declaration
-  pattern: (identifier) @variable.name
-  type: (type_identifier)? @variable.type
-  value: (_)? @variable.value) @variable.declaration
+(call_expression
+    function: (field_expression
+        field: (field_identifier) @name.reference.call)) @reference.call
+
+(macro_invocation
+    macro: (identifier) @name.reference.call) @reference.call
+
+; implementations
+
+(impl_item
+    trait: (type_identifier) @name.reference.implementation) @reference.implementation
+
+(impl_item
+    type: (type_identifier) @name.reference.implementation
+    !trait) @reference.implementation

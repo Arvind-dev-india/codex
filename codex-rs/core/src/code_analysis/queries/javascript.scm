@@ -1,46 +1,88 @@
-;; Functions
-(function_declaration
-  name: (identifier) @function.name
-  parameters: (formal_parameters) @function.parameters
-  body: (statement_block) @function.body) @function.definition
+(
+  (comment)* @doc
+  .
+  (method_definition
+    name: (property_identifier) @name.definition.method) @definition.method
+  (#not-eq? @name.definition.method "constructor")
+  (#strip! @doc "^[\\s\\*/]+|^[\\s\\*/]$")
+  (#select-adjacent! @doc @definition.method)
+)
 
-(function
-  parameters: (formal_parameters) @function.parameters
-  body: (statement_block) @function.body) @function.expression
+(
+  (comment)* @doc
+  .
+  [
+    (class
+      name: (_) @name.definition.class)
+    (class_declaration
+      name: (_) @name.definition.class)
+  ] @definition.class
+  (#strip! @doc "^[\\s\\*/]+|^[\\s\\*/]$")
+  (#select-adjacent! @doc @definition.class)
+)
 
-(arrow_function
-  parameters: [(formal_parameters) @function.parameters (identifier) @function.parameter]
-  body: [
-    (statement_block) @function.body
-    (_) @function.body
-  ]) @function.arrow
+(
+  (comment)* @doc
+  .
+  [
+    (function
+      name: (identifier) @name.definition.function)
+    (function_declaration
+      name: (identifier) @name.definition.function)
+    (generator_function
+      name: (identifier) @name.definition.function)
+    (generator_function_declaration
+      name: (identifier) @name.definition.function)
+  ] @definition.function
+  (#strip! @doc "^[\\s\\*/]+|^[\\s\\*/]$")
+  (#select-adjacent! @doc @definition.function)
+)
 
-;; Methods
-(method_definition
-  name: [(property_identifier) (computed_property_name)] @method.name
-  parameters: (formal_parameters) @method.parameters
-  body: (statement_block) @method.body) @method.definition
+(
+  (comment)* @doc
+  .
+  (lexical_declaration
+    (variable_declarator
+      name: (identifier) @name.definition.function
+      value: [(arrow_function) (function)]) @definition.function)
+  (#strip! @doc "^[\\s\\*/]+|^[\\s\\*/]$")
+  (#select-adjacent! @doc @definition.function)
+)
 
-;; Classes
-(class_declaration
-  name: (identifier) @class.name
-  body: (class_body) @class.body) @class.definition
+(
+  (comment)* @doc
+  .
+  (variable_declaration
+    (variable_declarator
+      name: (identifier) @name.definition.function
+      value: [(arrow_function) (function)]) @definition.function)
+  (#strip! @doc "^[\\s\\*/]+|^[\\s\\*/]$")
+  (#select-adjacent! @doc @definition.function)
+)
 
-;; Imports
-(import_statement) @import.statement
-(import_specifier) @import.specifier
-(namespace_import) @import.namespace
-
-;; Function calls
-(call_expression
-  function: [
-    (identifier) @call.function
+(assignment_expression
+  left: [
+    (identifier) @name.definition.function
     (member_expression
-      property: (property_identifier) @call.method)
-  ]) @call.expression
+      property: (property_identifier) @name.definition.function)
+  ]
+  right: [(arrow_function) (function)]
+) @definition.function
 
-;; Variable declarations
-(variable_declaration
-  (variable_declarator
-    name: (identifier) @variable.name
-    value: (_)? @variable.value)) @variable.declaration
+(pair
+  key: (property_identifier) @name.definition.function
+  value: [(arrow_function) (function)]) @definition.function
+
+(
+  (call_expression
+    function: (identifier) @name.reference.call) @reference.call
+  (#not-match? @name.reference.call "^(require)$")
+)
+
+(call_expression
+  function: (member_expression
+    property: (property_identifier) @name.reference.call)
+  arguments: (_) @reference.call)
+
+(new_expression
+  constructor: (_) @name.reference.class) @reference.class

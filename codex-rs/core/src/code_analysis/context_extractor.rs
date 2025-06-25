@@ -149,11 +149,14 @@ impl ContextExtractor {
         // Execute the query to find functions, structs, enums, etc.
         let matches = parsed_file.execute_predefined_query(QueryType::All)?;
         
+        eprintln!("Rust query found {} matches", matches.len());
+        
         // Process the matches
         for match_ in matches {
             for capture in &match_.captures {
+                eprintln!("Processing capture: {} = '{}'", capture.name, capture.text);
                 match capture.name.as_str() {
-                    "function.definition" => {
+                    "definition.function" | "function.definition" => {
                         // Find the function name
                         let name = match_.captures.iter()
                             .find(|c| c.name == "function.name")

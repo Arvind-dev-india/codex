@@ -253,24 +253,170 @@ struct EdgeInfo {
 pub fn handle_analyze_code(args: Value) -> Option<Result<Value, String>> {
     Some(match serde_json::from_value::<AnalyzeCodeInput>(args) {
         Ok(input) => {
-            // Read the file content
-            let file_path = &input.file_path;
-            let file_content = match std::fs::read_to_string(file_path) {
-                Ok(content) => content,
-                Err(e) => return Some(Err(format!("Failed to read file: {}", e))),
-            };
+            // Use the Tree-sitter based context extractor
+            use super::context_extractor::{ContextExtractor, SymbolType};
             
-            // Determine the language based on file extension
-            let file_extension = std::path::Path::new(file_path)
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .unwrap_or("");
-                
-            let mut symbols = Vec::new();
+            let mut extractor = ContextExtractor::new();
             
-            // Simple parsing based on file extension
-            match file_extension {
+            // Extract symbols from the file
+            match extractor.extract_symbols_from_file(&input.file_path) {
+                Ok(()) => {
+                    // Debug: Check how many symbols were found
+                    let symbol_count = extractor.get_symbols().len();
+                    eprintln!("Tree-sitter parsing succeeded, found {} symbols", symbol_count);
+                    
+                    // Convert symbols to the expected format
+                    let symbols: Vec<SymbolInfo> = extractor.get_symbols()
+                        .values()
+                        .map(|symbol| {
+                            let symbol_type_str = match symbol.symbol_type {
+                                SymbolType::Function => "function",
+                                SymbolType::Method => "method",
+                                SymbolType::Class => "class",
+                                SymbolType::Struct => "struct",
+                                SymbolType::Enum => "enum",
+                                SymbolType::Interface => "interface",
+                                SymbolType::Variable => "variable",
+                                SymbolType::Constant => "constant",
+                                SymbolType::Import => "import",
+                                SymbolType::Module => "module",
+                                SymbolType::Package => "package",
+                            };
+                            
+                            SymbolInfo {
+                                name: symbol.name.clone(),
+                                symbol_type: symbol_type_str.to_string(),
+                                file_path: symbol.file_path.clone(),
+                                start_line: symbol.start_line + 1, // Convert from 0-based to 1-based
+                                end_line: symbol.end_line + 1,     // Convert from 0-based to 1-based
+                                parent: symbol.parent.clone(),
+                            }
+                        })
+                        .collect();
+                    
+                    Ok(json!({
+                        "file_path": input.file_path,
+                        "symbols": symbols,
+                    }))
+                },
+                Err(e) => {
+                    // Fall back to the simple regex-based parsing if Tree-sitter fails
+                    eprintln!("Tree-sitter parsing failed: {}, falling back to regex parsing", e);
+                    
+                    // Read the file content
+                    let file_path = &input.file_path;
+                    let file_content = match std::fs::read_to_string(file_path) {
+                        Ok(content) => content,
+                        Err(e) => return Some(Err(format!("Failed to read file: {}", e))),
+                    };
+                    
+                    // Determine the language based on file extension
+                    let file_extension = std::path::Path::new(file_path)
+                        .extension()
+                        .and_then(|ext| ext.to_str())
+                        .unwrap_or("");
+                        
+                    let mut symbols = Vec::new();
+                    
+                    // Simple parsing based on file extension
+                    match file_extension {
                 "rs" => {
+                    // Improved Rust parsing with proper brace matching
+                    let lines: Vec<&str> = file_content.lines().collect();
+                    
+                    for (line_num, line) in lines.iter().enumerate() {
+                        let line_num = line_num + 1; // 1-based line numbers
+                        let trimmed = line.trim();
+                        
+                        // Skip comments and empty lines
+                        if trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with("*") || trimmed.starts_with("///") || trimmed.is_empty() {
+                            continue;
+                        }
+                        
+                        // Find struct definitions
+                        if (trimmed.starts_with("pub struct ") || trimmed.starts_with("struct ")) {
+                            let struct_part = if trimmed.starts_with("pub struct ") {
+                                &trimmed[11..]
+                            } else {
+                                &trimmed[7..]
+                            };
+                            
+                            let struct_name = struct_part.split_whitespace().next()
+                                .unwrap_or("")
+                                .split('<').next() // Handle generics
+                                .unwrap_or("")
+                                .trim();
+                            
+                            if !struct_name.is_empty() {
+                                // Find the end of the struct
+                                let end_line = find_matching_brace(&lines, line_num - 1).unwrap_or(line_num);
+                                
+                                symbols.push(SymbolInfo {
+                                    name: struct_name.to_string(),
+                                    symbol_type: "struct".to_string(),
+                                    file_path: file_path.clone(),
+                                    start_line: line_num,
+                                    end_line: end_line,
+                                    parent: None,
+                                });
+                            }
+                        }
+                        
+                        // Find function definitions
+                        if (trimmed.starts_with("pub fn ") || trimmed.starts_with("fn ")) &&
+                           trimmed.contains("(") {
+                            
+                            let fn_part = if trimmed.starts_with("pub fn ") {
+                                &trimmed[7..]
+                            } else {
+                                &trimmed[3..]
+                            };
+                            
+                            if let Some(paren_pos) = fn_part.find('(') {
+                                let fn_name = fn_part[..paren_pos].trim();
+                                
+                                if !fn_name.is_empty() && fn_name.chars().next().unwrap_or(' ').is_alphabetic() {
+                                    // Find the end of the function
+                                    let end_line = find_matching_brace(&lines, line_num - 1).unwrap_or(line_num);
+                                    
+                                    symbols.push(SymbolInfo {
+                                        name: fn_name.to_string(),
+                                        symbol_type: "function".to_string(),
+                                        file_path: file_path.clone(),
+                                        start_line: line_num,
+                                        end_line: end_line,
+                                        parent: None,
+                                    });
+                                }
+                            }
+                        }
+                        
+                        // Find impl methods (inside impl blocks)
+                        if trimmed.contains("fn ") && trimmed.contains("&self") {
+                            if let Some(fn_pos) = trimmed.find("fn ") {
+                                let after_fn = &trimmed[fn_pos + 3..];
+                                if let Some(paren_pos) = after_fn.find('(') {
+                                    let method_name = after_fn[..paren_pos].trim();
+                                    
+                                    if !method_name.is_empty() && method_name.chars().next().unwrap_or(' ').is_alphabetic() {
+                                        // Find the end of the method
+                                        let end_line = find_matching_brace(&lines, line_num - 1).unwrap_or(line_num);
+                                        
+                                        symbols.push(SymbolInfo {
+                                            name: method_name.to_string(),
+                                            symbol_type: "method".to_string(),
+                                            file_path: file_path.clone(),
+                                            start_line: line_num,
+                                            end_line: end_line,
+                                            parent: None,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "rs_old" => {
                     // Very basic Rust parsing - just for test purposes
                     for (line_num, line) in file_content.lines().enumerate() {
                         let line_num = line_num + 1; // 1-based line numbers
@@ -547,41 +693,105 @@ pub fn handle_analyze_code(args: Value) -> Option<Result<Value, String>> {
                     }
                 },
                 "cs" => {
-                    // Very basic C# parsing - just for test purposes
-                    for (line_num, line) in file_content.lines().enumerate() {
+                    // Improved C# parsing with proper brace matching
+                    let lines: Vec<&str> = file_content.lines().collect();
+                    
+                    for (line_num, line) in lines.iter().enumerate() {
                         let line_num = line_num + 1; // 1-based line numbers
+                        let trimmed = line.trim();
+                        
+                        // Skip comments and empty lines
+                        if trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with("*") || trimmed.starts_with("///") || trimmed.is_empty() {
+                            continue;
+                        }
                         
                         // Find namespace definitions
-                        if line.trim().starts_with("namespace ") {
-                            let parts: Vec<&str> = line.trim().split_whitespace().collect();
+                        if trimmed.starts_with("namespace ") {
+                            let parts: Vec<&str> = trimmed.split_whitespace().collect();
                             if parts.len() > 1 {
                                 let namespace_name = parts[1].trim();
+                                
+                                // Find the end of the namespace
+                                let end_line = find_matching_brace(&lines, line_num - 1).unwrap_or(line_num);
+                                
                                 symbols.push(SymbolInfo {
                                     name: namespace_name.to_string(),
                                     symbol_type: "namespace".to_string(),
                                     file_path: file_path.clone(),
                                     start_line: line_num,
-                                    end_line: line_num,
+                                    end_line: end_line,
                                     parent: None,
                                 });
                             }
                         }
                         
-                        // Find class definitions
-                        if line.trim().contains("class ") {
-                            let parts: Vec<&str> = line.trim().split('{').collect();
-                            if parts.len() > 0 {
-                                let class_part = parts[0].trim();
-                                let class_parts: Vec<&str> = class_part.split_whitespace().collect();
-                                for (i, part) in class_parts.iter().enumerate() {
-                                    if *part == "class" && i + 1 < class_parts.len() {
-                                        let class_name = class_parts[i + 1].trim();
+                        // Find class definitions (must start with class keyword, not be in comments)
+                        if (trimmed.starts_with("public class ") || trimmed.starts_with("private class ") || 
+                            trimmed.starts_with("internal class ") || trimmed.starts_with("class ")) {
+                            
+                            let class_part = if trimmed.starts_with("public class ") {
+                                &trimmed[13..]
+                            } else if trimmed.starts_with("private class ") {
+                                &trimmed[14..]
+                            } else if trimmed.starts_with("internal class ") {
+                                &trimmed[15..]
+                            } else {
+                                &trimmed[6..]
+                            };
+                            
+                            let class_name = class_part.split_whitespace().next()
+                                .unwrap_or("")
+                                .split('<').next() // Handle generics
+                                .unwrap_or("")
+                                .split(':').next() // Handle inheritance
+                                .unwrap_or("")
+                                .trim();
+                            
+                            if !class_name.is_empty() {
+                                // Find the end of the class
+                                let end_line = find_matching_brace(&lines, line_num - 1).unwrap_or(line_num);
+                                
+                                symbols.push(SymbolInfo {
+                                    name: class_name.to_string(),
+                                    symbol_type: "class".to_string(),
+                                    file_path: file_path.clone(),
+                                    start_line: line_num,
+                                    end_line: end_line,
+                                    parent: None,
+                                });
+                            }
+                        }
+                        
+                        // Find method definitions
+                        if (trimmed.contains("public ") || trimmed.contains("private ") || 
+                            trimmed.contains("protected ") || trimmed.contains("internal ")) &&
+                           trimmed.contains("(") && trimmed.contains(")") && 
+                           !trimmed.contains("class ") && !trimmed.contains("namespace ") &&
+                           !trimmed.contains("=") && // Not a property or field assignment
+                           !trimmed.contains("new ") { // Not a constructor call
+                            
+                            // Extract method name
+                            if let Some(paren_pos) = trimmed.find('(') {
+                                let before_paren = &trimmed[..paren_pos];
+                                let parts: Vec<&str> = before_paren.split_whitespace().collect();
+                                
+                                if parts.len() >= 2 {
+                                    let method_name = parts[parts.len() - 1].trim();
+                                    
+                                    // Skip constructors, properties, and invalid names
+                                    if !method_name.is_empty() && 
+                                       !method_name.contains("get") && !method_name.contains("set") &&
+                                       method_name.chars().next().unwrap_or(' ').is_alphabetic() {
+                                        
+                                        // Find the end of the method
+                                        let end_line = find_matching_brace(&lines, line_num - 1).unwrap_or(line_num);
+                                        
                                         symbols.push(SymbolInfo {
-                                            name: class_name.to_string(),
-                                            symbol_type: "class".to_string(),
+                                            name: method_name.to_string(),
+                                            symbol_type: "method".to_string(),
                                             file_path: file_path.clone(),
                                             start_line: line_num,
-                                            end_line: line_num,
+                                            end_line: end_line,
                                             parent: None,
                                         });
                                     }
@@ -880,6 +1090,8 @@ pub fn handle_analyze_code(args: Value) -> Option<Result<Value, String>> {
                 "file_path": file_path,
                 "symbols": symbols,
             }))
+                }
+            }
         },
         Err(e) => Err(format!("Invalid arguments: {}", e)),
     })
@@ -1636,6 +1848,40 @@ pub fn handle_update_code_graph(args: Value) -> Option<Result<Value, String>> {
         },
         Err(e) => Err(format!("Invalid arguments: {}", e))
     })
+}
+
+/// Find the matching closing brace for a block starting at the given line
+fn find_matching_brace(lines: &[&str], start_line: usize) -> Option<usize> {
+    let mut brace_count = 0;
+    let mut found_opening = false;
+    
+    for (i, line) in lines.iter().enumerate().skip(start_line) {
+        let trimmed = line.trim();
+        
+        // Skip comments
+        if trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with("*") {
+            continue;
+        }
+        
+        // Count braces
+        for ch in line.chars() {
+            match ch {
+                '{' => {
+                    brace_count += 1;
+                    found_opening = true;
+                }
+                '}' => {
+                    brace_count -= 1;
+                    if found_opening && brace_count == 0 {
+                        return Some(i + 1); // Convert to 1-based line number
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    
+    None
 }
 
 /// Recursively scan a directory for supported files
