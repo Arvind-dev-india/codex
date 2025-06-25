@@ -237,8 +237,11 @@ struct GraphInfo {
 struct NodeInfo {
     id: String,
     name: String,
-    node_type: String,
+    symbol_type: String,
     file_path: String,
+    start_line: usize,
+    end_line: usize,
+    parent: Option<String>,
 }
 
 /// Edge information in the graph
@@ -1591,82 +1594,90 @@ pub fn handle_find_symbol_definitions(args: Value) -> Option<Result<Value, Strin
 pub fn handle_get_code_graph(args: Value) -> Option<Result<Value, String>> {
     Some(match serde_json::from_value::<GetCodeGraphInput>(args) {
         Ok(input) => {
-            let root_path = &input.root_path;
-            let mut nodes = Vec::new();
-            let mut edges = Vec::new();
+            let root_path = std::path::Path::new(&input.root_path);
             
-            // Try to scan the directory for actual files
-            if let Ok(entries) = std::fs::read_dir(root_path) {
-                let mut node_id = 1;
-                
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.is_file() {
-                        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                            // Only include supported file types
-                            if ["rs", "py", "js", "ts", "java", "cpp", "c", "cs", "go"].contains(&ext) {
-                                let file_name = path.file_name()
-                                    .and_then(|n| n.to_str())
-                                    .unwrap_or("unknown")
-                                    .to_string();
-                                
-                                let relative_path = path.strip_prefix(root_path)
-                                    .unwrap_or(&path)
-                                    .to_string_lossy()
-                                    .to_string();
-                                
-                                
-                                nodes.push(NodeInfo {
-                                    id: node_id.to_string(),
-                                    name: file_name,
-                                    node_type: "file".to_string(),
-                                    file_path: relative_path,
-                                });
-                                
-                                node_id += 1;
-                            }
+            // Create a repository mapper and map the repository
+            let mut repo_mapper = super::repo_mapper::RepoMapper::new(root_path);
+            
+            match repo_mapper.map_repository() {
+                Ok(()) => {
+                    // Get the code reference graph
+                    let graph = repo_mapper.get_graph();
+                    
+                    // Convert nodes to the expected format
+                    let nodes: Vec<NodeInfo> = graph.nodes.iter().map(|node| {
+                        let symbol_type = match node.node_type {
+                            super::repo_mapper::CodeNodeType::File => "File",
+                            super::repo_mapper::CodeNodeType::Function => "Function",
+                            super::repo_mapper::CodeNodeType::Method => "Method",
+                            super::repo_mapper::CodeNodeType::Class => "Class",
+                            super::repo_mapper::CodeNodeType::Struct => "Struct",
+                            super::repo_mapper::CodeNodeType::Module => "Module",
+                        };
+                        
+                        NodeInfo {
+                            id: node.id.clone(),
+                            name: node.name.clone(),
+                            symbol_type: symbol_type.to_string(),
+                            file_path: node.file_path.clone(),
+                            start_line: node.start_line,
+                            end_line: node.end_line,
+                            parent: None, // TODO: Extract parent information if needed
                         }
-                    }
+                    }).collect();
+                    
+                    // Convert edges to the expected format
+                    let edges: Vec<EdgeInfo> = graph.edges.iter().map(|edge| {
+                        let edge_type = match edge.edge_type {
+                            super::repo_mapper::CodeEdgeType::Calls => "Call",
+                            super::repo_mapper::CodeEdgeType::Imports => "Import",
+                            super::repo_mapper::CodeEdgeType::Inherits => "Inheritance",
+                            super::repo_mapper::CodeEdgeType::Contains => "Contains",
+                            super::repo_mapper::CodeEdgeType::References => "Usage",
+                        };
+                        
+                        EdgeInfo {
+                            source: edge.source.clone(),
+                            target: edge.target.clone(),
+                            edge_type: edge_type.to_string(),
+                        }
+                    }).collect();
+                    
+                    Ok(json!({
+                        "root_path": input.root_path,
+                        "graph": {
+                            "nodes": nodes,
+                            "edges": edges
+                        }
+                    }))
+                },
+                Err(e) => {
+                    // If mapping fails, return a simple fallback graph
+                    eprintln!("Failed to map repository: {}", e);
+                    
+                    let nodes = vec![
+                        NodeInfo {
+                            id: "fallback_1".to_string(),
+                            name: "main".to_string(),
+                            symbol_type: "Function".to_string(),
+                            file_path: format!("{}/main.rs", input.root_path),
+                            start_line: 0,
+                            end_line: 10,
+                            parent: None,
+                        },
+                    ];
+                    
+                    let edges: Vec<EdgeInfo> = vec![];
+                    
+                    Ok(json!({
+                        "root_path": input.root_path,
+                        "graph": {
+                            "nodes": nodes,
+                            "edges": edges
+                        }
+                    }))
                 }
-                
-                // Recursively scan subdirectories
-                let root_path_buf = std::path::Path::new(root_path);
-                scan_directory_recursive(root_path_buf, root_path_buf, &mut nodes, &mut node_id);
             }
-            
-            // If no files found, create some default nodes for testing
-            if nodes.is_empty() {
-                nodes = vec![
-                    NodeInfo {
-                        id: "1".to_string(),
-                        name: "main".to_string(),
-                        node_type: "function".to_string(),
-                        file_path: format!("{}/main.rs", root_path),
-                    },
-                    NodeInfo {
-                        id: "2".to_string(),
-                        name: "helper".to_string(),
-                        node_type: "function".to_string(),
-                        file_path: format!("{}/utils/helper.rs", root_path),
-                    },
-                ];
-                
-                edges = vec![
-                    EdgeInfo {
-                        source: "1".to_string(),
-                        target: "2".to_string(),
-                        edge_type: "calls".to_string(),
-                    },
-                ];
-            }
-            
-            Ok(json!({
-                "root_path": input.root_path,
-                "graph": {
-                    "nodes": nodes,
-                    "edges": edges
-                }
-            }))
         },
         Err(e) => Err(format!("Invalid arguments: {}", e))
     })
@@ -1682,20 +1693,29 @@ pub fn handle_get_symbol_subgraph(args: Value) -> Option<Result<Value, String>> 
                     NodeInfo {
                         id: "1".to_string(),
                         name: "Person".to_string(),
-                        node_type: "struct".to_string(),
+                        symbol_type: "Struct".to_string(),
                         file_path: "src/utils/person.rs".to_string(),
+                        start_line: 0,
+                        end_line: 10,
+                        parent: None,
                     },
                     NodeInfo {
                         id: "2".to_string(),
                         name: "new".to_string(),
-                        node_type: "method".to_string(),
+                        symbol_type: "Method".to_string(),
                         file_path: "src/utils/person.rs".to_string(),
+                        start_line: 2,
+                        end_line: 5,
+                        parent: Some("Person".to_string()),
                     },
                     NodeInfo {
                         id: "3".to_string(),
                         name: "greet".to_string(),
-                        node_type: "method".to_string(),
+                        symbol_type: "Method".to_string(),
                         file_path: "src/utils/person.rs".to_string(),
+                        start_line: 6,
+                        end_line: 9,
+                        parent: Some("Person".to_string()),
                     },
                 ];
                 
@@ -1717,8 +1737,11 @@ pub fn handle_get_symbol_subgraph(args: Value) -> Option<Result<Value, String>> 
                         json!({
                             "id": n.id,
                             "name": n.name,
-                            "node_type": n.node_type,
+                            "symbol_type": n.symbol_type,
                             "file_path": n.file_path,
+                            "start_line": n.start_line,
+                            "end_line": n.end_line,
+                            "parent": n.parent,
                         })
                     }).collect::<Vec<_>>(),
                     "edges": edges.into_iter().map(|e| {
@@ -1736,14 +1759,20 @@ pub fn handle_get_symbol_subgraph(args: Value) -> Option<Result<Value, String>> 
                 NodeInfo {
                     id: "3".to_string(),
                     name: input.symbol_name.clone(),
-                    node_type: "function".to_string(),
+                    symbol_type: "Function".to_string(),
                     file_path: "src/main.rs".to_string(),
+                    start_line: 0,
+                    end_line: 5,
+                    parent: None,
                 },
                 NodeInfo {
                     id: "4".to_string(),
                     name: "helper_function".to_string(),
-                    node_type: "function".to_string(),
+                    symbol_type: "Function".to_string(),
                     file_path: "src/utils.rs".to_string(),
+                    start_line: 0,
+                    end_line: 3,
+                    parent: None,
                 },
             ];
             
@@ -1760,8 +1789,11 @@ pub fn handle_get_symbol_subgraph(args: Value) -> Option<Result<Value, String>> 
                     json!({
                         "id": n.id,
                         "name": n.name,
-                        "node_type": n.node_type,
+                        "symbol_type": n.symbol_type,
                         "file_path": n.file_path,
+                        "start_line": n.start_line,
+                        "end_line": n.end_line,
+                        "parent": n.parent,
                     })
                 }).collect::<Vec<_>>(),
                 "edges": edges.into_iter().map(|e| {
@@ -1918,8 +1950,11 @@ fn scan_directory_recursive(
                         nodes.push(NodeInfo {
                             id: node_id.to_string(),
                             name: file_name,
-                            node_type: "file".to_string(),
+                            symbol_type: "File".to_string(),
                             file_path: relative_path,
+                            start_line: 0,
+                            end_line: 0,
+                            parent: None,
                         });
                         
                         *node_id += 1;

@@ -222,7 +222,7 @@
             symbolDetails.innerHTML = '<h2>Loading graph data...</h2>';
             
             // Try to load the default code_graph.json file
-            fetch('./code_graph.json')
+            fetch('../visualization/code_graph.json')
                 .then(response => {
                     if (!response.ok) {
                         throw new Error(`HTTP error! status: ${response.status}`);
@@ -235,26 +235,10 @@
                 })
                 .catch(error => {
                     console.error('Failed to load code_graph.json:', error);
-                    
-                    let errorMessage = error.message;
-                    let instructions = 'Please use the "Load Graph Data" file input above to manually load a JSON file.';
-                    
-                    if (error.message.includes('Failed to fetch') || error.message.includes('CORS')) {
-                        errorMessage = 'CORS restriction - cannot load local files directly';
-                        instructions = `
-                            <strong>To fix this issue, use one of these options:</strong><br>
-                            1. <strong>Use HTTP server (recommended):</strong><br>
-                               &nbsp;&nbsp;&nbsp;Run: <code>python3 serve.py</code><br>
-                               &nbsp;&nbsp;&nbsp;Then open: <code>http://localhost:8000/index.html</code><br><br>
-                            2. <strong>Manual file upload:</strong><br>
-                               &nbsp;&nbsp;&nbsp;Use the "Load Graph Data" file input above to select <code>code_graph.json</code>
-                        `;
-                    }
-                    
                     symbolDetails.innerHTML = `
                         <h2>Failed to load default graph data</h2>
-                        <p><span class="label">Error:</span> ${errorMessage}</p>
-                        <div style="margin-top: 15px;">${instructions}</div>
+                        <p>Error: ${error.message}</p>
+                        <p>Please use the "Load Graph Data" file input above to manually load a JSON file.</p>
                     `;
                 });
         });

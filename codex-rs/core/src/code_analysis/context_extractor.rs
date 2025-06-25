@@ -238,8 +238,9 @@ impl ContextExtractor {
             name: name.clone(),
             symbol_type,
             file_path: parsed_file.path.clone(),
-            start_line: def_capture.start_point.0,
-            end_line: def_capture.end_point.0,
+            // Convert from 0-based to 1-based line numbers for consistency
+            start_line: def_capture.start_point.0 + 1,
+            end_line: def_capture.end_point.0 + 1,
             start_col: def_capture.start_point.1,
             end_col: def_capture.end_point.1,
             parent,
@@ -301,7 +302,8 @@ impl ContextExtractor {
             symbol_name,
             symbol_fqn,
             reference_file: parsed_file.path.clone(),
-            reference_line: ref_capture.start_point.0,
+            // Convert from 0-based to 1-based line numbers for consistency
+            reference_line: ref_capture.start_point.0 + 1,
             reference_col: ref_capture.start_point.1,
             reference_type,
         };
@@ -468,6 +470,56 @@ impl ContextExtractor {
         } else {
             Vec::new()
         }
+    }
+    
+    /// Find the symbol that contains a specific line in a file
+    pub fn find_containing_symbol(&self, file_path: &str, line: usize) -> Option<&CodeSymbol> {
+        // Find all symbols in the file
+        if let Some(symbol_fqns) = self.file_symbols.get(file_path) {
+            // Find the symbol that contains this line (line should be within start_line and end_line)
+            for fqn in symbol_fqns {
+                if let Some(symbol) = self.symbols.get(fqn) {
+                    // Check if the line is within the symbol's range
+                    // Note: Both line and symbol line numbers are now 1-based
+                    if line >= symbol.start_line && line <= symbol.end_line {
+                        return Some(symbol);
+                    }
+                }
+            }
+        }
+        None
+    }
+    
+    /// Find the most specific symbol that contains a specific line in a file
+    /// (e.g., prefer method over class if both contain the line)
+    pub fn find_most_specific_containing_symbol(&self, file_path: &str, line: usize) -> Option<&CodeSymbol> {
+        // Find all symbols in the file that contain this line
+        let mut containing_symbols = Vec::new();
+        
+        if let Some(symbol_fqns) = self.file_symbols.get(file_path) {
+            for fqn in symbol_fqns {
+                if let Some(symbol) = self.symbols.get(fqn) {
+                    // Check if the line is within the symbol's range
+                    if line >= symbol.start_line && line <= symbol.end_line {
+                        containing_symbols.push(symbol);
+                    }
+                }
+            }
+        }
+        
+        if containing_symbols.is_empty() {
+            return None;
+        }
+        
+        // Sort by specificity: smaller range (end_line - start_line) is more specific
+        containing_symbols.sort_by(|a, b| {
+            let a_range = a.end_line - a.start_line;
+            let b_range = b.end_line - b.start_line;
+            a_range.cmp(&b_range)
+        });
+        
+        // Return the most specific (smallest range) symbol
+        Some(containing_symbols[0])
     }
 }
 

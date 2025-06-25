@@ -217,32 +217,42 @@ impl RepoMapper {
             };
 
             // Find the source symbol node (the one containing the reference)
-            // This is a simplification - in a real implementation, we would need to find the
-            // exact symbol containing this reference
-            if let Some(file_node) = self.file_nodes.get(&reference.reference_file) {
-                // Use the FQN if available, otherwise fall back to the symbol name
-                let target_key = if !reference.symbol_fqn.is_empty() {
-                    &reference.symbol_fqn
+            // Use the most specific symbol that contains the reference line
+            let source_node_id = if let Some(containing_symbol) = self.context_extractor
+                .find_most_specific_containing_symbol(&reference.reference_file, reference.reference_line) {
+                // Use the containing symbol as the source
+                format!("symbol:{}", containing_symbol.fqn)
+            } else {
+                // Fall back to file node if no containing symbol found
+                if let Some(file_node) = self.file_nodes.get(&reference.reference_file) {
+                    file_node.id.clone()
                 } else {
-                    // Try to find the FQN from the name
-                    if let Some(fqns) = self.context_extractor.get_name_to_fqns().get(&reference.symbol_name) {
-                        if !fqns.is_empty() {
-                            &fqns[0]
-                        } else {
-                            continue;
-                        }
+                    continue;
+                }
+            };
+
+            // Find the target symbol node
+            let target_key = if !reference.symbol_fqn.is_empty() {
+                &reference.symbol_fqn
+            } else {
+                // Try to find the FQN from the name
+                if let Some(fqns) = self.context_extractor.get_name_to_fqns().get(&reference.symbol_name) {
+                    if !fqns.is_empty() {
+                        &fqns[0]
                     } else {
                         continue;
                     }
-                };
-                
-                if let Some(target_node) = self.symbol_nodes.get(target_key) {
-                    self.edges.push(CodeEdge {
-                        source: file_node.id.clone(),
-                        target: target_node.id.clone(),
-                        edge_type,
-                    });
+                } else {
+                    continue;
                 }
+            };
+            
+            if let Some(target_node) = self.symbol_nodes.get(target_key) {
+                self.edges.push(CodeEdge {
+                    source: source_node_id,
+                    target: target_node.id.clone(),
+                    edge_type,
+                });
             }
         }
     }

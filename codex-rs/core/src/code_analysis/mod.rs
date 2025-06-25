@@ -2,7 +2,7 @@
 
 mod parser_pool;
 pub mod context_extractor;
-mod repo_mapper;
+pub mod repo_mapper;
 pub mod tools;
 pub mod integration;
 pub mod tool_handler;

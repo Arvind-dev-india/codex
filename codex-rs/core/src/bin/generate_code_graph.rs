@@ -1,11 +1,9 @@
 use std::env;
 use std::fs;
 use std::path::Path;
-use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
-use serde_json::json;
 
-use codex_core::code_analysis::context_extractor::{ContextExtractor};
+use codex_core::code_analysis::repo_mapper::RepoMapper;
 
 #[derive(Serialize, Deserialize)]
 struct GraphNode {
@@ -46,90 +44,78 @@ fn main() {
         "code_graph.json".to_string()
     };
     
-    // Create a context extractor
-    let mut extractor = ContextExtractor::new();
+    // Create a repository mapper and map the repository
+    let mut repo_mapper = RepoMapper::new(Path::new(source_dir));
     
-    // Process all files in the directory recursively
-    process_directory(&mut extractor, Path::new(source_dir)).unwrap_or_else(|e| {
-        eprintln!("Error processing directory: {}", e);
-        std::process::exit(1);
-    });
-    
-    // Get all symbols and references
-    let symbols = extractor.get_symbols();
-    let references = extractor.get_references();
-    
-    // Create graph nodes from symbols
-    let mut nodes = Vec::new();
-    for (fqn, symbol) in symbols {
-        nodes.push(GraphNode {
-            id: fqn.clone(),
-            name: symbol.name.clone(),
-            symbol_type: format!("{:?}", symbol.symbol_type),
-            file_path: symbol.file_path.clone(),
-            start_line: symbol.start_line,
-            end_line: symbol.end_line,
-            parent: symbol.parent.clone(),
-        });
-    }
-    
-    // Create graph edges from references
-    let mut edges = Vec::new();
-    for reference in references {
-        if !reference.symbol_fqn.is_empty() {
-            edges.push(GraphEdge {
-                source: reference.reference_file.clone() + "::" + &reference.reference_line.to_string(),
-                target: reference.symbol_fqn.clone(),
-                edge_type: format!("{:?}", reference.reference_type),
-            });
+    match repo_mapper.map_repository() {
+        Ok(()) => {
+            println!("Successfully mapped repository: {}", source_dir);
+        },
+        Err(e) => {
+            eprintln!("Error mapping repository: {}", e);
+            std::process::exit(1);
         }
     }
     
-    // Create the graph
-    let graph = CodeGraph {
+    // Get the code reference graph
+    let graph = repo_mapper.get_graph();
+    
+    // Convert nodes to the expected format
+    let mut nodes = Vec::new();
+    for node in &graph.nodes {
+        let symbol_type = match node.node_type {
+            codex_core::code_analysis::repo_mapper::CodeNodeType::File => "File",
+            codex_core::code_analysis::repo_mapper::CodeNodeType::Function => "Function",
+            codex_core::code_analysis::repo_mapper::CodeNodeType::Method => "Method",
+            codex_core::code_analysis::repo_mapper::CodeNodeType::Class => "Class",
+            codex_core::code_analysis::repo_mapper::CodeNodeType::Struct => "Struct",
+            codex_core::code_analysis::repo_mapper::CodeNodeType::Module => "Module",
+        };
+        
+        nodes.push(GraphNode {
+            id: node.id.clone(),
+            name: node.name.clone(),
+            symbol_type: symbol_type.to_string(),
+            file_path: node.file_path.clone(),
+            start_line: node.start_line,
+            end_line: node.end_line,
+            parent: None, // TODO: Extract parent information if needed
+        });
+    }
+    
+    // Convert edges to the expected format
+    let mut edges = Vec::new();
+    for edge in &graph.edges {
+        let edge_type = match edge.edge_type {
+            codex_core::code_analysis::repo_mapper::CodeEdgeType::Calls => "Call",
+            codex_core::code_analysis::repo_mapper::CodeEdgeType::Imports => "Import",
+            codex_core::code_analysis::repo_mapper::CodeEdgeType::Inherits => "Inheritance",
+            codex_core::code_analysis::repo_mapper::CodeEdgeType::Contains => "Contains",
+            codex_core::code_analysis::repo_mapper::CodeEdgeType::References => "Usage",
+        };
+        
+        edges.push(GraphEdge {
+            source: edge.source.clone(),
+            target: edge.target.clone(),
+            edge_type: edge_type.to_string(),
+        });
+    }
+    
+    // Create the final graph structure
+    let final_graph = CodeGraph {
         nodes,
         edges,
     };
     
     // Write the graph to a JSON file
-    let json = serde_json::to_string_pretty(&graph).unwrap();
+    let json = serde_json::to_string_pretty(&final_graph).unwrap();
     fs::write(&output_path, json).unwrap_or_else(|e| {
         eprintln!("Error writing output file: {}", e);
         std::process::exit(1);
     });
     
     println!("Graph data written to {}", output_path);
+    println!("Total nodes: {}", final_graph.nodes.len());
+    println!("Total edges: {}", final_graph.edges.len());
 }
 
-fn process_directory(extractor: &mut ContextExtractor, dir_path: &Path) -> Result<(), String> {
-    if !dir_path.is_dir() {
-        return Err(format!("{} is not a directory", dir_path.display()));
-    }
-    
-    for entry in fs::read_dir(dir_path).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let path = entry.path();
-        
-        if path.is_dir() {
-            // Skip hidden directories and target directories
-            let dir_name = path.file_name().unwrap().to_string_lossy();
-            if !dir_name.starts_with(".") && dir_name != "target" {
-                process_directory(extractor, &path)?;
-            }
-        } else if path.is_file() {
-            // Process only source code files
-            if let Some(ext) = path.extension() {
-                let ext_str = ext.to_string_lossy().to_lowercase();
-                if ["rs", "py", "js", "ts", "java", "cs", "cpp", "h", "hpp", "go"].contains(&ext_str.as_str()) {
-                    // Extract symbols from the file
-                    match extractor.extract_symbols_from_file(path.to_str().unwrap()) {
-                        Ok(_) => println!("Processed {}", path.display()),
-                        Err(e) => eprintln!("Error processing {}: {}", path.display(), e),
-                    }
-                }
-            }
-        }
-    }
-    
-    Ok(())
-}
