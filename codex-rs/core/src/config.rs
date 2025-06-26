@@ -594,7 +594,7 @@ writable_roots = [
     fn create_test_fixture() -> std::io::Result<PrecedenceTestFixture> {
         let toml = r#"
 model = "o3"
-approval_policy = "unless-allow-listed"
+approval_policy = "untrusted"
 disable_response_storage = false
 
 # Can be used to determine which profile to use if not specified by
@@ -740,7 +740,7 @@ disable_response_storage = true
             model: "gpt-3.5-turbo".to_string(),
             model_provider_id: "openai-chat-completions".to_string(),
             model_provider: fixture.openai_chat_completions_provider.clone(),
-            approval_policy: AskForApproval::UnlessAllowListed,
+            approval_policy: AskForApproval::UnlessTrusted,
             sandbox_policy: SandboxPolicy::new_read_only_policy(),
             shell_environment_policy: ShellEnvironmentPolicy::default(),
             azure_devops: None,
