@@ -15,6 +15,5 @@ pub use tools::{
     handle_analyze_code,
     handle_find_symbol_references,
     handle_find_symbol_definitions,
-    handle_get_code_graph,
     handle_get_symbol_subgraph,
 };

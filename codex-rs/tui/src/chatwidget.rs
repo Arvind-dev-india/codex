@@ -434,7 +434,6 @@ impl ChatWidget<'_> {
                     The code graph is ready! You can now use code analysis tools like:\n\
                     • `code_analysis.find_symbol_references`\n\
                     • `code_analysis.find_symbol_definitions`\n\
-                    • `code_analysis.get_code_graph`\n\
                     • `code_analysis.get_symbol_subgraph`",
                     files_processed, symbols_found, initialization_time_ms
                 )

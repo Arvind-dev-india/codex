@@ -13,9 +13,9 @@ pub fn register_code_analysis_tools() -> Vec<OpenAiTool> {
         create_analyze_code_tool(),
         create_find_symbol_references_tool(),
         create_find_symbol_definitions_tool(),
-        create_get_code_graph_tool(),
         create_get_symbol_subgraph_tool(),
         // Note: update_code_graph_tool removed as initialization is now automatic
+        // Note: get_code_graph_tool removed as it can return huge amounts of data for large repositories
     ]
 }
 
@@ -30,7 +30,7 @@ fn create_analyze_code_tool() -> OpenAiTool {
     
     create_function_tool(
         "code_analysis.analyze_code",
-        "Analyzes the code in a file and returns information about functions, classes, and other symbols. The code graph is automatically initialized when the CLI starts.",
+        "Analyzes the code in a file and returns information about functions, classes, and other symbols. Only works with files that exist in the repository and are from supported languages (Rust, JavaScript, TypeScript, Python, Go, C++, C#, Java). The code graph is automatically initialized when the CLI starts.",
         properties,
         &["file_path"],
     )
@@ -70,36 +70,6 @@ fn create_find_symbol_definitions_tool() -> OpenAiTool {
     )
 }
 
-/// Create a tool for getting the code reference graph
-fn create_get_code_graph_tool() -> OpenAiTool {
-    let mut properties = BTreeMap::new();
-    
-    properties.insert(
-        "root_path".to_string(),
-        JsonSchema::String,
-    );
-    
-    properties.insert(
-        "include_files".to_string(),
-        JsonSchema::Array {
-            items: Box::new(JsonSchema::String),
-        },
-    );
-    
-    properties.insert(
-        "exclude_patterns".to_string(),
-        JsonSchema::Array {
-            items: Box::new(JsonSchema::String),
-        },
-    );
-    
-    create_function_tool(
-        "code_analysis.get_code_graph",
-        "Returns the pre-generated graph of code references and dependencies. The graph is automatically built when the CLI starts.",
-        properties,
-        &["root_path"],
-    )
-}
 
 /// Create a tool for getting a subgraph starting from a specific symbol
 fn create_get_symbol_subgraph_tool() -> OpenAiTool {
@@ -162,16 +132,6 @@ pub struct FindSymbolDefinitionsInput {
     pub directory: String,
 }
 
-/// Input for the get_code_graph tool
-#[derive(Debug, Deserialize, Serialize)]
-pub struct GetCodeGraphInput {
-    #[serde(alias = "directory")]
-    pub root_path: String,
-    #[serde(default)]
-    pub include_files: Option<Vec<String>>,
-    #[serde(default)]
-    pub exclude_patterns: Option<Vec<String>>,
-}
 
 /// Input for the get_symbol_subgraph tool
 #[derive(Debug, Deserialize, Serialize)]
@@ -225,39 +185,30 @@ struct DefinitionInfo {
     symbol_type: String,
 }
 
-/// Graph information returned by get_code_graph
-#[derive(Debug, Serialize)]
-struct GraphInfo {
-    nodes: Vec<NodeInfo>,
-    edges: Vec<EdgeInfo>,
-}
-
-/// Node information in the graph
-#[derive(Debug, Serialize)]
-struct NodeInfo {
-    id: String,
-    name: String,
-    symbol_type: String,
-    file_path: String,
-    start_line: usize,
-    end_line: usize,
-    parent: Option<String>,
-}
-
-/// Edge information in the graph
-#[derive(Debug, Serialize)]
-struct EdgeInfo {
-    source: String,
-    target: String,
-    edge_type: String,
-}
 
 /// Handle the analyze_code tool call
 pub fn handle_analyze_code(args: Value) -> Option<Result<Value, String>> {
     Some(match serde_json::from_value::<AnalyzeCodeInput>(args) {
         Ok(input) => {
-            // First, try to get the file's directory to ensure the global graph is initialized
+            // Validate that the file exists
             let file_path = std::path::Path::new(&input.file_path);
+            if !file_path.exists() {
+                return Some(Err(format!("File does not exist: {}", input.file_path)));
+            }
+            
+            // Validate that the file is from a supported language
+            use super::parser_pool::SupportedLanguage;
+            if SupportedLanguage::from_path(file_path).is_none() {
+                let extension = file_path.extension()
+                    .and_then(|ext| ext.to_str())
+                    .unwrap_or("unknown");
+                return Some(Err(format!(
+                    "Unsupported file type: .{} (supported: .rs, .js/.jsx/.mjs, .ts/.tsx, .py/.pyw, .go, .cpp/.cc/.cxx/.c++/.hpp/.hh/.hxx/.h++/.h/.c, .cs, .java)", 
+                    extension
+                )));
+            }
+            
+            // First, try to get the file's directory to ensure the global graph is initialized
             let dir_path = file_path.parent().unwrap_or_else(|| std::path::Path::new("."));
             
             // Use the pre-initialized global graph (no need to rebuild)
@@ -1700,91 +1651,6 @@ pub fn handle_find_symbol_definitions(args: Value) -> Option<Result<Value, Strin
     })
 }
 
-/// Handle the get_code_graph tool call
-pub fn handle_get_code_graph(args: Value) -> Option<Result<Value, String>> {
-    Some(match serde_json::from_value::<GetCodeGraphInput>(args) {
-        Ok(input) => {
-            let root_path = std::path::Path::new(&input.root_path);
-            
-            // Use the pre-initialized global graph (no need to rebuild)
-            if super::graph_manager::is_graph_initialized() {
-                // Get the code reference graph from the cached global manager
-                if let Some(graph) = super::graph_manager::get_code_graph() {
-                        // Convert nodes to the expected format
-                        let nodes: Vec<NodeInfo> = graph.nodes.iter().map(|node| {
-                            let symbol_type = match node.node_type {
-                                super::repo_mapper::CodeNodeType::File => "File",
-                                super::repo_mapper::CodeNodeType::Function => "Function",
-                                super::repo_mapper::CodeNodeType::Method => "Method",
-                                super::repo_mapper::CodeNodeType::Class => "Class",
-                                super::repo_mapper::CodeNodeType::Struct => "Struct",
-                                super::repo_mapper::CodeNodeType::Module => "Module",
-                            };
-                            
-                            NodeInfo {
-                                id: node.id.clone(),
-                                name: node.name.clone(),
-                                symbol_type: symbol_type.to_string(),
-                                file_path: node.file_path.clone(),
-                                start_line: node.start_line,
-                                end_line: node.end_line,
-                                parent: None, // TODO: Extract parent information if needed
-                            }
-                        }).collect();
-                        
-                        // Convert edges to the expected format
-                        let edges: Vec<EdgeInfo> = graph.edges.iter().map(|edge| {
-                            let edge_type = match edge.edge_type {
-                                super::repo_mapper::CodeEdgeType::Calls => "Call",
-                                super::repo_mapper::CodeEdgeType::Imports => "Import",
-                                super::repo_mapper::CodeEdgeType::Inherits => "Inheritance",
-                                super::repo_mapper::CodeEdgeType::Contains => "Contains",
-                                super::repo_mapper::CodeEdgeType::References => "Usage",
-                            };
-                            
-                            EdgeInfo {
-                                source: edge.source.clone(),
-                                target: edge.target.clone(),
-                                edge_type: edge_type.to_string(),
-                            }
-                        }).collect();
-                        
-                        Ok(json!({
-                            "root_path": input.root_path,
-                            "nodes": nodes,
-                            "edges": edges
-                        }))
-                } else {
-                    Err("Failed to get code graph from global manager".to_string())
-                }
-            } else {
-                // If graph is not initialized, return a simple fallback graph
-                eprintln!("Code graph not initialized yet");
-                
-                let nodes = vec![
-                    NodeInfo {
-                        id: "fallback_1".to_string(),
-                        name: "main".to_string(),
-                        symbol_type: "Function".to_string(),
-                        file_path: format!("{}/main.rs", input.root_path),
-                        start_line: 0,
-                        end_line: 10,
-                        parent: None,
-                    },
-                ];
-                
-                let edges: Vec<EdgeInfo> = vec![];
-                
-                Ok(json!({
-                    "root_path": input.root_path,
-                    "nodes": nodes,
-                    "edges": edges
-                }))
-            }
-        },
-        Err(e) => Err(format!("Invalid arguments: {}", e))
-    })
-}
 
 /// Handle the get_symbol_subgraph tool call
 pub fn handle_get_symbol_subgraph(args: Value) -> Option<Result<Value, String>> {
@@ -1881,13 +1747,6 @@ pub fn analyze_code_handler(input: AnalyzeCodeInput) -> Result<Value, String> {
     }
 }
 
-/// Wrapper function for get_code_graph_handler to match the expected signature in tests
-pub fn get_code_graph_handler(input: GetCodeGraphInput) -> Result<Value, String> {
-    match handle_get_code_graph(serde_json::to_value(input).unwrap()) {
-        Some(result) => result,
-        None => Err("Failed to handle get_code_graph".to_string()),
-    }
-}
 
 /// Wrapper function for update_code_graph_handler to match the expected signature in tests
 pub fn update_code_graph_handler(input: UpdateCodeGraphInput) -> Result<Value, String> {
@@ -2005,51 +1864,3 @@ fn find_matching_brace(lines: &[&str], start_line: usize) -> Option<usize> {
     None
 }
 
-/// Recursively scan a directory for supported files
-fn scan_directory_recursive(
-    current_dir: &std::path::Path,
-    root_path: &std::path::Path,
-    nodes: &mut Vec<NodeInfo>,
-    node_id: &mut i32,
-) {
-    if let Ok(entries) = std::fs::read_dir(current_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                let dir_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                // Skip hidden directories and common directories to ignore
-                if !dir_name.starts_with('.') && !["node_modules", "target", "dist"].contains(&dir_name) {
-                    // Recursively scan this subdirectory
-                    scan_directory_recursive(&path, root_path, nodes, node_id);
-                }
-            } else if path.is_file() {
-                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                    if ["rs", "py", "js", "ts", "java", "cpp", "c", "cs", "go"].contains(&ext) {
-                        let file_name = path.file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("unknown")
-                            .to_string();
-                        
-                        let relative_path = path.strip_prefix(root_path)
-                            .unwrap_or(&path)
-                            .to_string_lossy()
-                            .to_string();
-                        
-                        
-                        nodes.push(NodeInfo {
-                            id: node_id.to_string(),
-                            name: file_name,
-                            symbol_type: "File".to_string(),
-                            file_path: relative_path,
-                            start_line: 0,
-                            end_line: 0,
-                            parent: None,
-                        });
-                        
-                        *node_id += 1;
-                    }
-                }
-            }
-        }
-    }
-}

@@ -7,7 +7,6 @@ use crate::code_analysis::tools::{
     handle_analyze_code,
     handle_find_symbol_references,
     handle_find_symbol_definitions,
-    handle_get_code_graph,
     handle_get_symbol_subgraph,
 };
 use crate::error::{CodexErr, Result};
@@ -75,11 +74,6 @@ pub async fn handle_code_analysis_tool_call(
         "code_analysis.find_symbol_definitions" => {
             Ok(handle_find_symbol_definitions(args)
                 .ok_or_else(|| CodexErr::Other("Failed to handle find_symbol_definitions".to_string()))?
-                .map_err(|e| CodexErr::Other(e.to_string()))?)
-        },
-        "code_analysis.get_code_graph" => {
-            Ok(handle_get_code_graph(args)
-                .ok_or_else(|| CodexErr::Other("Failed to handle get_code_graph".to_string()))?
                 .map_err(|e| CodexErr::Other(e.to_string()))?)
         },
         "code_analysis.get_symbol_subgraph" => {

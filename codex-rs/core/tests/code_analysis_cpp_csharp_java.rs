@@ -5,7 +5,6 @@ use tempfile::tempdir;
 
 use codex_core::code_analysis::tools::{
     analyze_code_handler, AnalyzeCodeInput,
-    get_code_graph_handler, GetCodeGraphInput,
 };
 
 // Helper function to create a temporary file with content

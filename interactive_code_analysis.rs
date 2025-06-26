@@ -57,10 +57,9 @@ fn interactive_loop(source_dir: &str) {
             "1" => run_analyze_code(source_dir),
             "2" => run_find_symbol_references(source_dir),
             "3" => run_find_symbol_definitions(source_dir),
-            "4" => run_get_code_graph(source_dir),
-            "5" => run_get_symbol_subgraph(source_dir),
-            "6" => run_update_code_graph(source_dir),
-            "7" => list_files_in_directory(source_dir),
+            "4" => run_get_symbol_subgraph(source_dir),
+            "5" => run_update_code_graph(source_dir),
+            "6" => list_files_in_directory(source_dir),
             "q" | "Q" | "quit" => {
                 println!("Goodbye!");
                 break;
@@ -80,10 +79,9 @@ fn show_menu() {
     println!("1. Analyze Code (analyze specific file)");
     println!("2. Find Symbol References (find where symbol is used)");
     println!("3. Find Symbol Definitions (find where symbol is defined)");
-    println!("4. Get Code Graph (show code structure graph)");
-    println!("5. Get Symbol Subgraph (show symbol relationships)");
-    println!("6. Update Code Graph (refresh code analysis)");
-    println!("7. List Files (show files in directory)");
+    println!("4. Get Symbol Subgraph (show symbol relationships)");
+    println!("5. Update Code Graph (refresh code analysis)");
+    println!("6. List Files (show files in directory)");
     println!("q. Quit");
     println!();
 }
@@ -430,13 +428,6 @@ fn run_find_symbol_definitions(_source_dir: &str) {
     println!("  - file1.cs:8-11 (method)");
 }
 
-fn run_get_code_graph(_source_dir: &str) {
-    println!("=== Get Code Graph Tool ===");
-    println!("Generating code graph...");
-    println!("Graph contains:");
-    println!("  Nodes: 5 (3 classes, 2 methods)");
-    println!("  Edges: 3 (contains relationships)");
-}
 
 fn run_get_symbol_subgraph(_source_dir: &str) {
     println!("=== Get Symbol Subgraph Tool ===");

@@ -1225,9 +1225,9 @@ async fn handle_function_call(
         }
         // Check for Code Analysis tools directly (both qualified and unqualified names)
         "analyze_code" | "find_symbol_references" | "find_symbol_definitions" | 
-        "get_code_graph" | "get_symbol_subgraph" | "update_code_graph" |
+        "get_symbol_subgraph" | "update_code_graph" |
         "code_analysis.analyze_code" | "code_analysis.find_symbol_references" | "code_analysis.find_symbol_definitions" | 
-        "code_analysis.get_code_graph" | "code_analysis.get_symbol_subgraph" | "code_analysis.update_code_graph" => {
+        "code_analysis.get_symbol_subgraph" | "code_analysis.update_code_graph" => {
             // For Code Analysis tools, use "code_analysis" as server name
             let timeout = None;
             
