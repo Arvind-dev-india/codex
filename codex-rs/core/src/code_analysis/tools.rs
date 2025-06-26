@@ -260,9 +260,9 @@ pub fn handle_analyze_code(args: Value) -> Option<Result<Value, String>> {
             let file_path = std::path::Path::new(&input.file_path);
             let dir_path = file_path.parent().unwrap_or_else(|| std::path::Path::new("."));
             
-            // Ensure the global graph is initialized for this directory
-            if let Ok(()) = super::graph_manager::ensure_graph_for_path(dir_path) {
-                // Try to get symbols from the global graph first
+            // Use the pre-initialized global graph (no need to rebuild)
+            if super::graph_manager::is_graph_initialized() {
+                // Get symbols from the cached global graph
                 if let Some(symbols_map) = super::graph_manager::get_symbols() {
                     let file_symbols: Vec<SymbolInfo> = symbols_map
                         .values()
@@ -1162,11 +1162,10 @@ pub fn handle_find_symbol_references(args: Value) -> Option<Result<Value, String
                 std::path::PathBuf::from(&input.directory)
             };
             
-            // Ensure the global graph is initialized for this path
-            match super::graph_manager::ensure_graph_for_path(&search_dir) {
-                Ok(()) => {
-                    // Use the global graph to find references
-                    let references = super::graph_manager::find_symbol_references(&input.symbol_name);
+            // Use the pre-initialized global graph (no need to rebuild)
+            if super::graph_manager::is_graph_initialized() {
+                // Use the cached global graph to find references
+                let references = super::graph_manager::find_symbol_references(&input.symbol_name);
                     
                     let reference_infos: Vec<_> = references.iter().map(|r| {
                         json!({
@@ -1184,11 +1183,10 @@ pub fn handle_find_symbol_references(args: Value) -> Option<Result<Value, String
                         })
                     }).collect();
                     
-                    Ok(json!({
-                        "references": reference_infos
-                    }))
-                },
-                Err(_) => {
+                Ok(json!({
+                    "references": reference_infos
+                }))
+            } else {
                     // Fall back to regex-based search if Tree-sitter fails
                     let mut references = Vec::new();
                     
@@ -1226,7 +1224,6 @@ pub fn handle_find_symbol_references(args: Value) -> Option<Result<Value, String
                             })
                         }).collect::<Vec<_>>()
                     }))
-                }
             }
         },
         Err(e) => Err(format!("Invalid arguments: {}", e)),
@@ -1628,11 +1625,10 @@ pub fn handle_find_symbol_definitions(args: Value) -> Option<Result<Value, Strin
                 std::path::PathBuf::from(&input.directory)
             };
             
-            // Ensure the global graph is initialized for this path
-            match super::graph_manager::ensure_graph_for_path(&search_dir) {
-                Ok(()) => {
-                    // Use the global graph to find definitions
-                    let definitions = super::graph_manager::find_symbol_definitions(&input.symbol_name);
+            // Use the pre-initialized global graph (no need to rebuild)
+            if super::graph_manager::is_graph_initialized() {
+                // Use the cached global graph to find definitions
+                let definitions = super::graph_manager::find_symbol_definitions(&input.symbol_name);
                     
                     let definition_infos: Vec<_> = definitions.iter().map(|d| {
                         json!({
@@ -1656,12 +1652,11 @@ pub fn handle_find_symbol_definitions(args: Value) -> Option<Result<Value, Strin
                         })
                     }).collect();
                     
-                    Ok(json!({
-                        "definitions": definition_infos
-                    }))
-                },
-                Err(_) => {
-                    // Fall back to regex-based search if Tree-sitter fails
+                Ok(json!({
+                    "definitions": definition_infos
+                }))
+            } else {
+                // Fall back to regex-based search if Tree-sitter fails
                     let mut definitions = Vec::new();
                     
                     // Search for files in the directory
@@ -1699,7 +1694,6 @@ pub fn handle_find_symbol_definitions(args: Value) -> Option<Result<Value, Strin
                             })
                         }).collect::<Vec<_>>()
                     }))
-                }
             }
         },
         Err(e) => Err(format!("Invalid arguments: {}", e)),
@@ -1712,11 +1706,10 @@ pub fn handle_get_code_graph(args: Value) -> Option<Result<Value, String>> {
         Ok(input) => {
             let root_path = std::path::Path::new(&input.root_path);
             
-            // Ensure the global graph is initialized for this path
-            match super::graph_manager::ensure_graph_for_path(root_path) {
-                Ok(()) => {
-                    // Get the code reference graph from the global manager
-                    if let Some(graph) = super::graph_manager::get_code_graph() {
+            // Use the pre-initialized global graph (no need to rebuild)
+            if super::graph_manager::is_graph_initialized() {
+                // Get the code reference graph from the cached global manager
+                if let Some(graph) = super::graph_manager::get_code_graph() {
                         // Convert nodes to the expected format
                         let nodes: Vec<NodeInfo> = graph.nodes.iter().map(|node| {
                             let symbol_type = match node.node_type {
@@ -1761,34 +1754,32 @@ pub fn handle_get_code_graph(args: Value) -> Option<Result<Value, String>> {
                             "nodes": nodes,
                             "edges": edges
                         }))
-                    } else {
-                        Err("Failed to get code graph from global manager".to_string())
-                    }
-                },
-                Err(e) => {
-                    // If mapping fails, return a simple fallback graph
-                    eprintln!("Failed to initialize graph: {}", e);
-                    
-                    let nodes = vec![
-                        NodeInfo {
-                            id: "fallback_1".to_string(),
-                            name: "main".to_string(),
-                            symbol_type: "Function".to_string(),
-                            file_path: format!("{}/main.rs", input.root_path),
-                            start_line: 0,
-                            end_line: 10,
-                            parent: None,
-                        },
-                    ];
-                    
-                    let edges: Vec<EdgeInfo> = vec![];
-                    
-                    Ok(json!({
-                        "root_path": input.root_path,
-                        "nodes": nodes,
-                        "edges": edges
-                    }))
+                } else {
+                    Err("Failed to get code graph from global manager".to_string())
                 }
+            } else {
+                // If graph is not initialized, return a simple fallback graph
+                eprintln!("Code graph not initialized yet");
+                
+                let nodes = vec![
+                    NodeInfo {
+                        id: "fallback_1".to_string(),
+                        name: "main".to_string(),
+                        symbol_type: "Function".to_string(),
+                        file_path: format!("{}/main.rs", input.root_path),
+                        start_line: 0,
+                        end_line: 10,
+                        parent: None,
+                    },
+                ];
+                
+                let edges: Vec<EdgeInfo> = vec![];
+                
+                Ok(json!({
+                    "root_path": input.root_path,
+                    "nodes": nodes,
+                    "edges": edges
+                }))
             }
         },
         Err(e) => Err(format!("Invalid arguments: {}", e))
@@ -1802,11 +1793,10 @@ pub fn handle_get_symbol_subgraph(args: Value) -> Option<Result<Value, String>> 
             // Get the current working directory as the root path
             let root_path = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
             
-            // Ensure the global graph is initialized for this path
-            match super::graph_manager::ensure_graph_for_path(&root_path) {
-                Ok(()) => {
-                    // Use the global graph to get the subgraph
-                    if let Some(subgraph) = super::graph_manager::get_symbol_subgraph(&input.symbol_name, input.max_depth) {
+            // Use the pre-initialized global graph (no need to rebuild)
+            if super::graph_manager::is_graph_initialized() {
+                // Use the cached global graph to get the subgraph
+                if let Some(subgraph) = super::graph_manager::get_symbol_subgraph(&input.symbol_name, input.max_depth) {
                         // Convert nodes to the expected format
                         let nodes: Vec<_> = subgraph.nodes.iter().map(|node| {
                             let symbol_type = match node.node_type {
@@ -1857,9 +1847,8 @@ pub fn handle_get_symbol_subgraph(args: Value) -> Option<Result<Value, String>> 
                             "edges": [],
                         }))
                     }
-                },
-                Err(_) => {
-                    // Fall back to a simple response if Tree-sitter fails
+            } else {
+                // Fall back to a simple response if graph is not initialized
                     let nodes = vec![
                         json!({
                             "id": "fallback_1",
@@ -1878,7 +1867,6 @@ pub fn handle_get_symbol_subgraph(args: Value) -> Option<Result<Value, String>> 
                         "nodes": nodes,
                         "edges": edges,
                     }))
-                }
             }
         },
         Err(e) => Err(format!("Invalid arguments: {}", e))
@@ -1947,11 +1935,11 @@ pub fn handle_update_code_graph(args: Value) -> Option<Result<Value, String>> {
             
             let root_path = std::path::Path::new(&root_path_str);
             
-            // Use the global graph manager to ensure the graph is up to date
-            match super::graph_manager::ensure_graph_for_path(root_path) {
-                Ok(()) => {
-                    // Get statistics from the global graph
-                    if let Some(graph) = super::graph_manager::get_code_graph() {
+            // Since the graph is automatically managed, this is now a no-op
+            // Just return success without rebuilding
+            if super::graph_manager::is_graph_initialized() {
+                // Get statistics from the global graph
+                if let Some(graph) = super::graph_manager::get_code_graph() {
                         let files_processed = graph.nodes.iter()
                             .filter(|n| matches!(n.node_type, super::repo_mapper::CodeNodeType::File))
                             .count();
@@ -1966,19 +1954,17 @@ pub fn handle_update_code_graph(args: Value) -> Option<Result<Value, String>> {
                             "files_processed": files_processed,
                             "symbols_found": symbols_found,
                         }))
-                    } else {
-                        Ok(json!({
-                            "status": "success",
-                            "message": format!("Code graph initialized for path: {}", root_path_str),
-                            "root_path": root_path_str,
-                            "files_processed": 0,
-                            "symbols_found": 0,
-                        }))
-                    }
-                },
-                Err(e) => {
-                    Err(format!("Failed to ensure code graph for path {}: {}", root_path_str, e))
+                } else {
+                    Ok(json!({
+                        "status": "success",
+                        "message": format!("Code graph initialized for path: {}", root_path_str),
+                        "root_path": root_path_str,
+                        "files_processed": 0,
+                        "symbols_found": 0,
+                    }))
                 }
+            } else {
+                Err("Code graph not initialized yet".to_string())
             }
         },
         Err(e) => Err(format!("Invalid arguments: {}", e))

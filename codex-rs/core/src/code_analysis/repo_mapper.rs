@@ -99,18 +99,13 @@ impl RepoMapper {
         let mut files_to_process = Vec::new();
         self.collect_files(&root_path, &mut files_to_process)?;
         
-        eprintln!("Found {} files to process", files_to_process.len());
-        
         // For very large repositories, we'll use a custom thread pool
         let max_threads = if files_to_process.len() > 1000 {
             let limited_threads = std::cmp::min(rayon::current_num_threads(), 8);
-            eprintln!("Large repository detected. Using {} threads for stability.", limited_threads);
             limited_threads
         } else {
             rayon::current_num_threads()
         };
-        
-        eprintln!("Processing files in parallel using {} threads...", max_threads);
         
         // Process files in parallel
         self.process_files_parallel(files_to_process, max_threads)?;
@@ -163,20 +158,7 @@ impl RepoMapper {
         let batch_size = if total_files > 1000 { 20 } else { 50 };
         let batches: Vec<_> = files.chunks(batch_size).collect();
         
-        eprintln!("Processing {} files in {} batches of ~{} files each", 
-                 total_files, batches.len(), batch_size);
         for (batch_idx, batch) in batches.iter().enumerate() {
-            // Show progress less frequently for large repositories
-            let show_progress = if total_files > 1000 {
-                batch_idx % 5 == 0 || batch_idx == batches.len() - 1
-            } else {
-                true
-            };
-            
-            if show_progress {
-                eprintln!("Processing batch {} of {} ({} files)", 
-                         batch_idx + 1, batches.len(), batch.len());
-            }
             
             // Process this batch in parallel
             let batch_results: Vec<Result<(String, super::context_extractor::ContextExtractor), String>> = batch
@@ -220,14 +202,6 @@ impl RepoMapper {
                 std::hint::black_box(&self.context_extractor);
             }
             
-            // Show progress
-            if show_progress {
-                let processed_so_far = (batch_idx + 1) * batch.len();
-                let actual_processed = std::cmp::min(processed_so_far, total_files);
-                eprintln!("Completed {} of {} files ({:.1}%)", 
-                         actual_processed, total_files, 
-                         (actual_processed as f64 / total_files as f64) * 100.0);
-            }
         }
         
         // Update statistics
@@ -311,10 +285,6 @@ impl RepoMapper {
 
     /// Process a single file
     fn process_file(&mut self, file_path: &str) -> Result<(), String> {
-        // Show progress every 10 files
-        if self.total_files_attempted % 10 == 0 {
-            eprintln!("Processed {} files so far...", self.total_files_attempted);
-        }
         
         self.total_files_attempted += 1;
         
@@ -603,31 +573,18 @@ impl RepoMapper {
     
     /// Print parsing statistics
     fn print_parsing_statistics(&self) {
-        eprintln!("\n=== Parsing Statistics ===");
-        eprintln!("Total files attempted: {}", self.total_files_attempted);
-        eprintln!("Files parsed successfully: {}", self.files_parsed_successfully);
-        eprintln!("Files failed to parse: {}", self.files_failed_to_parse);
+        // Calculate nodes and edges for summary
+        let total_nodes = self.file_nodes.len() + self.symbol_nodes.len();
+        let total_edges = self.edges.len();
         
         if self.total_files_attempted > 0 {
             let success_rate = (self.files_parsed_successfully as f64 / self.total_files_attempted as f64) * 100.0;
-            eprintln!("Success rate: {:.1}%", success_rate);
+            eprintln!("Code analysis complete: {} nodes, {} edges, {:.0}% parsed ({}/{} files)", 
+                     total_nodes, total_edges, success_rate, 
+                     self.files_parsed_successfully, self.total_files_attempted);
+        } else {
+            eprintln!("Code analysis complete: {} nodes, {} edges", total_nodes, total_edges);
         }
-        
-        if !self.failed_files.is_empty() {
-            eprintln!("\nFailed files:");
-            for (i, file) in self.failed_files.iter().enumerate() {
-                eprintln!("  {}. {}", i + 1, file);
-                // Limit the list to avoid too much output
-                if i >= 9 {
-                    let remaining = self.failed_files.len() - 10;
-                    if remaining > 0 {
-                        eprintln!("  ... and {} more files", remaining);
-                    }
-                    break;
-                }
-            }
-        }
-        eprintln!("=========================\n");
     }
     
     /// Get parsing statistics
