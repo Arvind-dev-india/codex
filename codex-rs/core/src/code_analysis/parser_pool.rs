@@ -32,20 +32,20 @@ pub enum SupportedLanguage {
     // Add more languages as needed
 }
 
-/// Get the query file for a language and query type
-fn get_query_file(language: SupportedLanguage, _query_type: QueryType) -> Result<String, String> {
-    let lang_file = match language {
-        SupportedLanguage::Rust => "rust.scm",
-        SupportedLanguage::JavaScript => "javascript.scm",
-        SupportedLanguage::TypeScript => "typescript.scm",
-        SupportedLanguage::Python => "python.scm",
-        SupportedLanguage::Go => "go.scm",
-        SupportedLanguage::Cpp => "cpp.scm",
-        SupportedLanguage::CSharp => "csharp.scm",
-        SupportedLanguage::Java => "java.scm",
+/// Get the query content for a language and query type (embedded at compile time)
+fn get_query_content(language: SupportedLanguage, _query_type: QueryType) -> Result<&'static str, String> {
+    let content = match language {
+        SupportedLanguage::Rust => include_str!("queries/rust.scm"),
+        SupportedLanguage::JavaScript => include_str!("queries/javascript.scm"),
+        SupportedLanguage::TypeScript => include_str!("queries/typescript.scm"),
+        SupportedLanguage::Python => include_str!("queries/python.scm"),
+        SupportedLanguage::Go => include_str!("queries/go.scm"),
+        SupportedLanguage::Cpp => include_str!("queries/cpp.scm"),
+        SupportedLanguage::CSharp => include_str!("queries/csharp.scm"),
+        SupportedLanguage::Java => include_str!("queries/java.scm"),
     };
     
-    Ok(lang_file.to_string())
+    Ok(content)
 }
 
 impl SupportedLanguage {
@@ -252,40 +252,18 @@ impl ParserPool {
     
     /// Load a query for a supported language and query type
     fn load_query(&self, language: SupportedLanguage, query_type: QueryType) -> Result<Query, String> {
-        // Check if we already have the query string cached
-        let query_content = {
+        // Check if we already have the query cached
+        let cached_query = {
             let queries = self.queries.lock().unwrap();
             queries.get(&(language, query_type)).cloned()
         };
         
-        let query_content = if let Some(content) = query_content {
+        let query_content = if let Some(content) = cached_query {
             // Use cached query string
             content
         } else {
-            // Load query from file and cache it
-            let query_file = get_query_file(language, query_type)?;
-            
-            // Try multiple possible paths
-            let possible_paths = [
-                format!("src/code_analysis/queries/{}", query_file),
-                format!("core/src/code_analysis/queries/{}", query_file),
-                format!("codex-rs/core/src/code_analysis/queries/{}", query_file),
-            ];
-            
-            let mut content = String::new();
-            let mut found = false;
-            
-            for query_path in &possible_paths {
-                if let Ok(file_content) = fs::read_to_string(query_path) {
-                    content = file_content;
-                    found = true;
-                    break;
-                }
-            }
-            
-            if !found {
-                return Err(format!("Failed to find query file {} in any of the expected locations", query_file));
-            }
+            // Get the embedded query content
+            let content = get_query_content(language, query_type)?.to_string();
             
             // Cache the query string
             {
@@ -299,17 +277,11 @@ impl ParserPool {
         // Load the language and create the query
         let lang = self.load_language(language)?;
         
-        // Create the query from the cached content
+        // Create the query from the content
         let query = Query::new(&lang, &query_content)
             .map_err(|e| {
-                eprintln!("Query parsing failed. Let's debug the AST for this language...");
-                if language == SupportedLanguage::JavaScript {
-                    debug_javascript_ast(&lang);
-                } else if language == SupportedLanguage::Python {
-                    // debug_python_ast(&lang);
-                    // debug_python_query(&lang);
-                }
-                format!("Failed to parse query: {}", e)
+                eprintln!("Query parsing failed for language {:?}: {}", language, e);
+                format!("Failed to parse query for {:?}: {}", language, e)
             })?;
         
         Ok(query)
