@@ -1140,14 +1140,16 @@ pub fn handle_find_symbol_references(args: Value) -> Option<Result<Value, String
             // If no references found, return empty array instead of hardcoded fallback
             // The hardcoded fallback was causing issues when working in different directories
             
-            Ok(Value::Array(references.into_iter().map(|r| {
-                json!({
-                    "file_path": r.file_path,
-                    "line": r.line,
-                    "column": r.column,
-                    "reference_type": r.reference_type,
-                })
-            }).collect()))
+            Ok(json!({
+                "references": references.into_iter().map(|r| {
+                    json!({
+                        "file": r.file_path,
+                        "line": r.line,
+                        "column": r.column,
+                        "reference_type": r.reference_type,
+                    })
+                }).collect::<Vec<_>>()
+            }))
         },
         Err(e) => Err(format!("Invalid arguments: {}", e)),
     })
@@ -1577,14 +1579,17 @@ pub fn handle_find_symbol_definitions(args: Value) -> Option<Result<Value, Strin
             // If no definitions found, return empty array instead of hardcoded fallback
             // The hardcoded fallback was causing issues when working in different directories
             
-            Ok(Value::Array(definitions.into_iter().map(|d| {
-                json!({
-                    "file_path": d.file_path,
-                    "start_line": d.start_line,
-                    "end_line": d.end_line,
-                    "symbol_type": d.symbol_type,
-                })
-            }).collect()))
+            Ok(json!({
+                "definitions": definitions.into_iter().map(|d| {
+                    json!({
+                        "symbol": &input.symbol_name,
+                        "file": d.file_path,
+                        "start_line": d.start_line,
+                        "end_line": d.end_line,
+                        "symbol_type": d.symbol_type,
+                    })
+                }).collect::<Vec<_>>()
+            }))
         },
         Err(e) => Err(format!("Invalid arguments: {}", e)),
     })
@@ -1645,10 +1650,8 @@ pub fn handle_get_code_graph(args: Value) -> Option<Result<Value, String>> {
                     
                     Ok(json!({
                         "root_path": input.root_path,
-                        "graph": {
-                            "nodes": nodes,
-                            "edges": edges
-                        }
+                        "nodes": nodes,
+                        "edges": edges
                     }))
                 },
                 Err(e) => {
@@ -1671,10 +1674,8 @@ pub fn handle_get_code_graph(args: Value) -> Option<Result<Value, String>> {
                     
                     Ok(json!({
                         "root_path": input.root_path,
-                        "graph": {
-                            "nodes": nodes,
-                            "edges": edges
-                        }
+                        "nodes": nodes,
+                        "edges": edges
                     }))
                 }
             }

@@ -55,7 +55,7 @@ tracing = { version = "0.1.41", features = ["log"] }
 tree-sitter = "0.25.6"
 tree-sitter-bash = "0.23.3"
 tree-sitter-rust = "0.24.0"
-tree-sitter-c-sharp = "0.23.0"
+tree-sitter-c-sharp = "0.23.1"
 tree-sitter-python = "0.23.2"
 tree-sitter-javascript = "0.23.0"
 tree-sitter-typescript = "0.23.0"

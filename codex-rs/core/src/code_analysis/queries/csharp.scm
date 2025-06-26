@@ -3,7 +3,7 @@
  ) @definition.class
 
 (class_declaration
-   bases: (base_list (_) @name.reference.class)
+    (base_list (_) @name.reference.class)
  ) @reference.class
 
 (interface_declaration
@@ -11,7 +11,7 @@
  ) @definition.interface
 
 (interface_declaration
- bases: (base_list (_) @name.reference.interface)
+  (base_list (_) @name.reference.interface)
  ) @reference.interface
 
 (method_declaration
@@ -19,19 +19,19 @@
  ) @definition.method
 
 (object_creation_expression
- type: (identifier) @name.reference.class
+  (identifier) @name.reference.class
  ) @reference.class
 
 (type_parameter_constraints_clause
- target: (identifier) @name.reference.class
+  (identifier) @name.reference.class
  ) @reference.class
 
-(type_constraint
- type: (identifier) @name.reference.class
- ) @reference.class
+;(type_constraint
+; type: (identifier) @name.reference.class
+; ) @reference.class
 
 (variable_declaration
- type: (identifier) @name.reference.class
+  (identifier) @name.reference.class
  ) @reference.class
 
 (invocation_expression
