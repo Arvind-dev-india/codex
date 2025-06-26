@@ -44,6 +44,8 @@ impl Default for Config {
             model_reasoning_effort: ReasoningEffort::default(),
             model_reasoning_summary: ReasoningSummary::default(),
             azure_devops: None,
+            model_context_window: None,
+            model_max_output_tokens: None,
         }
     }
 }
