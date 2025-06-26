@@ -422,6 +422,27 @@ impl ContextExtractor {
     pub fn get_name_to_fqns(&self) -> &HashMap<String, Vec<String>> {
         &self.name_to_fqns
     }
+    
+    /// Add a symbol to the context extractor (for parallel processing)
+    pub fn add_symbol(&mut self, fqn: String, symbol: CodeSymbol) {
+        // Update the name_to_fqns map
+        self.name_to_fqns.entry(symbol.name.clone())
+            .or_insert_with(Vec::new)
+            .push(fqn.clone());
+            
+        // Update file_symbols map
+        self.file_symbols.entry(symbol.file_path.clone())
+            .or_insert_with(HashSet::new)
+            .insert(fqn.clone());
+            
+        // Add the symbol
+        self.symbols.insert(fqn, symbol);
+    }
+    
+    /// Add a reference to the context extractor (for parallel processing)
+    pub fn add_reference(&mut self, reference: SymbolReference) {
+        self.references.push(reference);
+    }
 
     /// Get all references
     pub fn get_references(&self) -> &[SymbolReference] {

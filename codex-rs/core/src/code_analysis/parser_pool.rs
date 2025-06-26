@@ -205,7 +205,7 @@ pub struct ParserPool {
     parsers: Mutex<HashMap<SupportedLanguage, Parser>>,
     parsed_files: Mutex<HashMap<String, (ParsedFile, std::time::SystemTime)>>,
     languages: Mutex<HashMap<SupportedLanguage, Language>>,
-    queries: Mutex<HashMap<(SupportedLanguage, QueryType), Query>>,
+    queries: Mutex<HashMap<(SupportedLanguage, QueryType), String>>, // Store query strings instead of Query objects
 }
 
 impl ParserPool {
@@ -252,13 +252,17 @@ impl ParserPool {
     
     /// Load a query for a supported language and query type
     fn load_query(&self, language: SupportedLanguage, query_type: QueryType) -> Result<Query, String> {
-        // Check if we already have the query loaded
-        let mut queries = self.queries.lock().unwrap();
-        if let Some(_query) = queries.get(&(language, query_type)) {
-            // We need to create a new Query since Query doesn't implement Clone
-            // In a real implementation, we would load the query from a file or string
-            // We'll load the query again from the file
-            let lang = self.load_language(language)?;
+        // Check if we already have the query string cached
+        let query_content = {
+            let queries = self.queries.lock().unwrap();
+            queries.get(&(language, query_type)).cloned()
+        };
+        
+        let query_content = if let Some(content) = query_content {
+            // Use cached query string
+            content
+        } else {
+            // Load query from file and cache it
             let query_file = get_query_file(language, query_type)?;
             
             // Try multiple possible paths
@@ -268,14 +272,12 @@ impl ParserPool {
                 format!("codex-rs/core/src/code_analysis/queries/{}", query_file),
             ];
             
-            let mut query_content = String::new();
+            let mut content = String::new();
             let mut found = false;
-            let mut used_path = String::new();
             
             for query_path in &possible_paths {
-                if let Ok(content) = fs::read_to_string(query_path) {
-                    query_content = content;
-                    used_path = query_path.clone();
+                if let Ok(file_content) = fs::read_to_string(query_path) {
+                    content = file_content;
                     found = true;
                     break;
                 }
@@ -285,74 +287,29 @@ impl ParserPool {
                 return Err(format!("Failed to find query file {} in any of the expected locations", query_file));
             }
             
-            // eprintln!("Loading cached query from: {}", used_path);
+            // Cache the query string
+            {
+                let mut queries = self.queries.lock().unwrap();
+                queries.insert((language, query_type), content.clone());
+            }
             
-            let query = Query::new(&lang, &query_content)
-                .map_err(|e| format!("Failed to parse cached query from {}: {}", used_path, e))?;
-            
-            return Ok(query);
-        }
-        
-        // Load the language
-        let lang = self.load_language(language)?;
-        
-        // Get the query file path
-        let query_file = match language {
-            SupportedLanguage::Rust => "rust.scm",
-            SupportedLanguage::CSharp => "csharp.scm",
-            SupportedLanguage::Python => "python.scm",
-            SupportedLanguage::JavaScript => "javascript.scm",
-            SupportedLanguage::TypeScript => "typescript.scm",
-            SupportedLanguage::Java => "java.scm",
-            SupportedLanguage::Cpp => "cpp.scm",
-            SupportedLanguage::Go => "go.scm",
+            content
         };
         
-        // Load the query file - try multiple possible paths
-        let possible_paths = [
-            format!("src/code_analysis/queries/{}", query_file),
-            format!("core/src/code_analysis/queries/{}", query_file),
-            format!("codex-rs/core/src/code_analysis/queries/{}", query_file),
-        ];
+        // Load the language and create the query
+        let lang = self.load_language(language)?;
         
-        let mut query_content = String::new();
-        let mut found = false;
-        let mut used_path = String::new();
-        
-        for query_path in &possible_paths {
-            if let Ok(content) = fs::read_to_string(query_path) {
-                query_content = content;
-                used_path = query_path.clone();
-                found = true;
-                break;
-            }
-        }
-        
-        if !found {
-            return Err(format!("Failed to find query file {} in any of the expected locations", query_file));
-        }
-        
-        // Only show query loading details if there's an error
-        // eprintln!("Loading query from: {}", used_path);
-        
-        // Create the query
+        // Create the query from the cached content
         let query = Query::new(&lang, &query_content)
             .map_err(|e| {
                 eprintln!("Query parsing failed. Let's debug the AST for this language...");
                 if language == SupportedLanguage::JavaScript {
                     debug_javascript_ast(&lang);
                 }
-                format!("Failed to parse query from {}: {}", used_path, e)
+                format!("Failed to parse query: {}", e)
             })?;
         
-        // Store the query and create a new one to return
-        queries.insert((language, query_type), query);
-        
-        // Create a new query instance to return since Query doesn't implement Clone
-        let return_query = Query::new(&lang, &query_content)
-            .map_err(|e| format!("Failed to parse query: {}", e))?;
-        
-        Ok(return_query)
+        Ok(query)
     }
 
     /// Parse a file and return the parsed result

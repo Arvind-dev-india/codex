@@ -3,7 +3,9 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
+use rayon::prelude::*;
 use super::context_extractor::{CodeSymbol, ContextExtractor, SymbolReference, create_context_extractor};
 use super::parser_pool::SupportedLanguage;
 
@@ -92,13 +94,190 @@ impl RepoMapper {
     /// Map the repository structure
     pub fn map_repository(&mut self) -> Result<(), String> {
         let root_path = self.root_path.clone();
-        self.scan_directory(&root_path)?;
+        
+        // First, collect all files to process
+        let mut files_to_process = Vec::new();
+        self.collect_files(&root_path, &mut files_to_process)?;
+        
+        eprintln!("Found {} files to process", files_to_process.len());
+        
+        // For very large repositories, we'll use a custom thread pool
+        let max_threads = if files_to_process.len() > 1000 {
+            let limited_threads = std::cmp::min(rayon::current_num_threads(), 8);
+            eprintln!("Large repository detected. Using {} threads for stability.", limited_threads);
+            limited_threads
+        } else {
+            rayon::current_num_threads()
+        };
+        
+        eprintln!("Processing files in parallel using {} threads...", max_threads);
+        
+        // Process files in parallel
+        self.process_files_parallel(files_to_process, max_threads)?;
+        
         self.build_graph_from_context();
         self.print_parsing_statistics();
         Ok(())
     }
 
-    /// Scan a directory recursively
+    /// Collect all files to process (non-recursive collection)
+    fn collect_files(&self, dir_path: &Path, files: &mut Vec<String>) -> Result<(), String> {
+        let entries = fs::read_dir(dir_path)
+            .map_err(|e| format!("Failed to read directory {}: {}", dir_path.display(), e))?;
+
+        for entry in entries {
+            let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
+            let path = entry.path();
+
+            if path.is_dir() {
+                // Skip hidden directories and common directories to ignore
+                let dir_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if !dir_name.starts_with('.') && !["node_modules", "target", "dist"].contains(&dir_name) {
+                    self.collect_files(&path, files)?;
+                }
+            } else if path.is_file() {
+                // Add file if it has a supported extension
+                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                    if SupportedLanguage::from_extension(ext).is_some() {
+                        let file_path = path.to_str().unwrap_or("").to_string();
+                        files.push(file_path);
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Process files in parallel with batching for better performance
+    fn process_files_parallel(&mut self, files: Vec<String>, _max_threads: usize) -> Result<(), String> {
+        let total_files = files.len();
+        self.total_files_attempted = total_files;
+        
+        // Use Arc<Mutex<>> to share statistics across threads
+        let successful_count = Arc::new(Mutex::new(0usize));
+        let failed_count = Arc::new(Mutex::new(0usize));
+        let failed_files = Arc::new(Mutex::new(Vec::<String>::new()));
+        
+        // Process files in smaller batches to reduce memory pressure
+        let batch_size = if total_files > 1000 { 20 } else { 50 };
+        let batches: Vec<_> = files.chunks(batch_size).collect();
+        
+        eprintln!("Processing {} files in {} batches of ~{} files each", 
+                 total_files, batches.len(), batch_size);
+        for (batch_idx, batch) in batches.iter().enumerate() {
+            // Show progress less frequently for large repositories
+            let show_progress = if total_files > 1000 {
+                batch_idx % 5 == 0 || batch_idx == batches.len() - 1
+            } else {
+                true
+            };
+            
+            if show_progress {
+                eprintln!("Processing batch {} of {} ({} files)", 
+                         batch_idx + 1, batches.len(), batch.len());
+            }
+            
+            // Process this batch in parallel
+            let batch_results: Vec<Result<(String, super::context_extractor::ContextExtractor), String>> = batch
+                .par_iter()
+                .map(|file_path| {
+                    // Create a new context extractor for this file
+                    let mut context_extractor = super::context_extractor::create_context_extractor();
+                    
+                    match context_extractor.extract_symbols_from_file_incremental(file_path) {
+                        Ok(()) => {
+                            let mut count = successful_count.lock().unwrap();
+                            *count += 1;
+                            Ok((file_path.clone(), context_extractor))
+                        }
+                        Err(e) => {
+                            let mut count = failed_count.lock().unwrap();
+                            *count += 1;
+                            let mut failed_list = failed_files.lock().unwrap();
+                            failed_list.push(file_path.clone());
+                            // Only show errors for first few files to avoid spam
+                            if failed_list.len() <= 10 {
+                                eprintln!("Warning: Failed to process file {}: {}", file_path, e);
+                            }
+                            Err(e)
+                        }
+                    }
+                })
+                .collect();
+            
+            // Merge results from this batch
+            for result in batch_results {
+                if let Ok((file_path, file_context_extractor)) = result {
+                    // Merge the symbols and references from this file's context extractor
+                    self.merge_context_extractor(file_context_extractor, &file_path)?;
+                }
+            }
+            
+            // For large repositories, periodically suggest garbage collection
+            if total_files > 1000 && (batch_idx + 1) % 10 == 0 {
+                // Hint to the runtime that this might be a good time for GC
+                std::hint::black_box(&self.context_extractor);
+            }
+            
+            // Show progress
+            if show_progress {
+                let processed_so_far = (batch_idx + 1) * batch.len();
+                let actual_processed = std::cmp::min(processed_so_far, total_files);
+                eprintln!("Completed {} of {} files ({:.1}%)", 
+                         actual_processed, total_files, 
+                         (actual_processed as f64 / total_files as f64) * 100.0);
+            }
+        }
+        
+        // Update statistics
+        self.files_parsed_successfully = *successful_count.lock().unwrap();
+        self.files_failed_to_parse = *failed_count.lock().unwrap();
+        self.failed_files = failed_files.lock().unwrap().clone();
+        
+        Ok(())
+    }
+    
+    /// Merge symbols and references from a file's context extractor into the main one
+    fn merge_context_extractor(&mut self, file_extractor: super::context_extractor::ContextExtractor, file_path: &str) -> Result<(), String> {
+        // Get symbols and references from the file extractor
+        let symbols = file_extractor.get_symbols();
+        let references = file_extractor.get_references();
+        
+        // Add symbols to our main context extractor
+        for (fqn, symbol) in symbols {
+            self.context_extractor.add_symbol(fqn.clone(), symbol.clone());
+        }
+        
+        // Add references to our main context extractor  
+        for reference in references {
+            self.context_extractor.add_reference(reference.clone());
+        }
+        
+        // Create a file node
+        let relative_path = Path::new(file_path)
+            .strip_prefix(&self.root_path)
+            .map_err(|_| format!("Failed to get relative path for {}", file_path))?
+            .to_str()
+            .unwrap_or("")
+            .to_string();
+
+        let file_node = CodeNode {
+            id: format!("file:{}", relative_path),
+            name: relative_path.clone(),
+            node_type: CodeNodeType::File,
+            file_path: relative_path,
+            start_line: 0,
+            end_line: 0,
+        };
+
+        self.file_nodes.insert(file_path.to_string(), file_node);
+        self.processed_files.insert(file_path.to_string());
+        
+        Ok(())
+    }
+
+    /// Scan a directory recursively (kept for compatibility)
     fn scan_directory(&mut self, dir_path: &Path) -> Result<(), String> {
         let entries = fs::read_dir(dir_path)
             .map_err(|e| format!("Failed to read directory {}: {}", dir_path.display(), e))?;

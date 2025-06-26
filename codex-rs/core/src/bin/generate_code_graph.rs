@@ -1,6 +1,7 @@
 use std::env;
 use std::fs;
 use std::path::Path;
+use std::time::Instant;
 use serde::{Serialize, Deserialize};
 
 use codex_core::code_analysis::repo_mapper::RepoMapper;
@@ -47,14 +48,23 @@ fn main() {
     // Create a repository mapper and map the repository
     let mut repo_mapper = RepoMapper::new(Path::new(source_dir));
     
+    println!("Starting repository analysis...");
+    let start_time = Instant::now();
+    
     match repo_mapper.map_repository() {
         Ok(()) => {
-            println!("Successfully mapped repository: {}", source_dir);
+            let duration = start_time.elapsed();
+            println!("Successfully mapped repository: {} in {:.2?}", source_dir, duration);
             
             // Get and display parsing statistics
             let (total, successful, failed, _failed_files) = repo_mapper.get_parsing_statistics();
             println!("Parsing summary: {}/{} files processed successfully ({} failed)", 
                      successful, total, failed);
+            
+            if total > 0 {
+                let files_per_second = total as f64 / duration.as_secs_f64();
+                println!("Processing rate: {:.1} files/second", files_per_second);
+            }
         },
         Err(e) => {
             eprintln!("Error mapping repository: {}", e);
