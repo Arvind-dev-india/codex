@@ -457,21 +457,41 @@ impl RepoMapper {
         let mut edges = Vec::new();
         let mut queue = std::collections::VecDeque::new();
         
-        // Find the starting node
-        let start_node = if let Some(node) = self.symbol_nodes.get(start_symbol) {
-            node
+        // Find all starting nodes - first try exact FQN match, then try by name
+        let start_nodes = if let Some(node) = self.symbol_nodes.get(start_symbol) {
+            // Exact FQN match found
+            vec![node]
         } else {
-            // If the symbol doesn't exist, return an empty graph
+            // Use the name-to-FQN mapping for efficient lookup
+            if let Some(fqns) = self.context_extractor.get_name_to_fqns().get(start_symbol) {
+                // Get all nodes for symbols with this name
+                let mut found_nodes = Vec::new();
+                for fqn in fqns {
+                    if let Some(node) = self.symbol_nodes.get(fqn) {
+                        found_nodes.push(node);
+                    }
+                }
+                found_nodes
+            } else {
+                // No symbols found with this name
+                Vec::new()
+            }
+        };
+        
+        // If no symbols found, return empty graph
+        if start_nodes.is_empty() {
             return CodeReferenceGraph {
                 nodes: Vec::new(),
                 edges: Vec::new(),
             };
-        };
+        }
         
-        // Add the starting node to the queue with depth 0
-        queue.push_back((start_node.id.clone(), 0));
-        visited_nodes.insert(start_node.id.clone());
-        nodes.push(start_node.clone());
+        // Add all starting nodes to the queue with depth 0
+        for start_node in start_nodes {
+            queue.push_back((start_node.id.clone(), 0));
+            visited_nodes.insert(start_node.id.clone());
+            nodes.push(start_node.clone());
+        }
         
         // BFS traversal
         while let Some((node_id, depth)) = queue.pop_front() {

@@ -87,7 +87,7 @@ fn create_get_symbol_subgraph_tool() -> OpenAiTool {
     
     create_function_tool(
         "code_analysis.get_symbol_subgraph",
-        "Returns a subgraph of code references starting from a specific symbol, with a maximum traversal depth. Uses the pre-initialized code graph for fast lookups.",
+        "Returns a subgraph of code references starting from a specific symbol, with a maximum traversal depth. If multiple symbols have the same name (e.g., in different namespaces), includes all of them in the subgraph. Uses the pre-initialized code graph for fast lookups.",
         properties,
         &["symbol_name", "max_depth"],
     )
