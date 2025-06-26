@@ -200,6 +200,12 @@ impl BottomPane<'_> {
             self.request_redraw();
         }
     }
+
+    /// Refresh the code graph status display
+    pub(crate) fn refresh_code_graph_status(&mut self) {
+        self.composer.refresh_status();
+        self.request_redraw();
+    }
 }
 
 impl WidgetRef for &BottomPane<'_> {

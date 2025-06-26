@@ -28,4 +28,7 @@ pub(crate) enum AppEvent {
     /// Dispatch a recognized slash command from the UI (composer) to the app
     /// layer so it can be handled centrally.
     DispatchCommand(SlashCommand),
+
+    /// Refresh the code graph status display
+    RefreshCodeGraphStatus,
 }

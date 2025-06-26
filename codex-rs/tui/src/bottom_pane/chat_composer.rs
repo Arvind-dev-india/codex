@@ -19,6 +19,7 @@ use super::command_popup::CommandPopup;
 
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
+use codex_core::code_analysis::graph_manager::{get_graph_status, GraphStatus};
 
 /// Minimum number of visible text rows inside the textarea.
 const MIN_TEXTAREA_ROWS: usize = 1;
@@ -38,6 +39,7 @@ pub(crate) struct ChatComposer<'a> {
     command_popup: Option<CommandPopup>,
     app_event_tx: AppEventSender,
     history: ChatComposerHistory,
+    has_focus: bool,
 }
 
 impl ChatComposer<'_> {
@@ -51,6 +53,7 @@ impl ChatComposer<'_> {
             command_popup: None,
             app_event_tx,
             history: ChatComposerHistory::new(),
+            has_focus: has_input_focus,
         };
         this.update_border(has_input_focus);
         this
@@ -111,6 +114,7 @@ impl ChatComposer<'_> {
     }
 
     pub fn set_input_focus(&mut self, has_focus: bool) {
+        self.has_focus = has_focus;
         self.update_border(has_focus);
     }
 
@@ -299,18 +303,44 @@ impl ChatComposer<'_> {
 
     fn update_border(&mut self, has_focus: bool) {
         struct BlockState {
+            left_title: Line<'static>,
             right_title: Line<'static>,
             border_style: Style,
         }
 
+        // Get code graph status for the left title
+        let graph_status = get_graph_status();
+        let left_title = match graph_status {
+            GraphStatus::NotStarted => {
+                Line::from("📊 Code Graph: Starting...").style(Style::default().fg(ratatui::style::Color::Yellow))
+            }
+            GraphStatus::Initializing { files_processed, total_files, .. } => {
+                let status_text = if total_files > 0 {
+                    format!("📊 Code Graph: Parsing ({}/{})", files_processed, total_files)
+                } else {
+                    "📊 Code Graph: Initializing...".to_string()
+                };
+                Line::from(status_text).style(Style::default().fg(ratatui::style::Color::Blue))
+            }
+            GraphStatus::Ready { files_processed, symbols_found, .. } => {
+                Line::from(format!("📊 Code Graph: Ready ({} files, {} symbols)", files_processed, symbols_found))
+                    .style(Style::default().fg(ratatui::style::Color::Green))
+            }
+            GraphStatus::Failed { .. } => {
+                Line::from("📊 Code Graph: Failed").style(Style::default().fg(ratatui::style::Color::Red))
+            }
+        };
+
         let bs = if has_focus {
             BlockState {
+                left_title,
                 right_title: Line::from("Enter to send | Ctrl+D to quit | Ctrl+J for newline")
                     .alignment(Alignment::Right),
                 border_style: Style::default(),
             }
         } else {
             BlockState {
+                left_title,
                 right_title: Line::from(""),
                 border_style: Style::default().dim(),
             }
@@ -318,6 +348,7 @@ impl ChatComposer<'_> {
 
         self.textarea.set_block(
             ratatui::widgets::Block::default()
+                .title(bs.left_title)
                 .title_bottom(bs.right_title)
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
@@ -327,6 +358,11 @@ impl ChatComposer<'_> {
 
     pub(crate) fn is_command_popup_visible(&self) -> bool {
         self.command_popup.is_some()
+    }
+
+    /// Refresh the border to update code graph status
+    pub(crate) fn refresh_status(&mut self) {
+        self.update_border(self.has_focus);
     }
 }
 

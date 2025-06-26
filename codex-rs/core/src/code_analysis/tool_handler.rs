@@ -2,8 +2,6 @@
 
 use serde_json::{Value, json};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Once;
 
 use crate::code_analysis::tools::{
     handle_analyze_code,
@@ -11,46 +9,10 @@ use crate::code_analysis::tools::{
     handle_find_symbol_definitions,
     handle_get_code_graph,
     handle_get_symbol_subgraph,
-    handle_update_code_graph,
 };
 use crate::error::{CodexErr, Result};
 use crate::mcp_tool_call::ToolCall;
-
-// Static flag to track whether the code graph has been initialized
-static CODE_GRAPH_INITIALIZED: AtomicBool = AtomicBool::new(false);
-static INIT: Once = Once::new();
-
-/// Initialize the code graph by scanning the repository
-fn initialize_code_graph_with_path(root_path: &str) {
-    // Only initialize once
-    INIT.call_once(|| {
-        // Call update_code_graph with the specified root path
-        let args = json!({
-            "root_path": root_path
-        });
-        
-        if let Some(result) = handle_update_code_graph(args) {
-            match result {
-                Ok(_) => {
-                    // Set the flag to indicate that the code graph has been initialized
-                    CODE_GRAPH_INITIALIZED.store(true, Ordering::SeqCst);
-                    println!("Code graph initialized successfully for path: {}", root_path);
-                },
-                Err(e) => {
-                    eprintln!("Failed to initialize code graph for path {}: {}", root_path, e);
-                }
-            }
-        }
-    });
-}
-
-/// Initialize the code graph by scanning the current working directory (fallback)
-fn initialize_code_graph() {
-    // Get the current working directory as fallback
-    if let Ok(current_dir) = std::env::current_dir() {
-        initialize_code_graph_with_path(&current_dir.to_string_lossy().to_string());
-    }
-}
+use super::graph_manager::is_graph_initialized;
 
 /// Handle Code Analysis tool calls
 pub async fn handle_code_analysis_tool_call(
@@ -60,22 +22,11 @@ pub async fn handle_code_analysis_tool_call(
     let name = &tool_call.name;
     let mut args = tool_call.arguments.clone();
     
-    // Initialize the code graph if it hasn't been initialized yet
-    // Try to get the root path from the arguments first
-    if !CODE_GRAPH_INITIALIZED.load(Ordering::SeqCst) {
-        if let Some(obj) = args.as_object() {
-            if let Some(root_path_value) = obj.get("root_path") {
-                if let Some(root_path) = root_path_value.as_str() {
-                    initialize_code_graph_with_path(root_path);
-                } else {
-                    initialize_code_graph();
-                }
-            } else {
-                initialize_code_graph();
-            }
-        } else {
-            initialize_code_graph();
-        }
+    // Check if the code graph is initialized
+    if !is_graph_initialized() {
+        return Err(CodexErr::Other(
+            "Code graph not initialized. Please wait for initialization to complete.".to_string()
+        ));
     }
     
     // Fix file paths in the arguments if needed
@@ -134,11 +85,6 @@ pub async fn handle_code_analysis_tool_call(
         "code_analysis.get_symbol_subgraph" => {
             Ok(handle_get_symbol_subgraph(args)
                 .ok_or_else(|| CodexErr::Other("Failed to handle get_symbol_subgraph".to_string()))?
-                .map_err(|e| CodexErr::Other(e.to_string()))?)
-        },
-        "code_analysis.update_code_graph" => {
-            Ok(handle_update_code_graph(args)
-                .ok_or_else(|| CodexErr::Other("Failed to handle update_code_graph".to_string()))?
                 .map_err(|e| CodexErr::Other(e.to_string()))?)
         },
         _ => {

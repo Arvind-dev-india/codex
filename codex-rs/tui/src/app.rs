@@ -119,6 +119,17 @@ impl<'a> App<'a> {
             });
         }
 
+        // Spawn a timer thread to periodically refresh code graph status
+        {
+            let app_event_tx = app_event_tx.clone();
+            std::thread::spawn(move || {
+                loop {
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                    app_event_tx.send(AppEvent::RefreshCodeGraphStatus);
+                }
+            });
+        }
+
         let (app_state, chat_args) = if show_login_screen {
             (
                 AppState::Login {
@@ -247,8 +258,22 @@ impl<'a> App<'a> {
                             tracing::error!("Failed to toggle mouse mode: {e}");
                         }
                     }
+                    SlashCommand::Status => {
+                        // Show code graph status in the conversation
+                        if let AppState::Chat { widget } = &mut self.app_state {
+                            widget.show_code_graph_status();
+                        }
+                    }
                     SlashCommand::Quit => {
                         break;
+                    }
+                },
+                AppEvent::RefreshCodeGraphStatus => {
+                    match &mut self.app_state {
+                        AppState::Chat { widget } => {
+                            widget.refresh_code_graph_status();
+                        }
+                        AppState::Login { .. } | AppState::GitWarning { .. } => {}
                     }
                 },
             }

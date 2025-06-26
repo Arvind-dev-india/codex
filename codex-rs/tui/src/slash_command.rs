@@ -14,6 +14,7 @@ use strum_macros::IntoStaticStr;
 pub enum SlashCommand {
     New,
     ToggleMouseMode,
+    Status,
     Quit,
 }
 
@@ -25,6 +26,7 @@ impl SlashCommand {
             SlashCommand::ToggleMouseMode => {
                 "Toggle mouse mode (enable for scrolling, disable for text selection)"
             }
+            SlashCommand::Status => "Show code graph status and statistics.",
             SlashCommand::Quit => "Exit the application.",
         }
     }

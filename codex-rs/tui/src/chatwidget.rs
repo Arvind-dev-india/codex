@@ -403,6 +403,51 @@ impl ChatWidget<'_> {
             tracing::error!("failed to submit op: {e}");
         }
     }
+
+    /// Refresh the code graph status display
+    pub(crate) fn refresh_code_graph_status(&mut self) {
+        self.bottom_pane.refresh_code_graph_status();
+    }
+
+    /// Show detailed code graph status in the conversation
+    pub(crate) fn show_code_graph_status(&mut self) {
+        use codex_core::code_analysis::graph_manager::{get_graph_status, GraphStatus};
+        
+        let status = get_graph_status();
+        let status_message = match status {
+            GraphStatus::NotStarted => {
+                "📊 **Code Graph Status: Not Started**\n\nThe code graph initialization has not begun yet.".to_string()
+            }
+            GraphStatus::Initializing { files_processed, total_files, current_file } => {
+                let mut msg = format!("📊 **Code Graph Status: Initializing**\n\nProgress: {}/{} files processed", files_processed, total_files);
+                if let Some(file) = current_file {
+                    msg.push_str(&format!("\nCurrently processing: {}", file));
+                }
+                msg
+            }
+            GraphStatus::Ready { files_processed, symbols_found, initialization_time_ms } => {
+                format!(
+                    "📊 **Code Graph Status: Ready** ✅\n\n\
+                    • **Files processed:** {}\n\
+                    • **Symbols found:** {}\n\
+                    • **Initialization time:** {}ms\n\n\
+                    The code graph is ready! You can now use code analysis tools like:\n\
+                    • `code_analysis.find_symbol_references`\n\
+                    • `code_analysis.find_symbol_definitions`\n\
+                    • `code_analysis.get_code_graph`\n\
+                    • `code_analysis.get_symbol_subgraph`",
+                    files_processed, symbols_found, initialization_time_ms
+                )
+            }
+            GraphStatus::Failed { error } => {
+                format!("📊 **Code Graph Status: Failed** ❌\n\nError: {}\n\nCode analysis tools will not be available.", error)
+            }
+        };
+
+        self.conversation_history.add_background_event(status_message);
+        self.conversation_history.scroll_to_bottom();
+        self.request_redraw();
+    }
 }
 
 impl WidgetRef for &ChatWidget<'_> {

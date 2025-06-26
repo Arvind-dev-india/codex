@@ -9,6 +9,29 @@ use once_cell::sync::Lazy;
 use super::repo_mapper::RepoMapper;
 use super::context_extractor::{CodeSymbol, SymbolReference};
 
+/// Status of the code graph initialization
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GraphStatus {
+    /// Not started yet
+    NotStarted,
+    /// Currently initializing
+    Initializing { 
+        files_processed: usize,
+        total_files: usize,
+        current_file: Option<String>,
+    },
+    /// Successfully initialized
+    Ready {
+        files_processed: usize,
+        symbols_found: usize,
+        initialization_time_ms: u64,
+    },
+    /// Failed to initialize
+    Failed {
+        error: String,
+    },
+}
+
 /// File metadata for change detection
 #[derive(Debug, Clone)]
 struct FileMetadata {
@@ -27,6 +50,8 @@ pub struct CodeGraphManager {
     file_metadata: HashMap<PathBuf, FileMetadata>,
     /// Whether the graph has been initialized
     initialized: bool,
+    /// Current status of the graph initialization
+    status: GraphStatus,
 }
 
 impl CodeGraphManager {
@@ -36,6 +61,7 @@ impl CodeGraphManager {
             root_path: None,
             file_metadata: HashMap::new(),
             initialized: false,
+            status: GraphStatus::NotStarted,
         }
     }
 
@@ -46,7 +72,7 @@ impl CodeGraphManager {
             self.root_path.as_ref().map(|p| p.as_path()) != Some(root_path);
 
         if needs_full_rebuild {
-            eprintln!("Initializing code graph for path: {}", root_path.display());
+            tracing::info!("Initializing code graph for path: {}", root_path.display());
             self.full_rebuild(root_path)?;
         } else {
             // Check for file changes and update incrementally
@@ -72,9 +98,10 @@ impl CodeGraphManager {
         self.root_path = Some(root_path.to_path_buf());
         self.initialized = true;
         
-        eprintln!("Code graph initialized successfully");
+        tracing::info!("Code graph initialized successfully for path: {}", root_path.display());
         Ok(())
     }
+
 
     /// Perform incremental update if files have changed
     fn incremental_update(&mut self) -> Result<(), String> {
@@ -85,7 +112,7 @@ impl CodeGraphManager {
         let changed_files = self.detect_file_changes(root_path)?;
         
         if !changed_files.is_empty() {
-            eprintln!("Detected {} changed files, updating graph...", changed_files.len());
+            tracing::info!("Detected {} changed files, updating graph...", changed_files.len());
             
             if let Some(ref mut repo_mapper) = self.repo_mapper {
                 // Update the repository mapper
@@ -95,7 +122,7 @@ impl CodeGraphManager {
                 let root_path_clone = root_path.clone();
                 self.update_file_metadata(&root_path_clone)?;
                 
-                eprintln!("Code graph updated successfully");
+                tracing::info!("Code graph updated successfully");
             }
         }
 
@@ -214,6 +241,26 @@ impl CodeGraphManager {
             .map(|rm| rm.find_symbol_definitions(symbol_name))
             .unwrap_or_default()
     }
+
+    /// Check if the graph is initialized
+    pub fn is_initialized(&self) -> bool {
+        self.initialized
+    }
+
+    /// Get the current root path
+    pub fn get_root_path(&self) -> Option<&Path> {
+        self.root_path.as_deref()
+    }
+
+    /// Get the current status of the graph initialization
+    pub fn get_status(&self) -> &GraphStatus {
+        &self.status
+    }
+
+    /// Update the status of the graph initialization
+    pub fn set_status(&mut self, status: GraphStatus) {
+        self.status = status;
+    }
 }
 
 /// Global instance of the code graph manager
@@ -232,6 +279,109 @@ pub fn ensure_graph_for_path(root_path: &Path) -> Result<(), String> {
     let mut manager = manager.write()
         .map_err(|e| format!("Failed to acquire write lock: {}", e))?;
     manager.ensure_graph_for_path(root_path)
+}
+
+/// Initialize the code graph asynchronously for the given path
+pub async fn initialize_graph_async(root_path: &Path) -> Result<(), String> {
+    let start_time = std::time::Instant::now();
+    tracing::info!("Starting background code graph initialization for path: {}", root_path.display());
+    
+    // Check if already initialized for this path
+    {
+        let manager = get_graph_manager();
+        let manager = manager.read()
+            .map_err(|e| format!("Failed to acquire read lock: {}", e))?;
+        
+        if manager.initialized && manager.root_path.as_ref().map(|p| p.as_path()) == Some(root_path) {
+            tracing::info!("Code graph already initialized for path: {}", root_path.display());
+            return Ok(());
+        }
+    }
+    
+    // Set status to initializing
+    {
+        let manager = get_graph_manager();
+        let mut manager = manager.write()
+            .map_err(|e| format!("Failed to acquire write lock: {}", e))?;
+        manager.set_status(GraphStatus::Initializing {
+            files_processed: 0,
+            total_files: 0,
+            current_file: None,
+        });
+    }
+    
+    // Create and initialize the repository mapper in a blocking task
+    let root_path_clone = root_path.to_path_buf();
+    let result = tokio::task::spawn_blocking(move || {
+        let mut repo_mapper = RepoMapper::new(&root_path_clone);
+        repo_mapper.map_repository()?;
+        Ok::<RepoMapper, String>(repo_mapper)
+    }).await.map_err(|e| format!("Task join error: {}", e))?;
+    
+    match result {
+        Ok(repo_mapper) => {
+            // Now acquire the write lock and update the manager
+            let manager = get_graph_manager();
+            let mut manager = manager.write()
+                .map_err(|e| format!("Failed to acquire write lock: {}", e))?;
+            
+            // Update file metadata
+            manager.update_file_metadata(root_path)?;
+            
+            // Get statistics
+            let symbols_count = repo_mapper.get_all_symbols().len();
+            let (_total_files, files_processed, _, _) = repo_mapper.get_parsing_statistics();
+            let initialization_time_ms = start_time.elapsed().as_millis() as u64;
+            
+            // Store the new state
+            manager.repo_mapper = Some(repo_mapper);
+            manager.root_path = Some(root_path.to_path_buf());
+            manager.initialized = true;
+            manager.set_status(GraphStatus::Ready {
+                files_processed,
+                symbols_found: symbols_count,
+                initialization_time_ms,
+            });
+            
+            tracing::info!("Code graph initialized successfully for path: {} ({} files, {} symbols, {}ms)", 
+                          root_path.display(), files_processed, symbols_count, initialization_time_ms);
+            Ok(())
+        }
+        Err(error) => {
+            // Set status to failed
+            let manager = get_graph_manager();
+            let mut manager = manager.write()
+                .map_err(|e| format!("Failed to acquire write lock: {}", e))?;
+            manager.set_status(GraphStatus::Failed {
+                error: error.clone(),
+            });
+            
+            tracing::error!("Code graph initialization failed for path {}: {}", root_path.display(), error);
+            Err(error)
+        }
+    }
+}
+
+/// Check if the code graph is initialized
+pub fn is_graph_initialized() -> bool {
+    let manager = get_graph_manager();
+    if let Ok(manager) = manager.read() {
+        manager.is_initialized()
+    } else {
+        false
+    }
+}
+
+/// Get the current status of the code graph
+pub fn get_graph_status() -> GraphStatus {
+    let manager = get_graph_manager();
+    if let Ok(manager) = manager.read() {
+        manager.get_status().clone()
+    } else {
+        GraphStatus::Failed {
+            error: "Failed to acquire read lock".to_string(),
+        }
+    }
 }
 
 /// Get symbols from the global graph

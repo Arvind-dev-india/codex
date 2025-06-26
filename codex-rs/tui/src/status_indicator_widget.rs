@@ -28,6 +28,7 @@ use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
 
 use codex_ansi_escape::ansi_escape_line;
+use codex_core::code_analysis::graph_manager::{get_graph_status, GraphStatus};
 
 pub(crate) struct StatusIndicatorWidget {
     /// Latest text to display (truncated to the available width at render
@@ -117,6 +118,40 @@ impl WidgetRef for StatusIndicatorWidget {
         };
 
         let mut header_spans: Vec<Span<'static>> = Vec::new();
+
+        // Add code graph status first
+        let graph_status = get_graph_status();
+        match graph_status {
+            GraphStatus::NotStarted => {
+                header_spans.push(Span::styled(
+                    "📊 Code Graph: Not Started | ",
+                    Style::default().fg(Color::Yellow),
+                ));
+            }
+            GraphStatus::Initializing { files_processed, total_files, .. } => {
+                let status_text = if total_files > 0 {
+                    format!("📊 Code Graph: Parsing ({}/{}) | ", files_processed, total_files)
+                } else {
+                    "📊 Code Graph: Initializing | ".to_string()
+                };
+                header_spans.push(Span::styled(
+                    status_text,
+                    Style::default().fg(Color::Blue),
+                ));
+            }
+            GraphStatus::Ready { files_processed, symbols_found, .. } => {
+                header_spans.push(Span::styled(
+                    format!("📊 Code Graph: Ready ({} files, {} symbols) | ", files_processed, symbols_found),
+                    Style::default().fg(Color::Green),
+                ));
+            }
+            GraphStatus::Failed { .. } => {
+                header_spans.push(Span::styled(
+                    "📊 Code Graph: Failed | ",
+                    Style::default().fg(Color::Red),
+                ));
+            }
+        }
 
         header_spans.push(Span::styled(
             "Working ",

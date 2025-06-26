@@ -5,6 +5,7 @@ use crate::config::Config;
 use crate::protocol::Event;
 use crate::protocol::EventMsg;
 use crate::util::notify_on_sigint;
+use crate::code_analysis::graph_manager::initialize_graph_async;
 use tokio::sync::Notify;
 
 /// Spawn a new [`Codex`] and initialize the session.
@@ -14,7 +15,15 @@ use tokio::sync::Notify;
 /// that callers can surface the information to the UI.
 pub async fn init_codex(config: Config) -> anyhow::Result<(Codex, Event, Arc<Notify>)> {
     let ctrl_c = notify_on_sigint();
-    let (codex, init_id) = Codex::spawn(config, ctrl_c.clone()).await?;
+    let (codex, init_id) = Codex::spawn(config.clone(), ctrl_c.clone()).await?;
+
+    // Start background code graph initialization
+    let cwd = config.cwd.clone();
+    tokio::spawn(async move {
+        if let Err(e) = initialize_graph_async(&cwd).await {
+            tracing::warn!("Failed to initialize code graph: {}", e);
+        }
+    });
 
     // The first event must be `SessionInitialized`. Validate and forward it to
     // the caller so that they can display it in the conversation history.
