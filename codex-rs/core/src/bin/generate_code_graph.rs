@@ -50,6 +50,11 @@ fn main() {
     match repo_mapper.map_repository() {
         Ok(()) => {
             println!("Successfully mapped repository: {}", source_dir);
+            
+            // Get and display parsing statistics
+            let (total, successful, failed, _failed_files) = repo_mapper.get_parsing_statistics();
+            println!("Parsing summary: {}/{} files processed successfully ({} failed)", 
+                     successful, total, failed);
         },
         Err(e) => {
             eprintln!("Error mapping repository: {}", e);

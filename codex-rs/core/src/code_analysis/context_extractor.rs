@@ -147,9 +147,12 @@ impl ContextExtractor {
     /// Extract symbols from a Rust file
     fn extract_rust_symbols(&mut self, parsed_file: &ParsedFile) -> Result<(), String> {
         // Execute the query to find functions, structs, enums, etc.
-        let matches = parsed_file.execute_predefined_query(QueryType::All)?;
-        
-        eprintln!("Rust query found {} matches", matches.len());
+        let matches = match parsed_file.execute_predefined_query(QueryType::All) {
+            Ok(matches) => matches,
+            Err(e) => {
+                return Err(format!("Failed to execute Rust query for file {}: {}", parsed_file.path, e));
+            }
+        };
         
         // Process the matches to extract symbols
         self.process_matches(&matches, parsed_file)?;
@@ -168,7 +171,7 @@ impl ContextExtractor {
             
             // First pass: collect all captures by type
             for capture in &match_.captures {
-                eprintln!("Processing capture: {} = '{}'", capture.name, capture.text);
+                // eprintln!("Processing capture: {} = '{}'", capture.name, capture.text);
                 
                 if capture.name.starts_with("definition.") {
                     let symbol_type = &capture.name[11..]; // Remove "definition." prefix
@@ -317,7 +320,12 @@ impl ContextExtractor {
     /// Extract symbols from a JavaScript/TypeScript file
     fn extract_js_ts_symbols(&mut self, parsed_file: &ParsedFile) -> Result<(), String> {
         // Execute the query to find functions, classes, etc.
-        let matches = parsed_file.execute_predefined_query(QueryType::All)?;
+        let matches = match parsed_file.execute_predefined_query(QueryType::All) {
+            Ok(matches) => matches,
+            Err(e) => {
+                return Err(format!("Failed to execute JS/TS query for file {}: {}", parsed_file.path, e));
+            }
+        };
         
         // Process the matches to extract symbols
         self.process_matches(&matches, parsed_file)?;
@@ -328,7 +336,12 @@ impl ContextExtractor {
     /// Extract symbols from a Python file
     fn extract_python_symbols(&mut self, parsed_file: &ParsedFile) -> Result<(), String> {
         // Execute the query to find functions, classes, etc.
-        let matches = parsed_file.execute_predefined_query(QueryType::All)?;
+        let matches = match parsed_file.execute_predefined_query(QueryType::All) {
+            Ok(matches) => matches,
+            Err(e) => {
+                return Err(format!("Failed to execute Python query for file {}: {}", parsed_file.path, e));
+            }
+        };
         
         // Process the matches to extract symbols
         self.process_matches(&matches, parsed_file)?;
@@ -339,7 +352,12 @@ impl ContextExtractor {
     /// Extract symbols from a C++ file
     fn extract_cpp_symbols(&mut self, parsed_file: &ParsedFile) -> Result<(), String> {
         // Execute the query to find functions, classes, etc.
-        let matches = parsed_file.execute_predefined_query(QueryType::All)?;
+        let matches = match parsed_file.execute_predefined_query(QueryType::All) {
+            Ok(matches) => matches,
+            Err(e) => {
+                return Err(format!("Failed to execute C++ query for file {}: {}", parsed_file.path, e));
+            }
+        };
         
         // Process the matches to extract symbols
         self.process_matches(&matches, parsed_file)?;
@@ -350,7 +368,12 @@ impl ContextExtractor {
     /// Extract symbols from a Java file
     fn extract_java_symbols(&mut self, parsed_file: &ParsedFile) -> Result<(), String> {
         // Execute the query to find methods, classes, etc.
-        let matches = parsed_file.execute_predefined_query(QueryType::All)?;
+        let matches = match parsed_file.execute_predefined_query(QueryType::All) {
+            Ok(matches) => matches,
+            Err(e) => {
+                return Err(format!("Failed to execute Java query for file {}: {}", parsed_file.path, e));
+            }
+        };
         
         // Process the matches to extract symbols
         self.process_matches(&matches, parsed_file)?;
@@ -361,7 +384,12 @@ impl ContextExtractor {
     /// Extract symbols from a C# file
     fn extract_csharp_symbols(&mut self, parsed_file: &ParsedFile) -> Result<(), String> {
         // Execute the query to find methods, classes, etc.
-        let matches = parsed_file.execute_predefined_query(QueryType::All)?;
+        let matches = match parsed_file.execute_predefined_query(QueryType::All) {
+            Ok(matches) => matches,
+            Err(e) => {
+                return Err(format!("Failed to execute C# query for file {}: {}", parsed_file.path, e));
+            }
+        };
         
         // Process the matches to extract symbols
         self.process_matches(&matches, parsed_file)?;
@@ -372,7 +400,12 @@ impl ContextExtractor {
     /// Extract symbols from a Go file
     fn extract_go_symbols(&mut self, parsed_file: &ParsedFile) -> Result<(), String> {
         // Execute the query to find functions, methods, etc.
-        let matches = parsed_file.execute_predefined_query(QueryType::All)?;
+        let matches = match parsed_file.execute_predefined_query(QueryType::All) {
+            Ok(matches) => matches,
+            Err(e) => {
+                return Err(format!("Failed to execute Go query for file {}: {}", parsed_file.path, e));
+            }
+        };
         
         // Process the matches to extract symbols
         self.process_matches(&matches, parsed_file)?;

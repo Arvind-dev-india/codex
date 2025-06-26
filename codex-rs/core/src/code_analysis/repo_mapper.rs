@@ -64,6 +64,11 @@ pub struct RepoMapper {
     file_nodes: HashMap<String, CodeNode>,
     symbol_nodes: HashMap<String, CodeNode>,
     edges: Vec<CodeEdge>,
+    // Statistics
+    total_files_attempted: usize,
+    files_parsed_successfully: usize,
+    files_failed_to_parse: usize,
+    failed_files: Vec<String>,
 }
 
 impl RepoMapper {
@@ -76,6 +81,11 @@ impl RepoMapper {
             file_nodes: HashMap::new(),
             symbol_nodes: HashMap::new(),
             edges: Vec::new(),
+            // Initialize statistics
+            total_files_attempted: 0,
+            files_parsed_successfully: 0,
+            files_failed_to_parse: 0,
+            failed_files: Vec::new(),
         }
     }
 
@@ -84,6 +94,7 @@ impl RepoMapper {
         let root_path = self.root_path.clone();
         self.scan_directory(&root_path)?;
         self.build_graph_from_context();
+        self.print_parsing_statistics();
         Ok(())
     }
 
@@ -121,8 +132,25 @@ impl RepoMapper {
 
     /// Process a single file
     fn process_file(&mut self, file_path: &str) -> Result<(), String> {
+        // Show progress every 10 files
+        if self.total_files_attempted % 10 == 0 {
+            eprintln!("Processed {} files so far...", self.total_files_attempted);
+        }
+        
+        self.total_files_attempted += 1;
+        
         // Extract symbols from the file using incremental parsing if possible
-        self.context_extractor.extract_symbols_from_file_incremental(file_path)?;
+        match self.context_extractor.extract_symbols_from_file_incremental(file_path) {
+            Ok(()) => {
+                self.files_parsed_successfully += 1;
+            }
+            Err(e) => {
+                eprintln!("Warning: Failed to process file {}: {}", file_path, e);
+                self.files_failed_to_parse += 1;
+                self.failed_files.push(file_path.to_string());
+                // Don't return error - continue processing other files
+            }
+        }
 
         // Create a node for the file
         let relative_path = Path::new(file_path)
@@ -392,6 +420,45 @@ impl RepoMapper {
     /// Get mapping from symbol names to FQNs
     pub fn get_name_to_fqns(&self) -> &std::collections::HashMap<String, Vec<String>> {
         self.context_extractor.get_name_to_fqns()
+    }
+    
+    /// Print parsing statistics
+    fn print_parsing_statistics(&self) {
+        eprintln!("\n=== Parsing Statistics ===");
+        eprintln!("Total files attempted: {}", self.total_files_attempted);
+        eprintln!("Files parsed successfully: {}", self.files_parsed_successfully);
+        eprintln!("Files failed to parse: {}", self.files_failed_to_parse);
+        
+        if self.total_files_attempted > 0 {
+            let success_rate = (self.files_parsed_successfully as f64 / self.total_files_attempted as f64) * 100.0;
+            eprintln!("Success rate: {:.1}%", success_rate);
+        }
+        
+        if !self.failed_files.is_empty() {
+            eprintln!("\nFailed files:");
+            for (i, file) in self.failed_files.iter().enumerate() {
+                eprintln!("  {}. {}", i + 1, file);
+                // Limit the list to avoid too much output
+                if i >= 9 {
+                    let remaining = self.failed_files.len() - 10;
+                    if remaining > 0 {
+                        eprintln!("  ... and {} more files", remaining);
+                    }
+                    break;
+                }
+            }
+        }
+        eprintln!("=========================\n");
+    }
+    
+    /// Get parsing statistics
+    pub fn get_parsing_statistics(&self) -> (usize, usize, usize, &Vec<String>) {
+        (
+            self.total_files_attempted,
+            self.files_parsed_successfully,
+            self.files_failed_to_parse,
+            &self.failed_files,
+        )
     }
 }
 

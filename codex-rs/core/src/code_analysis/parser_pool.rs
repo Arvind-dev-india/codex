@@ -270,10 +270,12 @@ impl ParserPool {
             
             let mut query_content = String::new();
             let mut found = false;
+            let mut used_path = String::new();
             
             for query_path in &possible_paths {
                 if let Ok(content) = fs::read_to_string(query_path) {
                     query_content = content;
+                    used_path = query_path.clone();
                     found = true;
                     break;
                 }
@@ -283,8 +285,10 @@ impl ParserPool {
                 return Err(format!("Failed to find query file {} in any of the expected locations", query_file));
             }
             
+            // eprintln!("Loading cached query from: {}", used_path);
+            
             let query = Query::new(&lang, &query_content)
-                .map_err(|e| format!("Failed to parse query: {}", e))?;
+                .map_err(|e| format!("Failed to parse cached query from {}: {}", used_path, e))?;
             
             return Ok(query);
         }
@@ -313,10 +317,12 @@ impl ParserPool {
         
         let mut query_content = String::new();
         let mut found = false;
+        let mut used_path = String::new();
         
         for query_path in &possible_paths {
             if let Ok(content) = fs::read_to_string(query_path) {
                 query_content = content;
+                used_path = query_path.clone();
                 found = true;
                 break;
             }
@@ -326,9 +332,18 @@ impl ParserPool {
             return Err(format!("Failed to find query file {} in any of the expected locations", query_file));
         }
         
+        // Only show query loading details if there's an error
+        // eprintln!("Loading query from: {}", used_path);
+        
         // Create the query
         let query = Query::new(&lang, &query_content)
-            .map_err(|e| format!("Failed to parse query: {}", e))?;
+            .map_err(|e| {
+                eprintln!("Query parsing failed. Let's debug the AST for this language...");
+                if language == SupportedLanguage::JavaScript {
+                    debug_javascript_ast(&lang);
+                }
+                format!("Failed to parse query from {}: {}", used_path, e)
+            })?;
         
         // Store the query and create a new one to return
         queries.insert((language, query_type), query);
@@ -346,6 +361,8 @@ impl ParserPool {
         let path_obj = Path::new(path);
         let language = SupportedLanguage::from_path(path_obj)
             .ok_or_else(|| format!("Unsupported file extension: {}", path))?;
+        
+        // Removed verbose logging - language detection is working fine
 
         // Load the language first
         let lang = self.load_language(language)?;
@@ -422,6 +439,56 @@ impl ParserPool {
             let (parsed_file, _) = parsed_files.get(path)
                 .ok_or_else(|| format!("File not found in cache: {}", path))?;
             Ok(parsed_file.clone())
+        }
+    }
+}
+
+/// Debug function to show JavaScript AST structure
+fn debug_javascript_ast(lang: &Language) {
+    eprintln!("=== Debugging JavaScript AST ===");
+    
+    let mut parser = Parser::new();
+    parser.set_language(lang).unwrap();
+    
+    let test_code = r#"
+function testFunction() {
+    return "hello";
+}
+
+const arrowFunc = () => {
+    return "world";
+};
+
+class TestClass {
+    method() {
+        return "test";
+    }
+}
+"#;
+    
+    if let Some(tree) = parser.parse(test_code, None) {
+        print_ast_node(tree.root_node(), test_code, 0);
+    }
+    eprintln!("=== End JavaScript AST Debug ===");
+}
+
+fn print_ast_node(node: tree_sitter::Node, source: &str, depth: usize) {
+    let indent = "  ".repeat(depth);
+    let node_text = node.utf8_text(source.as_bytes()).unwrap_or("<error>");
+    let node_text_preview = if node_text.len() > 50 {
+        format!("{}...", &node_text[..50].replace('\n', "\\n"))
+    } else {
+        node_text.replace('\n', "\\n")
+    };
+    
+    eprintln!("{}({}) \"{}\"", indent, node.kind(), node_text_preview);
+    
+    // Only print first few levels to avoid too much output
+    if depth < 4 {
+        for i in 0..node.child_count() {
+            if let Some(child) = node.child(i) {
+                print_ast_node(child, source, depth + 1);
+            }
         }
     }
 }
