@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 use tree_sitter::{Language, Parser, Query, QueryCursor, Tree, StreamingIterator};
 use once_cell::sync::Lazy;
+use tracing;
 
 // Import the tree-sitter language parsers
 extern crate tree_sitter_rust;
@@ -280,7 +281,7 @@ impl ParserPool {
         // Create the query from the content
         let query = Query::new(&lang, &query_content)
             .map_err(|e| {
-                eprintln!("Query parsing failed for language {:?}: {}", language, e);
+                tracing::warn!("Query parsing failed for language {:?}: {}", language, e);
                 format!("Failed to parse query for {:?}: {}", language, e)
             })?;
         

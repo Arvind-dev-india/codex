@@ -3,6 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::fs;
+use tracing;
 
 use super::parser_pool::{get_parser_pool, ParsedFile, SupportedLanguage, QueryType};
 
@@ -229,7 +230,7 @@ impl ContextExtractor {
             "package" => SymbolType::Package,
             "type" => SymbolType::Class, // Map type definitions to class for now
             _ => {
-                eprintln!("Unknown symbol type: {}", symbol_type_str);
+                tracing::debug!("Unknown symbol type: {}", symbol_type_str);
                 return Ok(());
             }
         };
@@ -283,7 +284,7 @@ impl ContextExtractor {
             "type" => ReferenceType::Usage,
             "send" => ReferenceType::Call,
             _ => {
-                eprintln!("Unknown reference type: {}", ref_type_str);
+                tracing::debug!("Unknown reference type: {}", ref_type_str);
                 return Ok(());
             }
         };

@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use tracing;
 
 use crate::openai_tools::{JsonSchema, OpenAiTool, create_function_tool};
 use super::repo_mapper::{CodeEdgeType, CodeNodeType};
@@ -306,7 +307,7 @@ pub fn handle_analyze_code(args: Value) -> Option<Result<Value, String>> {
                 },
                 Err(e) => {
                     // Fall back to the simple regex-based parsing if Tree-sitter fails
-                    eprintln!("Tree-sitter parsing failed: {}, falling back to regex parsing", e);
+                    tracing::debug!("Tree-sitter parsing failed: {}, falling back to regex parsing", e);
                     
                     // Read the file content
                     let file_path = &input.file_path;

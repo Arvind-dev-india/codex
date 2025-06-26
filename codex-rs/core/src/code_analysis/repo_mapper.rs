@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use rayon::prelude::*;
+use tracing;
 use super::context_extractor::{CodeSymbol, ContextExtractor, SymbolReference, create_context_extractor};
 use super::parser_pool::SupportedLanguage;
 
@@ -178,9 +179,11 @@ impl RepoMapper {
                             *count += 1;
                             let mut failed_list = failed_files.lock().unwrap();
                             failed_list.push(file_path.clone());
-                            // Only show errors for first few files to avoid spam
+                            // Log errors but don't spam the UI
                             if failed_list.len() <= 10 {
-                                eprintln!("Warning: Failed to process file {}: {}", file_path, e);
+                                tracing::warn!("Failed to process file {}: {}", file_path, e);
+                            } else if failed_list.len() == 11 {
+                                tracing::warn!("Suppressing further file processing errors to avoid spam. Check logs for details.");
                             }
                             Err(e)
                         }
@@ -294,7 +297,7 @@ impl RepoMapper {
                 self.files_parsed_successfully += 1;
             }
             Err(e) => {
-                eprintln!("Warning: Failed to process file {}: {}", file_path, e);
+                tracing::warn!("Failed to process file {}: {}", file_path, e);
                 self.files_failed_to_parse += 1;
                 self.failed_files.push(file_path.to_string());
                 // Don't return error - continue processing other files
@@ -599,11 +602,11 @@ impl RepoMapper {
         
         if self.total_files_attempted > 0 {
             let success_rate = (self.files_parsed_successfully as f64 / self.total_files_attempted as f64) * 100.0;
-            eprintln!("Code analysis complete: {} nodes, {} edges, {:.0}% parsed ({}/{} files)", 
+            tracing::info!("Code analysis complete: {} nodes, {} edges, {:.0}% parsed ({}/{} files)", 
                      total_nodes, total_edges, success_rate, 
                      self.files_parsed_successfully, self.total_files_attempted);
         } else {
-            eprintln!("Code analysis complete: {} nodes, {} edges", total_nodes, total_edges);
+            tracing::info!("Code analysis complete: {} nodes, {} edges", total_nodes, total_edges);
         }
     }
     
