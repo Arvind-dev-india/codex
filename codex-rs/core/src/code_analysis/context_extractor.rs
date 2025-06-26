@@ -226,6 +226,7 @@ impl ContextExtractor {
             "variable" => SymbolType::Variable,
             "constant" => SymbolType::Constant,
             "module" => SymbolType::Module,
+            "package" => SymbolType::Package,
             "type" => SymbolType::Class, // Map type definitions to class for now
             _ => {
                 eprintln!("Unknown symbol type: {}", symbol_type_str);
@@ -339,9 +340,12 @@ impl ContextExtractor {
         let matches = match parsed_file.execute_predefined_query(QueryType::All) {
             Ok(matches) => matches,
             Err(e) => {
+                // eprintln!("Python query execution failed: {}", e);
                 return Err(format!("Failed to execute Python query for file {}: {}", parsed_file.path, e));
             }
         };
+        
+        // eprintln!("Python query found {} matches", matches.len());
         
         // Process the matches to extract symbols
         self.process_matches(&matches, parsed_file)?;
@@ -371,9 +375,12 @@ impl ContextExtractor {
         let matches = match parsed_file.execute_predefined_query(QueryType::All) {
             Ok(matches) => matches,
             Err(e) => {
+                // eprintln!("Java query execution failed: {}", e);
                 return Err(format!("Failed to execute Java query for file {}: {}", parsed_file.path, e));
             }
         };
+        
+        // eprintln!("Java query found {} matches", matches.len());
         
         // Process the matches to extract symbols
         self.process_matches(&matches, parsed_file)?;

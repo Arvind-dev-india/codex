@@ -312,7 +312,12 @@ pub fn handle_analyze_code(args: Value) -> Option<Result<Value, String>> {
                 Ok(()) => {
                     // Debug: Check how many symbols were found
                     let symbol_count = extractor.get_symbols().len();
-                    eprintln!("Tree-sitter parsing succeeded, found {} symbols", symbol_count);
+                    // eprintln!("Tree-sitter parsing succeeded, found {} symbols", symbol_count);
+                    
+                    // Debug: Print all found symbols
+                    // for (fqn, symbol) in extractor.get_symbols() {
+                    //     eprintln!("Found symbol: {} ({})", symbol.name, fqn);
+                    // }
                     
                     // Convert symbols to the expected format
                     let symbols: Vec<SymbolInfo> = extractor.get_symbols()

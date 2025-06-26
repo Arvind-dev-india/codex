@@ -1,3 +1,6 @@
+(package_declaration
+  (_) @name.definition.package) @definition.package
+
 (class_declaration
   name: (identifier) @name.definition.class) @definition.class
 

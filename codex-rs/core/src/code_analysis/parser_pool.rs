@@ -305,6 +305,8 @@ impl ParserPool {
                 eprintln!("Query parsing failed. Let's debug the AST for this language...");
                 if language == SupportedLanguage::JavaScript {
                     debug_javascript_ast(&lang);
+                } else if language == SupportedLanguage::Python {
+                    debug_python_ast(&lang);
                 }
                 format!("Failed to parse query: {}", e)
             })?;
@@ -427,6 +429,31 @@ class TestClass {
         print_ast_node(tree.root_node(), test_code, 0);
     }
     eprintln!("=== End JavaScript AST Debug ===");
+}
+
+/// Debug function to show Python AST structure
+fn debug_python_ast(lang: &Language) {
+    eprintln!("=== Debugging Python AST ===");
+    
+    let mut parser = Parser::new();
+    parser.set_language(lang).unwrap();
+    
+    let test_code = r#"
+class Calculator:
+    def __init__(self):
+        self.value = 0
+    
+    def add(self, x):
+        return x + self.value
+
+def simple_function():
+    return 42
+"#;
+    
+    if let Some(tree) = parser.parse(test_code, None) {
+        print_ast_node(tree.root_node(), test_code, 0);
+    }
+    eprintln!("=== End Python AST Debug ===");
 }
 
 fn print_ast_node(node: tree_sitter::Node, source: &str, depth: usize) {
