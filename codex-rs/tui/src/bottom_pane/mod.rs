@@ -201,9 +201,9 @@ impl BottomPane<'_> {
         }
     }
 
-    /// Refresh the code graph status display
+    /// Refresh the code graph status display (now handled by status indicator at top)
     pub(crate) fn refresh_code_graph_status(&mut self) {
-        self.composer.refresh_status();
+        // Status is now shown at the top in status indicator widget
         self.request_redraw();
     }
 }

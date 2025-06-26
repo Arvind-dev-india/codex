@@ -19,7 +19,6 @@ use super::command_popup::CommandPopup;
 
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
-use codex_core::code_analysis::graph_manager::{get_graph_status, GraphStatus};
 
 /// Minimum number of visible text rows inside the textarea.
 const MIN_TEXTAREA_ROWS: usize = 1;
@@ -309,27 +308,7 @@ impl ChatComposer<'_> {
         }
 
         // Get code graph status for the left title
-        let graph_status = get_graph_status();
-        let left_title = match graph_status {
-            GraphStatus::NotStarted => {
-                Line::from("📊 Code Graph: Starting...").style(Style::default().fg(ratatui::style::Color::Yellow))
-            }
-            GraphStatus::Initializing { files_processed, total_files, .. } => {
-                let status_text = if total_files > 0 {
-                    format!("📊 Code Graph: Parsing ({}/{})", files_processed, total_files)
-                } else {
-                    "📊 Code Graph: Initializing...".to_string()
-                };
-                Line::from(status_text).style(Style::default().fg(ratatui::style::Color::Blue))
-            }
-            GraphStatus::Ready { files_processed, symbols_found, .. } => {
-                Line::from(format!("📊 Code Graph: Ready ({} files, {} symbols)", files_processed, symbols_found))
-                    .style(Style::default().fg(ratatui::style::Color::Green))
-            }
-            GraphStatus::Failed { .. } => {
-                Line::from("📊 Code Graph: Failed").style(Style::default().fg(ratatui::style::Color::Red))
-            }
-        };
+        let left_title = Line::from("Message");
 
         let bs = if has_focus {
             BlockState {
@@ -360,10 +339,6 @@ impl ChatComposer<'_> {
         self.command_popup.is_some()
     }
 
-    /// Refresh the border to update code graph status
-    pub(crate) fn refresh_status(&mut self) {
-        self.update_border(self.has_focus);
-    }
 }
 
 impl WidgetRef for &ChatComposer<'_> {

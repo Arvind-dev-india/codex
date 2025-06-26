@@ -286,7 +286,7 @@ pub async fn initialize_graph_async(root_path: &Path) -> Result<(), String> {
     let start_time = std::time::Instant::now();
     tracing::info!("Starting background code graph initialization for path: {}", root_path.display());
     
-    // Check if already initialized for this path
+    // Check if already initialized or currently initializing for this path
     {
         let manager = get_graph_manager();
         let manager = manager.read()
@@ -294,6 +294,12 @@ pub async fn initialize_graph_async(root_path: &Path) -> Result<(), String> {
         
         if manager.initialized && manager.root_path.as_ref().map(|p| p.as_path()) == Some(root_path) {
             tracing::info!("Code graph already initialized for path: {}", root_path.display());
+            return Ok(());
+        }
+        
+        // Also check if already initializing
+        if matches!(manager.status, GraphStatus::Initializing { .. }) {
+            tracing::info!("Code graph initialization already in progress for path: {}", root_path.display());
             return Ok(());
         }
     }
