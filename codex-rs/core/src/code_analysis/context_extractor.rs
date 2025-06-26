@@ -336,6 +336,14 @@ impl ContextExtractor {
 
     /// Extract symbols from a Python file
     fn extract_python_symbols(&mut self, parsed_file: &ParsedFile) -> Result<(), String> {
+        // Debug: Print the first 500 characters of the file content
+        // let content_preview = if parsed_file.source.len() > 500 {
+        //     format!("{}...", &parsed_file.source[..500])
+        // } else {
+        //     parsed_file.source.clone()
+        // };
+        // eprintln!("Python file content preview: {}", content_preview);
+        
         // Execute the query to find functions, classes, etc.
         let matches = match parsed_file.execute_predefined_query(QueryType::All) {
             Ok(matches) => matches,

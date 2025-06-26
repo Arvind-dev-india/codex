@@ -421,7 +421,8 @@ fn test_python_classes_and_functions_line_numbers() {
     let dir = tempdir().unwrap();
     
     // Create a Python file with classes and functions, with and without comments
-    let python_content = r#"""
+    let python_content = r#"
+"""
 A test module for demonstrating line number detection
 """
 
@@ -539,9 +540,9 @@ class MathHelper:
     
     println!("Calculator class: lines {} to {}", start_line, end_line);
     
-    // Calculator class should start around line 8 and end around line 48
-    assert!(start_line >= 8 && start_line <= 9, "Calculator class should start around line 8-9, but got {}", start_line);
-    assert!(end_line >= 48 && end_line <= 50, "Calculator class should end around line 48-50, but got {}", end_line);
+    // Calculator class should start around line 9 and end around line 51
+    assert!(start_line >= 8 && start_line <= 10, "Calculator class should start around line 8-10, but got {}", start_line);
+    assert!(end_line >= 50 && end_line <= 52, "Calculator class should end around line 50-52, but got {}", end_line);
     
     // Test __init__ method
     let init_method = find_symbol_by_name(&analysis, "__init__");

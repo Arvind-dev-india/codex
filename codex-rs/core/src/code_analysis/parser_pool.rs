@@ -306,7 +306,8 @@ impl ParserPool {
                 if language == SupportedLanguage::JavaScript {
                     debug_javascript_ast(&lang);
                 } else if language == SupportedLanguage::Python {
-                    debug_python_ast(&lang);
+                    // debug_python_ast(&lang);
+                    // debug_python_query(&lang);
                 }
                 format!("Failed to parse query: {}", e)
             })?;
@@ -454,6 +455,75 @@ def simple_function():
         print_ast_node(tree.root_node(), test_code, 0);
     }
     eprintln!("=== End Python AST Debug ===");
+}
+
+/// Debug function to test Python query directly
+fn debug_python_query(lang: &Language) {
+    eprintln!("=== Debugging Python Query ===");
+    
+    let mut parser = Parser::new();
+    parser.set_language(lang).unwrap();
+    
+    // Test with the actual test file content
+    let test_code = r#""""
+A test module for demonstrating line number detection
+"""
+
+import math
+from typing import Optional
+
+class Calculator:
+    """A simple calculator class."""
+    
+    def __init__(self, initial_value: float = 0.0):
+        """Initialize the calculator with an optional initial value."""
+        self.value = initial_value
+        self.history = []
+
+def simple_function():
+    print("This is a simple function")
+    return 42
+"#;
+    
+    if let Some(tree) = parser.parse(test_code, None) {
+        // Test the current Python query
+        let query_content = r#"(class_definition
+  name: (identifier) @name.definition.class) @definition.class
+
+(function_definition
+  name: (identifier) @name.definition.function) @definition.function
+
+(call
+  function: [
+      (identifier) @name.reference.call
+      (attribute
+        attribute: (identifier) @name.reference.call)
+  ]) @reference.call"#;
+        
+        match Query::new(lang, query_content) {
+            Ok(query) => {
+                let mut cursor = QueryCursor::new();
+                let mut matches = cursor.matches(&query, tree.root_node(), test_code.as_bytes());
+                
+                eprintln!("Query executed successfully, checking matches...");
+                let mut match_count = 0;
+                while let Some(match_) = matches.next() {
+                    match_count += 1;
+                    eprintln!("Match {}: pattern {}", match_count, match_.pattern_index);
+                    for capture in match_.captures {
+                        let capture_name = query.capture_names()[capture.index as usize];
+                        let text = capture.node.utf8_text(test_code.as_bytes()).unwrap_or("<error>");
+                        eprintln!("  Capture: {} = '{}'", capture_name, text);
+                    }
+                }
+                eprintln!("Total matches found: {}", match_count);
+            }
+            Err(e) => {
+                eprintln!("Query failed: {}", e);
+            }
+        }
+    }
+    eprintln!("=== End Python Query Debug ===");
 }
 
 fn print_ast_node(node: tree_sitter::Node, source: &str, depth: usize) {
