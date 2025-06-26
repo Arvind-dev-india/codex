@@ -6,6 +6,7 @@ pub mod repo_mapper;
 pub mod tools;
 pub mod integration;
 pub mod tool_handler;
+pub mod graph_manager;
 
 pub use tools::register_code_analysis_tools;
 pub use integration::register_code_analysis_tools_with_openai;

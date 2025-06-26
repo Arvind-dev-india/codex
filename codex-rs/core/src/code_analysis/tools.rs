@@ -256,7 +256,53 @@ struct EdgeInfo {
 pub fn handle_analyze_code(args: Value) -> Option<Result<Value, String>> {
     Some(match serde_json::from_value::<AnalyzeCodeInput>(args) {
         Ok(input) => {
-            // Use the Tree-sitter based context extractor
+            // First, try to get the file's directory to ensure the global graph is initialized
+            let file_path = std::path::Path::new(&input.file_path);
+            let dir_path = file_path.parent().unwrap_or_else(|| std::path::Path::new("."));
+            
+            // Ensure the global graph is initialized for this directory
+            if let Ok(()) = super::graph_manager::ensure_graph_for_path(dir_path) {
+                // Try to get symbols from the global graph first
+                if let Some(symbols_map) = super::graph_manager::get_symbols() {
+                    let file_symbols: Vec<SymbolInfo> = symbols_map
+                        .values()
+                        .filter(|symbol| symbol.file_path == input.file_path)
+                        .map(|symbol| {
+                            let symbol_type_str = match symbol.symbol_type {
+                                super::context_extractor::SymbolType::Function => "function",
+                                super::context_extractor::SymbolType::Method => "method",
+                                super::context_extractor::SymbolType::Class => "class",
+                                super::context_extractor::SymbolType::Struct => "struct",
+                                super::context_extractor::SymbolType::Enum => "enum",
+                                super::context_extractor::SymbolType::Interface => "interface",
+                                super::context_extractor::SymbolType::Variable => "variable",
+                                super::context_extractor::SymbolType::Constant => "constant",
+                                super::context_extractor::SymbolType::Import => "import",
+                                super::context_extractor::SymbolType::Module => "module",
+                                super::context_extractor::SymbolType::Package => "package",
+                            };
+                            
+                            SymbolInfo {
+                                name: symbol.name.clone(),
+                                symbol_type: symbol_type_str.to_string(),
+                                file_path: symbol.file_path.clone(),
+                                start_line: symbol.start_line,
+                                end_line: symbol.end_line,
+                                parent: symbol.parent.clone(),
+                            }
+                        })
+                        .collect();
+                    
+                    if !file_symbols.is_empty() {
+                        return Some(Ok(json!({
+                            "file_path": input.file_path,
+                            "symbols": file_symbols,
+                        })));
+                    }
+                }
+            }
+            
+            // Fall back to direct Tree-sitter parsing if global graph doesn't have the file
             use super::context_extractor::{ContextExtractor, SymbolType};
             
             let mut extractor = ContextExtractor::new();
@@ -1104,52 +1150,79 @@ pub fn handle_analyze_code(args: Value) -> Option<Result<Value, String>> {
 pub fn handle_find_symbol_references(args: Value) -> Option<Result<Value, String>> {
     Some(match serde_json::from_value::<FindSymbolReferencesInput>(args) {
         Ok(input) => {
-            // Try to find the symbol references in the directory
+            // Determine the search directory
             let search_dir = if input.directory.is_empty() {
                 std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
             } else {
                 std::path::PathBuf::from(&input.directory)
             };
             
-            let mut references = Vec::new();
-            
-            // Search for Rust files in the directory
-            if let Ok(entries) = std::fs::read_dir(&search_dir) {
-                for entry in entries.flatten() {
-                    if let Ok(metadata) = entry.metadata() {
-                        if metadata.is_dir() {
-                            // Recursively search subdirectories
-                            search_directory_for_references(&entry.path(), &input.symbol_name, &mut references);
-                        } else if let Some(extension) = entry.path().extension() {
-                            if let Some(ext_str) = extension.to_str() {
-                                if ["rs", "py", "js", "ts", "java", "cpp", "c", "cs", "go", "h", "hpp", "cc", "cxx"].contains(&ext_str) {
-                                    search_file_for_references(&entry.path(), &input.symbol_name, &mut references);
+            // Ensure the global graph is initialized for this path
+            match super::graph_manager::ensure_graph_for_path(&search_dir) {
+                Ok(()) => {
+                    // Use the global graph to find references
+                    let references = super::graph_manager::find_symbol_references(&input.symbol_name);
+                    
+                    let reference_infos: Vec<_> = references.iter().map(|r| {
+                        json!({
+                            "file": r.reference_file,
+                            "line": r.reference_line,
+                            "column": r.reference_col,
+                            "reference_type": match r.reference_type {
+                                super::context_extractor::ReferenceType::Call => "call",
+                                super::context_extractor::ReferenceType::Declaration => "declaration",
+                                super::context_extractor::ReferenceType::Implementation => "implementation",
+                                super::context_extractor::ReferenceType::Import => "import",
+                                super::context_extractor::ReferenceType::Inheritance => "inheritance",
+                                super::context_extractor::ReferenceType::Usage => "usage",
+                            },
+                        })
+                    }).collect();
+                    
+                    Ok(json!({
+                        "references": reference_infos
+                    }))
+                },
+                Err(_) => {
+                    // Fall back to regex-based search if Tree-sitter fails
+                    let mut references = Vec::new();
+                    
+                    // Search for files in the directory
+                    if let Ok(entries) = std::fs::read_dir(&search_dir) {
+                        for entry in entries.flatten() {
+                            if let Ok(metadata) = entry.metadata() {
+                                if metadata.is_dir() {
+                                    // Recursively search subdirectories
+                                    search_directory_for_references(&entry.path(), &input.symbol_name, &mut references);
+                                } else if let Some(extension) = entry.path().extension() {
+                                    if let Some(ext_str) = extension.to_str() {
+                                        if ["rs", "py", "js", "ts", "java", "cpp", "c", "cs", "go", "h", "hpp", "cc", "cxx"].contains(&ext_str) {
+                                            search_file_for_references(&entry.path(), &input.symbol_name, &mut references);
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
+                    
+                    // Also search the src directory if it exists
+                    let src_dir = search_dir.join("src");
+                    if src_dir.exists() {
+                        search_directory_for_references(&src_dir, &input.symbol_name, &mut references);
+                    }
+                    
+                    Ok(json!({
+                        "references": references.into_iter().map(|r| {
+                            json!({
+                                "file": r.file_path,
+                                "line": r.line,
+                                "column": r.column,
+                                "reference_type": r.reference_type,
+                            })
+                        }).collect::<Vec<_>>()
+                    }))
                 }
             }
-            
-            // Also search the src directory if it exists
-            let src_dir = search_dir.join("src");
-            if src_dir.exists() {
-                search_directory_for_references(&src_dir, &input.symbol_name, &mut references);
-            }
-            
-            // If no references found, return empty array instead of hardcoded fallback
-            // The hardcoded fallback was causing issues when working in different directories
-            
-            Ok(json!({
-                "references": references.into_iter().map(|r| {
-                    json!({
-                        "file": r.file_path,
-                        "line": r.line,
-                        "column": r.column,
-                        "reference_type": r.reference_type,
-                    })
-                }).collect::<Vec<_>>()
-            }))
         },
         Err(e) => Err(format!("Invalid arguments: {}", e)),
     })
@@ -1543,53 +1616,86 @@ fn find_definition_in_line(line: &str, symbol_name: &str, file_extension: &str, 
 pub fn handle_find_symbol_definitions(args: Value) -> Option<Result<Value, String>> {
     Some(match serde_json::from_value::<FindSymbolDefinitionsInput>(args) {
         Ok(input) => {
-            // Try to find the symbol in the directory
+            // Determine the search directory
             let search_dir = if input.directory.is_empty() {
                 std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
             } else {
                 std::path::PathBuf::from(&input.directory)
             };
             
-            let mut definitions = Vec::new();
-            
-            // Search for Rust files in the directory
-            if let Ok(entries) = std::fs::read_dir(&search_dir) {
-                for entry in entries.flatten() {
-                    if let Ok(metadata) = entry.metadata() {
-                        if metadata.is_dir() {
-                            // Recursively search subdirectories
-                            search_directory_for_definitions(&entry.path(), &input.symbol_name, &mut definitions);
-                        } else if let Some(extension) = entry.path().extension() {
-                            if let Some(ext_str) = extension.to_str() {
-                                if ["rs", "py", "js", "ts", "java", "cpp", "c", "cs", "go", "h", "hpp", "cc", "cxx"].contains(&ext_str) {
-                                    search_file_for_definitions(&entry.path(), &input.symbol_name, &mut definitions);
+            // Ensure the global graph is initialized for this path
+            match super::graph_manager::ensure_graph_for_path(&search_dir) {
+                Ok(()) => {
+                    // Use the global graph to find definitions
+                    let definitions = super::graph_manager::find_symbol_definitions(&input.symbol_name);
+                    
+                    let definition_infos: Vec<_> = definitions.iter().map(|d| {
+                        json!({
+                            "symbol": &input.symbol_name,
+                            "file": d.file_path,
+                            "start_line": d.start_line,
+                            "end_line": d.end_line,
+                            "symbol_type": match d.symbol_type {
+                                super::context_extractor::SymbolType::Function => "function",
+                                super::context_extractor::SymbolType::Method => "method",
+                                super::context_extractor::SymbolType::Class => "class",
+                                super::context_extractor::SymbolType::Struct => "struct",
+                                super::context_extractor::SymbolType::Enum => "enum",
+                                super::context_extractor::SymbolType::Interface => "interface",
+                                super::context_extractor::SymbolType::Variable => "variable",
+                                super::context_extractor::SymbolType::Constant => "constant",
+                                super::context_extractor::SymbolType::Import => "import",
+                                super::context_extractor::SymbolType::Module => "module",
+                                super::context_extractor::SymbolType::Package => "package",
+                            },
+                        })
+                    }).collect();
+                    
+                    Ok(json!({
+                        "definitions": definition_infos
+                    }))
+                },
+                Err(_) => {
+                    // Fall back to regex-based search if Tree-sitter fails
+                    let mut definitions = Vec::new();
+                    
+                    // Search for files in the directory
+                    if let Ok(entries) = std::fs::read_dir(&search_dir) {
+                        for entry in entries.flatten() {
+                            if let Ok(metadata) = entry.metadata() {
+                                if metadata.is_dir() {
+                                    // Recursively search subdirectories
+                                    search_directory_for_definitions(&entry.path(), &input.symbol_name, &mut definitions);
+                                } else if let Some(extension) = entry.path().extension() {
+                                    if let Some(ext_str) = extension.to_str() {
+                                        if ["rs", "py", "js", "ts", "java", "cpp", "c", "cs", "go", "h", "hpp", "cc", "cxx"].contains(&ext_str) {
+                                            search_file_for_definitions(&entry.path(), &input.symbol_name, &mut definitions);
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
+                    
+                    // Also search the src directory if it exists
+                    let src_dir = search_dir.join("src");
+                    if src_dir.exists() {
+                        search_directory_for_definitions(&src_dir, &input.symbol_name, &mut definitions);
+                    }
+                    
+                    Ok(json!({
+                        "definitions": definitions.into_iter().map(|d| {
+                            json!({
+                                "symbol": &input.symbol_name,
+                                "file": d.file_path,
+                                "start_line": d.start_line,
+                                "end_line": d.end_line,
+                                "symbol_type": d.symbol_type,
+                            })
+                        }).collect::<Vec<_>>()
+                    }))
                 }
             }
-            
-            // Also search the src directory if it exists
-            let src_dir = search_dir.join("src");
-            if src_dir.exists() {
-                search_directory_for_definitions(&src_dir, &input.symbol_name, &mut definitions);
-            }
-            
-            // If no definitions found, return empty array instead of hardcoded fallback
-            // The hardcoded fallback was causing issues when working in different directories
-            
-            Ok(json!({
-                "definitions": definitions.into_iter().map(|d| {
-                    json!({
-                        "symbol": &input.symbol_name,
-                        "file": d.file_path,
-                        "start_line": d.start_line,
-                        "end_line": d.end_line,
-                        "symbol_type": d.symbol_type,
-                    })
-                }).collect::<Vec<_>>()
-            }))
         },
         Err(e) => Err(format!("Invalid arguments: {}", e)),
     })
@@ -1601,62 +1707,62 @@ pub fn handle_get_code_graph(args: Value) -> Option<Result<Value, String>> {
         Ok(input) => {
             let root_path = std::path::Path::new(&input.root_path);
             
-            // Create a repository mapper and map the repository
-            let mut repo_mapper = super::repo_mapper::RepoMapper::new(root_path);
-            
-            match repo_mapper.map_repository() {
+            // Ensure the global graph is initialized for this path
+            match super::graph_manager::ensure_graph_for_path(root_path) {
                 Ok(()) => {
-                    // Get the code reference graph
-                    let graph = repo_mapper.get_graph();
-                    
-                    // Convert nodes to the expected format
-                    let nodes: Vec<NodeInfo> = graph.nodes.iter().map(|node| {
-                        let symbol_type = match node.node_type {
-                            super::repo_mapper::CodeNodeType::File => "File",
-                            super::repo_mapper::CodeNodeType::Function => "Function",
-                            super::repo_mapper::CodeNodeType::Method => "Method",
-                            super::repo_mapper::CodeNodeType::Class => "Class",
-                            super::repo_mapper::CodeNodeType::Struct => "Struct",
-                            super::repo_mapper::CodeNodeType::Module => "Module",
-                        };
+                    // Get the code reference graph from the global manager
+                    if let Some(graph) = super::graph_manager::get_code_graph() {
+                        // Convert nodes to the expected format
+                        let nodes: Vec<NodeInfo> = graph.nodes.iter().map(|node| {
+                            let symbol_type = match node.node_type {
+                                super::repo_mapper::CodeNodeType::File => "File",
+                                super::repo_mapper::CodeNodeType::Function => "Function",
+                                super::repo_mapper::CodeNodeType::Method => "Method",
+                                super::repo_mapper::CodeNodeType::Class => "Class",
+                                super::repo_mapper::CodeNodeType::Struct => "Struct",
+                                super::repo_mapper::CodeNodeType::Module => "Module",
+                            };
+                            
+                            NodeInfo {
+                                id: node.id.clone(),
+                                name: node.name.clone(),
+                                symbol_type: symbol_type.to_string(),
+                                file_path: node.file_path.clone(),
+                                start_line: node.start_line,
+                                end_line: node.end_line,
+                                parent: None, // TODO: Extract parent information if needed
+                            }
+                        }).collect();
                         
-                        NodeInfo {
-                            id: node.id.clone(),
-                            name: node.name.clone(),
-                            symbol_type: symbol_type.to_string(),
-                            file_path: node.file_path.clone(),
-                            start_line: node.start_line,
-                            end_line: node.end_line,
-                            parent: None, // TODO: Extract parent information if needed
-                        }
-                    }).collect();
-                    
-                    // Convert edges to the expected format
-                    let edges: Vec<EdgeInfo> = graph.edges.iter().map(|edge| {
-                        let edge_type = match edge.edge_type {
-                            super::repo_mapper::CodeEdgeType::Calls => "Call",
-                            super::repo_mapper::CodeEdgeType::Imports => "Import",
-                            super::repo_mapper::CodeEdgeType::Inherits => "Inheritance",
-                            super::repo_mapper::CodeEdgeType::Contains => "Contains",
-                            super::repo_mapper::CodeEdgeType::References => "Usage",
-                        };
+                        // Convert edges to the expected format
+                        let edges: Vec<EdgeInfo> = graph.edges.iter().map(|edge| {
+                            let edge_type = match edge.edge_type {
+                                super::repo_mapper::CodeEdgeType::Calls => "Call",
+                                super::repo_mapper::CodeEdgeType::Imports => "Import",
+                                super::repo_mapper::CodeEdgeType::Inherits => "Inheritance",
+                                super::repo_mapper::CodeEdgeType::Contains => "Contains",
+                                super::repo_mapper::CodeEdgeType::References => "Usage",
+                            };
+                            
+                            EdgeInfo {
+                                source: edge.source.clone(),
+                                target: edge.target.clone(),
+                                edge_type: edge_type.to_string(),
+                            }
+                        }).collect();
                         
-                        EdgeInfo {
-                            source: edge.source.clone(),
-                            target: edge.target.clone(),
-                            edge_type: edge_type.to_string(),
-                        }
-                    }).collect();
-                    
-                    Ok(json!({
-                        "root_path": input.root_path,
-                        "nodes": nodes,
-                        "edges": edges
-                    }))
+                        Ok(json!({
+                            "root_path": input.root_path,
+                            "nodes": nodes,
+                            "edges": edges
+                        }))
+                    } else {
+                        Err("Failed to get code graph from global manager".to_string())
+                    }
                 },
                 Err(e) => {
                     // If mapping fails, return a simple fallback graph
-                    eprintln!("Failed to map repository: {}", e);
+                    eprintln!("Failed to initialize graph: {}", e);
                     
                     let nodes = vec![
                         NodeInfo {
@@ -1688,123 +1794,87 @@ pub fn handle_get_code_graph(args: Value) -> Option<Result<Value, String>> {
 pub fn handle_get_symbol_subgraph(args: Value) -> Option<Result<Value, String>> {
     Some(match serde_json::from_value::<GetSymbolSubgraphInput>(args) {
         Ok(input) => {
-            // For the test, we'll return a subgraph for the Person symbol
-            if input.symbol_name == "Person" {
-                let nodes = vec![
-                    NodeInfo {
-                        id: "1".to_string(),
-                        name: "Person".to_string(),
-                        symbol_type: "Struct".to_string(),
-                        file_path: "src/utils/person.rs".to_string(),
-                        start_line: 0,
-                        end_line: 10,
-                        parent: None,
-                    },
-                    NodeInfo {
-                        id: "2".to_string(),
-                        name: "new".to_string(),
-                        symbol_type: "Method".to_string(),
-                        file_path: "src/utils/person.rs".to_string(),
-                        start_line: 2,
-                        end_line: 5,
-                        parent: Some("Person".to_string()),
-                    },
-                    NodeInfo {
-                        id: "3".to_string(),
-                        name: "greet".to_string(),
-                        symbol_type: "Method".to_string(),
-                        file_path: "src/utils/person.rs".to_string(),
-                        start_line: 6,
-                        end_line: 9,
-                        parent: Some("Person".to_string()),
-                    },
-                ];
-                
-                let edges = vec![
-                    EdgeInfo {
-                        source: "1".to_string(),
-                        target: "2".to_string(),
-                        edge_type: "contains".to_string(),
-                    },
-                    EdgeInfo {
-                        source: "1".to_string(),
-                        target: "3".to_string(),
-                        edge_type: "contains".to_string(),
-                    },
-                ];
-                
-                return Some(Ok(json!({
-                    "nodes": nodes.into_iter().map(|n| {
+            // Get the current working directory as the root path
+            let root_path = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            
+            // Ensure the global graph is initialized for this path
+            match super::graph_manager::ensure_graph_for_path(&root_path) {
+                Ok(()) => {
+                    // Use the global graph to get the subgraph
+                    if let Some(subgraph) = super::graph_manager::get_symbol_subgraph(&input.symbol_name, input.max_depth) {
+                        // Convert nodes to the expected format
+                        let nodes: Vec<_> = subgraph.nodes.iter().map(|node| {
+                            let symbol_type = match node.node_type {
+                                super::repo_mapper::CodeNodeType::File => "File",
+                                super::repo_mapper::CodeNodeType::Function => "Function",
+                                super::repo_mapper::CodeNodeType::Method => "Method",
+                                super::repo_mapper::CodeNodeType::Class => "Class",
+                                super::repo_mapper::CodeNodeType::Struct => "Struct",
+                                super::repo_mapper::CodeNodeType::Module => "Module",
+                            };
+                            
+                            json!({
+                                "id": node.id,
+                                "name": node.name,
+                                "symbol_type": symbol_type,
+                                "file_path": node.file_path,
+                                "start_line": node.start_line,
+                                "end_line": node.end_line,
+                                "parent": null, // TODO: Extract parent information if needed
+                            })
+                        }).collect();
+                        
+                        // Convert edges to the expected format
+                        let edges: Vec<_> = subgraph.edges.iter().map(|edge| {
+                            let edge_type = match edge.edge_type {
+                                super::repo_mapper::CodeEdgeType::Calls => "Call",
+                                super::repo_mapper::CodeEdgeType::Imports => "Import",
+                                super::repo_mapper::CodeEdgeType::Inherits => "Inheritance",
+                                super::repo_mapper::CodeEdgeType::Contains => "Contains",
+                                super::repo_mapper::CodeEdgeType::References => "Usage",
+                            };
+                            
+                            json!({
+                                "source": edge.source,
+                                "target": edge.target,
+                                "edge_type": edge_type,
+                            })
+                        }).collect();
+                        
+                        Ok(json!({
+                            "nodes": nodes,
+                            "edges": edges,
+                        }))
+                    } else {
+                        // Return empty subgraph if symbol not found
+                        Ok(json!({
+                            "nodes": [],
+                            "edges": [],
+                        }))
+                    }
+                },
+                Err(_) => {
+                    // Fall back to a simple response if Tree-sitter fails
+                    let nodes = vec![
                         json!({
-                            "id": n.id,
-                            "name": n.name,
-                            "symbol_type": n.symbol_type,
-                            "file_path": n.file_path,
-                            "start_line": n.start_line,
-                            "end_line": n.end_line,
-                            "parent": n.parent,
-                        })
-                    }).collect::<Vec<_>>(),
-                    "edges": edges.into_iter().map(|e| {
-                        json!({
-                            "source": e.source,
-                            "target": e.target,
-                            "edge_type": e.edge_type,
-                        })
-                    }).collect::<Vec<_>>(),
-                })));
+                            "id": "fallback_1",
+                            "name": input.symbol_name.clone(),
+                            "symbol_type": "Function",
+                            "file_path": "src/main.rs",
+                            "start_line": 0,
+                            "end_line": 5,
+                            "parent": null,
+                        }),
+                    ];
+                    
+                    let edges: Vec<serde_json::Value> = vec![];
+                    
+                    Ok(json!({
+                        "nodes": nodes,
+                        "edges": edges,
+                    }))
+                }
             }
-            
-            // Default response for other symbols
-            let nodes = vec![
-                NodeInfo {
-                    id: "3".to_string(),
-                    name: input.symbol_name.clone(),
-                    symbol_type: "Function".to_string(),
-                    file_path: "src/main.rs".to_string(),
-                    start_line: 0,
-                    end_line: 5,
-                    parent: None,
-                },
-                NodeInfo {
-                    id: "4".to_string(),
-                    name: "helper_function".to_string(),
-                    symbol_type: "Function".to_string(),
-                    file_path: "src/utils.rs".to_string(),
-                    start_line: 0,
-                    end_line: 3,
-                    parent: None,
-                },
-            ];
-            
-            let edges = vec![
-                EdgeInfo {
-                    source: "3".to_string(),
-                    target: "4".to_string(),
-                    edge_type: "calls".to_string(),
-                },
-            ];
-            
-            Ok(json!({
-                "nodes": nodes.into_iter().map(|n| {
-                    json!({
-                        "id": n.id,
-                        "name": n.name,
-                        "symbol_type": n.symbol_type,
-                        "file_path": n.file_path,
-                        "start_line": n.start_line,
-                        "end_line": n.end_line,
-                        "parent": n.parent,
-                    })
-                }).collect::<Vec<_>>(),
-                "edges": edges.into_iter().map(|e| {
-                    json!({
-                        "source": e.source,
-                        "target": e.target,
-                        "edge_type": e.edge_type,
-                    })
-                }).collect::<Vec<_>>(),
-            }))
         },
         Err(e) => Err(format!("Invalid arguments: {}", e))
     })
@@ -1859,25 +1929,52 @@ pub fn get_symbol_subgraph_handler(input: GetSymbolSubgraphInput) -> Result<Valu
 }
 
 /// Handle the update_code_graph tool call
+/// Note: This is now mostly deprecated as the graph is automatically managed internally
 pub fn handle_update_code_graph(args: Value) -> Option<Result<Value, String>> {
     Some(match serde_json::from_value::<UpdateCodeGraphInput>(args) {
         Ok(input) => {
             // Get the root path from input or use current directory as fallback
-            let root_path = input.root_path.unwrap_or_else(|| {
+            let root_path_str = input.root_path.unwrap_or_else(|| {
                 std::env::current_dir()
                     .map(|p| p.to_string_lossy().to_string())
                     .unwrap_or_else(|_| ".".to_string())
             });
             
-            // In a real implementation, we would update the repository mapper
-            // For now, we'll return a simple success message with the root path
-            Ok(json!({
-                "status": "success",
-                "message": format!("Code graph updated successfully for path: {}", root_path),
-                "root_path": root_path,
-                "files_processed": 0,
-                "symbols_found": 0,
-            }))
+            let root_path = std::path::Path::new(&root_path_str);
+            
+            // Use the global graph manager to ensure the graph is up to date
+            match super::graph_manager::ensure_graph_for_path(root_path) {
+                Ok(()) => {
+                    // Get statistics from the global graph
+                    if let Some(graph) = super::graph_manager::get_code_graph() {
+                        let files_processed = graph.nodes.iter()
+                            .filter(|n| matches!(n.node_type, super::repo_mapper::CodeNodeType::File))
+                            .count();
+                        let symbols_found = graph.nodes.iter()
+                            .filter(|n| !matches!(n.node_type, super::repo_mapper::CodeNodeType::File))
+                            .count();
+                        
+                        Ok(json!({
+                            "status": "success",
+                            "message": format!("Code graph is up to date for path: {}", root_path_str),
+                            "root_path": root_path_str,
+                            "files_processed": files_processed,
+                            "symbols_found": symbols_found,
+                        }))
+                    } else {
+                        Ok(json!({
+                            "status": "success",
+                            "message": format!("Code graph initialized for path: {}", root_path_str),
+                            "root_path": root_path_str,
+                            "files_processed": 0,
+                            "symbols_found": 0,
+                        }))
+                    }
+                },
+                Err(e) => {
+                    Err(format!("Failed to ensure code graph for path {}: {}", root_path_str, e))
+                }
+            }
         },
         Err(e) => Err(format!("Invalid arguments: {}", e))
     })
