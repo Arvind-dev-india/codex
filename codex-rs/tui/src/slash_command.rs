@@ -1,7 +1,5 @@
-use std::collections::HashMap;
-
 use strum::IntoEnumIterator;
-use strum_macros::AsRefStr; // derive macro
+use strum_macros::AsRefStr;
 use strum_macros::EnumIter;
 use strum_macros::EnumString;
 use strum_macros::IntoStaticStr;
@@ -12,10 +10,13 @@ use strum_macros::IntoStaticStr;
 )]
 #[strum(serialize_all = "kebab-case")]
 pub enum SlashCommand {
+    // DO NOT ALPHA-SORT! Enum order is presentation order in the popup, so
+    // more frequently used commands should be listed first.
     New,
-    ToggleMouseMode,
     Status,
+    Diff,
     Quit,
+    ToggleMouseMode,
 }
 
 impl SlashCommand {
@@ -28,6 +29,9 @@ impl SlashCommand {
             }
             SlashCommand::Status => "Show code graph status and statistics.",
             SlashCommand::Quit => "Exit the application.",
+            SlashCommand::Diff => {
+                "Show git diff of the working directory (including untracked files)"
+            }
         }
     }
 
@@ -38,7 +42,7 @@ impl SlashCommand {
     }
 }
 
-/// Return all built-in commands in a HashMap keyed by their command string.
-pub fn built_in_slash_commands() -> HashMap<&'static str, SlashCommand> {
+/// Return all built-in commands in a Vec paired with their command string.
+pub fn built_in_slash_commands() -> Vec<(&'static str, SlashCommand)> {
     SlashCommand::iter().map(|c| (c.command(), c)).collect()
 }
