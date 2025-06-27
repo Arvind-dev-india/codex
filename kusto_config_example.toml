@@ -1,18 +1,127 @@
-# Kusto (Azure Data Explorer) Configuration Example
-# This example shows how to configure Kusto integration with OAuth authentication
+# Kusto (Azure Data Explorer) Configuration Examples
+# This file shows different configuration approaches for Kusto integration
 
+# =============================================================================
+# OPTION 1: MINIMAL CONFIGURATION (Recommended for most users)
+# =============================================================================
+# Just add auto-discovery to your existing config
 [kusto]
-# Your Kusto cluster URL
 cluster_url = "https://help.kusto.windows.net"
-
-# Database to query
 database = "Samples"
+auto_discover_databases = true
 
-# Example usage after configuration:
-# 1. First time: codex "show me the top 10 rows from StormEvents table"
-#    - Will use the same OAuth authentication as Azure DevOps
-#    - Tokens are shared between Azure DevOps and Kusto
-#
-# 2. Subsequent uses: codex "analyze the distribution of events by state"
-#    - Uses saved tokens automatically
-#    - No need to re-authenticate
+# =============================================================================
+# OPTION 2: MANUAL MULTI-DATABASE CONFIGURATION
+# =============================================================================
+# Uncomment and modify this section if you prefer manual configuration
+
+# [kusto]
+# # Primary cluster URL
+# cluster_url = "https://help.kusto.windows.net"
+# 
+# # Default database (for backward compatibility)
+# database = "Samples"
+# 
+# # Knowledge base configuration
+# knowledge_base_path = "kusto_knowledge_base.json"
+# auto_update_knowledge_base = true
+# max_knowledge_base_rows = 100
+# 
+# # Multiple databases on same cluster
+# [kusto.databases.samples]
+# name = "Samples"
+# description = "Sample database with demo data including StormEvents"
+# is_default = true
+# 
+# [kusto.databases.analytics]
+# name = "AnalyticsDB"
+# description = "Analytics and reporting database"
+# 
+# [kusto.databases.logs]
+# name = "ApplicationLogs"
+# description = "Application and system logs"
+
+# =============================================================================
+# OPTION 3: MULTI-CLUSTER CONFIGURATION
+# =============================================================================
+# Uncomment and modify this section for multiple clusters
+
+# [kusto]
+# cluster_url = "https://help.kusto.windows.net"  # Primary cluster
+# database = "Samples"
+# 
+# # Knowledge base configuration
+# knowledge_base_path = "kusto_knowledge_base.json"
+# auto_update_knowledge_base = true
+# max_knowledge_base_rows = 100
+# 
+# # Databases across different clusters
+# [kusto.databases.samples]
+# name = "Samples"
+# cluster_url = "https://help.kusto.windows.net"
+# description = "Sample database with demo data"
+# is_default = true
+# 
+# [kusto.databases.production]
+# name = "ProductionDB"
+# cluster_url = "https://prod-cluster.kusto.windows.net"
+# description = "Production database with real application data"
+# 
+# [kusto.databases.staging]
+# name = "StagingDB"
+# cluster_url = "https://staging-cluster.kusto.windows.net"
+# description = "Staging environment database"
+
+# =============================================================================
+# OPTION 4: ADVANCED AUTO-DISCOVERY CONFIGURATION
+# =============================================================================
+# Uncomment and modify this section for advanced auto-discovery
+
+# [kusto]
+# cluster_url = "https://help.kusto.windows.net"
+# auto_discover_databases = true
+# default_database = "Samples"
+# discovery_cache_ttl_hours = 24
+# discovery_include_system_databases = false
+# 
+# # Additional clusters for discovery
+# discovery_clusters = [
+#     "https://prod-cluster.kusto.windows.net",
+#     "https://analytics-cluster.kusto.windows.net"
+# ]
+# 
+# # Manual override for critical databases
+# [kusto.databases.production]
+# name = "ProductionDB"
+# cluster_url = "https://prod-cluster.kusto.windows.net"
+# description = "Critical production data - manually configured"
+# priority = "high"
+# is_default = false
+
+# =============================================================================
+# USAGE EXAMPLES AFTER CONFIGURATION
+# =============================================================================
+
+# Basic queries:
+# codex "show me the top 10 rows from StormEvents table"
+# codex "what columns are available in the Users table?"
+
+# Multi-database queries:
+# codex "query production database for user activity"
+# codex "show tables in the analytics database"
+# codex "compare user counts between production and staging"
+
+# Database discovery:
+# codex "discover all available Kusto databases"
+# codex "what databases do we have access to?"
+# codex "refresh the database list"
+
+# Knowledge base interactions:
+# codex "show me a summary of our Kusto knowledge base"
+# codex "find all tables that contain user information"
+# codex "update the description of the Events table"
+
+# Authentication:
+# - Uses the same OAuth authentication as Azure DevOps
+# - Tokens are shared between Azure DevOps and Kusto
+# - Automatic token refresh

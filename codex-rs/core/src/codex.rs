@@ -636,6 +636,9 @@ async fn submission_loop(
                     
                 // Set Azure DevOps configuration if available
                 mcp_connection_manager.set_azure_devops_config(config.azure_devops.clone());
+                
+                // Set Kusto configuration if available
+                mcp_connection_manager.set_kusto_config(config.kusto.clone());
 
                 // Surface individual client start-up failures to the user.
                 if !failed_clients.is_empty() {
@@ -1316,6 +1319,15 @@ async fn handle_function_call(
             
             handle_mcp_tool_call(
                 sess, &sub_id, call_id, "code_analysis".to_string(), tool_name, arguments, timeout,
+            )
+            .await
+        }
+        // Check for Kusto tools directly
+        name if name.starts_with("kusto_") => {
+            // For Kusto tools, use "kusto" as server name
+            let timeout = None;
+            handle_mcp_tool_call(
+                sess, &sub_id, call_id, "kusto".to_string(), name.to_string(), arguments, timeout,
             )
             .await
         }

@@ -4,7 +4,7 @@ use crate::error::{CodexErr, Result};
 use std::path::Path;
 
 // Reuse the Azure DevOps OAuth handler since it uses the same Microsoft identity platform
-use crate::azure_devops::auth::oauth_auth::{AzureDevOpsOAuthHandler, AzureDevOpsTokens};
+use crate::azure_devops::auth::oauth_auth::AzureDevOpsOAuthHandler;
 
 /// Authentication methods for Kusto
 #[derive(Debug, Clone)]

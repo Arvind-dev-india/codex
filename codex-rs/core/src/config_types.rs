@@ -16,7 +16,7 @@ pub use config_types_azure::{AzureDevOpsConfig, AzureDevOpsAuthMethod};
 
 // Import Kusto configuration
 mod config_types_kusto;
-pub use config_types_kusto::KustoConfig;
+pub use config_types_kusto::{KustoConfig, KustoDatabaseConfig};
 
 #[derive(Deserialize, Debug, Clone, PartialEq)]
 pub struct McpServerConfig {

@@ -5,6 +5,7 @@
 
 pub mod auth;
 pub mod client;
+pub mod knowledge_base;
 pub mod models;
 pub mod tool_handler;
 pub mod tools;
@@ -14,6 +15,7 @@ pub mod tools_impl;
 pub use auth::KustoAuth;
 pub use client::KustoClient;
 pub use integration::register_kusto_tools_with_openai;
+pub use knowledge_base::*;
 pub use models::*;
 pub use tool_handler::handle_kusto_tool_call;
 pub use tools::create_kusto_tools;
@@ -21,14 +23,20 @@ pub use tools_impl::KustoTools;
 
 // Integration module
 pub mod integration {
-    use crate::error::Result;
     use crate::config_types::KustoConfig;
     use crate::openai_tools::OpenAiTool;
     use super::tools::create_kusto_tools;
 
-    /// Register Kusto tools with OpenAI
-    pub fn register_kusto_tools_with_openai(config: &KustoConfig) -> Result<Vec<OpenAiTool>> {
-        let tools = create_kusto_tools();
-        Ok(tools)
+    /// Register Kusto tools with OpenAI if Kusto is configured
+    pub fn register_kusto_tools_with_openai(config: &Option<KustoConfig>) -> Option<Vec<OpenAiTool>> {
+        if let Some(kusto_config) = config {
+            // Check if Kusto is properly configured
+            if !kusto_config.cluster_url.is_empty() && 
+               (!kusto_config.database.is_empty() || !kusto_config.databases.is_empty()) {
+                let tools = create_kusto_tools();
+                return Some(tools);
+            }
+        }
+        None
     }
 }

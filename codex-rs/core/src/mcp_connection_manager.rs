@@ -20,7 +20,9 @@ use tokio::task::JoinSet;
 
 use crate::azure_devops::handle_azure_devops_tool_call;
 use crate::code_analysis::handle_code_analysis_tool_call;
+use crate::kusto::handle_kusto_tool_call;
 use crate::config_types::AzureDevOpsConfig;
+use crate::config_types::KustoConfig;
 use crate::mcp_tool_call::ToolCall;
 use tracing::info;
 
@@ -63,6 +65,9 @@ pub(crate) struct McpConnectionManager {
     
     /// Azure DevOps configuration, if any
     azure_devops_config: Option<AzureDevOpsConfig>,
+    
+    /// Kusto configuration, if any
+    kusto_config: Option<KustoConfig>,
 
     /// Fully qualified tool name -> tool instance.
     tools: HashMap<String, Tool>,
@@ -146,6 +151,7 @@ impl McpConnectionManager {
             clients, 
             tools,
             azure_devops_config: None,
+            kusto_config: None,
         }, errors))
     }
 
@@ -158,6 +164,11 @@ impl McpConnectionManager {
     /// Set the Azure DevOps configuration
     pub fn set_azure_devops_config(&mut self, config: Option<AzureDevOpsConfig>) {
         self.azure_devops_config = config;
+    }
+    
+    /// Set the Kusto configuration
+    pub fn set_kusto_config(&mut self, config: Option<KustoConfig>) {
+        self.kusto_config = config;
     }
 
     /// Invoke the tool indicated by the (server, tool) pair.
@@ -244,6 +255,52 @@ impl McpConnectionManager {
                 Err(e) => {
                     return Err(anyhow!("Code analysis tool call failed: {}", e));
                 }
+            }
+        }
+        
+        // Check if this is a Kusto tool - either with server="kusto" or
+        // with a full tool name that starts with "kusto_"
+        let is_kusto = server == "kusto" || 
+                      (server.is_empty() && tool.starts_with("kusto_"));
+        
+        if is_kusto {
+            if let Some(config) = &self.kusto_config {
+                // Extract the actual tool name if it's a full name (kusto_execute_query)
+                let actual_tool_name = if tool.starts_with("kusto_") {
+                    tool.to_string()
+                } else {
+                    format!("kusto_{}", tool)
+                };
+                
+                let tool_call = ToolCall {
+                    name: actual_tool_name,
+                    arguments: arguments.unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new())),
+                };
+                
+                match handle_kusto_tool_call(&tool_call, config).await {
+                    Ok(result) => {
+                        // Create a TextContent with the JSON result
+                        let json_str = serde_json::to_string(&result).unwrap_or_default();
+                        let text_content = mcp_types::TextContent {
+                            annotations: None,
+                            text: json_str,
+                            r#type: "text".to_string(),
+                        };
+                        
+                        // Wrap in CallToolResultContent::TextContent
+                        let content = vec![mcp_types::CallToolResultContent::TextContent(text_content)];
+                        
+                        return Ok(mcp_types::CallToolResult {
+                            content,
+                            is_error: None,
+                        });
+                    }
+                    Err(e) => {
+                        return Err(anyhow!("Kusto tool call failed: {}", e));
+                    }
+                }
+            } else {
+                return Err(anyhow!("Kusto is not configured"));
             }
         }
         

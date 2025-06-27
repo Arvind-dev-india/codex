@@ -2,7 +2,6 @@
 
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, CONTENT_TYPE};
 use serde::de::DeserializeOwned;
-use serde::Serialize;
 use std::time::Duration;
 
 use super::auth::KustoAuthHandler;

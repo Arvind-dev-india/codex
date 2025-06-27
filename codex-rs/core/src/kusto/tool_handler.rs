@@ -31,6 +31,18 @@ pub async fn handle_kusto_tool_call(
         "kusto_list_tables" => {
             tools.list_tables(args).await
         },
+        "kusto_list_databases" => {
+            tools.list_databases(args).await
+        },
+        "kusto_get_knowledge_base_summary" => {
+            tools.get_knowledge_base_summary(args).await
+        },
+        "kusto_update_table_description" => {
+            tools.update_table_description(args).await
+        },
+        "kusto_search_knowledge_base" => {
+            tools.search_knowledge_base(args).await
+        },
         _ => {
             Err(CodexErr::Other(format!("Unknown Kusto tool: {}", name)))
         }
