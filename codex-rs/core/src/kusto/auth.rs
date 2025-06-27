@@ -1,7 +1,6 @@
 //! Authentication handling for Kusto (Azure Data Explorer) API.
 
-use crate::error::{CodexErr, EnvVarError, Result};
-use std::env;
+use crate::error::{CodexErr, Result};
 use std::path::Path;
 
 // Reuse the Azure DevOps OAuth handler since it uses the same Microsoft identity platform

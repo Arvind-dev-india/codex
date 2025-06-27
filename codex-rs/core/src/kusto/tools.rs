@@ -1,6 +1,7 @@
 //! Tool definitions for Kusto (Azure Data Explorer) operations.
 
-use crate::openai_tools::OpenAiTool;
+use std::collections::BTreeMap;
+use crate::openai_tools::{OpenAiTool, JsonSchema, create_function_tool};
 
 /// Create all Kusto tools
 pub fn create_kusto_tools() -> Vec<OpenAiTool> {
@@ -13,48 +14,38 @@ pub fn create_kusto_tools() -> Vec<OpenAiTool> {
 
 /// Create a tool for executing Kusto queries
 fn create_execute_query_tool() -> OpenAiTool {
-    OpenAiTool {
-        name: "kusto_execute_query".to_string(),
-        description: "Execute a Kusto query against Azure Data Explorer".to_string(),
-        parameters: serde_json::json!({
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "The Kusto Query Language (KQL) query to execute"
-                }
-            },
-            "required": ["query"]
-        }),
-    }
+    let mut parameters = BTreeMap::new();
+    parameters.insert("query".to_string(), JsonSchema::String);
+    
+    create_function_tool(
+        "kusto_execute_query",
+        "Execute a Kusto query against Azure Data Explorer",
+        parameters,
+        &["query"],
+    )
 }
 
 /// Create a tool for getting schema information for a table
 fn create_get_table_schema_tool() -> OpenAiTool {
-    OpenAiTool {
-        name: "kusto_get_table_schema".to_string(),
-        description: "Get schema information for a Kusto table".to_string(),
-        parameters: serde_json::json!({
-            "type": "object",
-            "properties": {
-                "table_name": {
-                    "type": "string",
-                    "description": "The name of the table to get schema for"
-                }
-            },
-            "required": ["table_name"]
-        }),
-    }
+    let mut parameters = BTreeMap::new();
+    parameters.insert("table_name".to_string(), JsonSchema::String);
+    
+    create_function_tool(
+        "kusto_get_table_schema",
+        "Get schema information for a Kusto table",
+        parameters,
+        &["table_name"],
+    )
 }
 
 /// Create a tool for listing available tables
 fn create_list_tables_tool() -> OpenAiTool {
-    OpenAiTool {
-        name: "kusto_list_tables".to_string(),
-        description: "List available tables in the Kusto database".to_string(),
-        parameters: serde_json::json!({
-            "type": "object",
-            "properties": {}
-        }),
-    }
+    let parameters = BTreeMap::new();
+    
+    create_function_tool(
+        "kusto_list_tables",
+        "List available tables in the Kusto database",
+        parameters,
+        &[],
+    )
 }

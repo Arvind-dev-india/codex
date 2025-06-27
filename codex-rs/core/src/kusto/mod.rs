@@ -16,7 +16,7 @@ pub use client::KustoClient;
 pub use integration::register_kusto_tools_with_openai;
 pub use models::*;
 pub use tool_handler::handle_kusto_tool_call;
-pub use tools::register_kusto_tools;
+pub use tools::create_kusto_tools;
 pub use tools_impl::KustoTools;
 
 // Integration module
