@@ -1,0 +1,18 @@
+# Kusto (Azure Data Explorer) Configuration Example
+# This example shows how to configure Kusto integration with OAuth authentication
+
+[kusto]
+# Your Kusto cluster URL
+cluster_url = "https://help.kusto.windows.net"
+
+# Database to query
+database = "Samples"
+
+# Example usage after configuration:
+# 1. First time: codex "show me the top 10 rows from StormEvents table"
+#    - Will use the same OAuth authentication as Azure DevOps
+#    - Tokens are shared between Azure DevOps and Kusto
+#
+# 2. Subsequent uses: codex "analyze the distribution of events by state"
+#    - Uses saved tokens automatically
+#    - No need to re-authenticate

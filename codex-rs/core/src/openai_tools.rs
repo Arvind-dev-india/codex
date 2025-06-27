@@ -5,6 +5,7 @@ use std::sync::LazyLock;
 
 use crate::azure_devops::register_azure_devops_tools_with_openai;
 use crate::code_analysis::register_code_analysis_tools_with_openai;
+use crate::kusto::register_kusto_tools_with_openai;
 use crate::client_common::Prompt;
 
 #[derive(Debug, Clone, Serialize)]
@@ -93,6 +94,12 @@ pub(crate) fn create_tools_json_for_responses_api(
         total_capacity += tools.len();
     }
     
+    // Check if Kusto is configured
+    let kusto_tools = register_kusto_tools_with_openai(&prompt.config.kusto);
+    if let Some(ref tools) = kusto_tools {
+        total_capacity += tools.len();
+    }
+    
     // Get code analysis tools
     let code_analysis_tools = register_code_analysis_tools_with_openai();
     total_capacity += code_analysis_tools.len();
@@ -106,6 +113,13 @@ pub(crate) fn create_tools_json_for_responses_api(
     
     // Add Azure DevOps tools if configured
     if let Some(tools) = &azure_devops_tools {
+        for t in tools.iter() {
+            tools_json.push(serde_json::to_value(t)?);
+        }
+    }
+    
+    // Add Kusto tools if configured
+    if let Some(tools) = &kusto_tools {
         for t in tools.iter() {
             tools_json.push(serde_json::to_value(t)?);
         }

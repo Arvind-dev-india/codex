@@ -14,6 +14,10 @@ use serde::Serialize;
 mod config_types_azure;
 pub use config_types_azure::{AzureDevOpsConfig, AzureDevOpsAuthMethod};
 
+// Import Kusto configuration
+mod config_types_kusto;
+pub use config_types_kusto::KustoConfig;
+
 #[derive(Deserialize, Debug, Clone, PartialEq)]
 pub struct McpServerConfig {
     pub command: String,

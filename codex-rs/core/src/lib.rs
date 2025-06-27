@@ -41,6 +41,9 @@ pub mod util;
 // Azure DevOps integration
 pub mod azure_devops;
 
+// Kusto (Azure Data Explorer) integration
+pub mod kusto;
+
 // Code analysis tools
 pub mod code_analysis;
 
