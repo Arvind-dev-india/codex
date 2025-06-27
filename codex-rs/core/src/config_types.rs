@@ -12,7 +12,7 @@ use serde::Serialize;
 
 // Import Azure DevOps configuration
 mod config_types_azure;
-pub use config_types_azure::AzureDevOpsConfig;
+pub use config_types_azure::{AzureDevOpsConfig, AzureDevOpsAuthMethod};
 
 #[derive(Deserialize, Debug, Clone, PartialEq)]
 pub struct McpServerConfig {

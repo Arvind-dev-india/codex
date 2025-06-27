@@ -11,243 +11,189 @@ Add the following to your `~/.codex/config.toml` file:
 ```toml
 [azure_devops]
 organization_url = "https://dev.azure.com/your-organization"
-pat_env_var = "AZURE_DEVOPS_PAT"  # Environment variable containing your PAT
-# OR directly specify the PAT (less secure)
-# pat = "your-personal-access-token"
+auth_method = "oauth"  # Recommended: use OAuth device code flow
 default_project = "YourProject"  # Optional: Default project to use
 ```
 
-### 2. Set up your Personal Access Token (PAT)
+### 2. Choose your authentication method
 
-1. Create a Personal Access Token in Azure DevOps:
-   - Go to your Azure DevOps organization
-   - Click on your profile picture in the top right
-   - Select "Personal access tokens"
-   - Click "New Token"
-   - Give it a name and select the following scopes:
-     - Work Items: Read & Write
-     - Code: Read & Write
-     - Pull Request Threads: Read & Write
-     - Wiki: Read & Write
-     - Build: Read & Execute
-   - Click "Create" and copy the token
+Codex CLI supports multiple authentication methods for Azure DevOps:
 
-2. Set the environment variable:
+#### Option A: OAuth Device Code Flow (Recommended)
+
+This is the easiest method - no need to create tokens or app registrations:
+
+```toml
+[azure_devops]
+organization_url = "https://dev.azure.com/your-organization"
+auth_method = "oauth"  # Use OAuth device code flow
+default_project = "YourProject"
+```
+
+**First time usage:**
+1. Run any Azure DevOps command: `codex "find all bugs assigned to me"`
+2. You'll see a prompt like:
+   ```
+   Azure DevOps Authentication Required
+   To sign in, use a web browser to open the page:
+       https://microsoft.com/devicelogin
+   And enter the code: FGH789XYZ
+   
+   Waiting for authentication...
+   ```
+3. Open the URL in your browser and enter the code
+4. Sign in with your Microsoft account
+5. Authentication successful! Tokens are saved automatically
+
+**Subsequent usage:**
+- Just run commands normally - authentication is automatic
+- Tokens refresh automatically when needed
+- Only need to re-authenticate every ~90 days
+
+#### Option B: Personal Access Token (PAT)
+
+If you prefer using PATs or need them for automation:
+
+```toml
+[azure_devops]
+organization_url = "https://dev.azure.com/your-organization"
+auth_method = "pat"  # Use PAT only
+pat_env_var = "AZURE_DEVOPS_PAT"  # Environment variable containing your PAT
+default_project = "YourProject"
+```
+
+Create a PAT:
+1. Go to `https://dev.azure.com/your-organization/_usersSettings/tokens`
+2. Click "New Token"
+3. Give it a name like "Codex CLI"
+4. Select appropriate scopes (Work Items: Read & Write, Code: Read, etc.)
+5. Copy the token and set it as an environment variable:
 
 ```bash
 export AZURE_DEVOPS_PAT="your-pat-here"
 ```
 
-For persistent configuration, add this to your shell profile (`~/.bashrc`, `~/.zshrc`, etc.).
+#### Option C: Auto (Default)
 
-## Available Azure DevOps Tools
+Tries OAuth first, falls back to PAT if available:
 
-Codex CLI provides the following Azure DevOps tools that can be used by the AI. These tools can be called either with the full name (e.g., `azure_devops_query_work_items`) or with the server/tool split format (server=`azure_devops`, tool=`query_work_items`):
-
-## Common Errors and Solutions
-
-### Project Not Found Error
-
-If you see an error like:
-```
-TF200016: The following project does not exist: project-name. Verify that the name of the project is correct and that the project exists on the specified Azure DevOps Server.
+```toml
+[azure_devops]
+organization_url = "https://dev.azure.com/your-organization"
+auth_method = "auto"  # Try OAuth first, fall back to PAT
+pat_env_var = "AZURE_DEVOPS_PAT"  # Optional fallback PAT
+default_project = "YourProject"
 ```
 
-This means the project name you're trying to access doesn't exist in your Azure DevOps organization. To fix this:
-
-1. **Use an existing project name**: Make sure you're using a project name that actually exists in your Azure DevOps organization.
-
-2. **Set a default project in your config**: Add or update the `default_project` setting in your `~/.codex/config.toml`:
-   ```toml
-   [azure_devops]
-   organization_url = "https://dev.azure.com/your-organization"
-   pat_env_var = "AZURE_DEVOPS_PAT"
-   default_project = "YourActualProject"  # Use a project that exists
-   ```
-
-3. **Create the project**: If you want to use a specific project name, you can create it in your Azure DevOps organization.
-
-### API Version Error
-
-If you see an error like:
-```
-No api-version was supplied for the "POST" request. The version must be supplied either as part of the Accept header (e.g. "application/json; api-version=1.0") or as a query parameter (e.g. "?api-version=1.0").
-```
-
-This means the API version is not being properly included in the requests. This has been fixed in the latest version of the code, but if you're still seeing this error, make sure you're using the latest version of Codex CLI.
+## Usage Examples
 
 ### Work Items
 
-- **azure_devops_query_work_items**: Search for work items using WIQL
-  - Parameters: `project`, `query`, `top` (optional)
-  
-- **azure_devops_get_work_item**: Get details of a specific work item
-  - Parameters: `project`, `id`
-  
-- **azure_devops_create_work_item**: Create a new work item
-  - Parameters: `project`, `type`, `title`, `description` (optional), `area_path` (optional), `iteration_path` (optional), `assigned_to` (optional)
-  
-- **azure_devops_update_work_item**: Update an existing work item
-  - Parameters: `project`, `id`, `title` (optional), `description` (optional), `state` (optional), `assigned_to` (optional)
+```bash
+# Query work items
+codex "Find all high priority bugs assigned to me"
+codex "Show me all tasks in the current sprint"
+codex "List work items created this week"
+
+# Create work items
+codex "Create a new bug titled 'Login page crashes on mobile'"
+codex "Create a task to update the documentation"
+
+# Update work items
+codex "Update work item 1234 to set priority to high"
+codex "Add a comment to work item 5678 saying 'Fixed in latest build'"
+```
 
 ### Pull Requests
 
-- **azure_devops_query_pull_requests**: Search for pull requests
-  - Parameters: `project`, `repository`, `status` (optional), `creator` (optional), `reviewer` (optional), `top` (optional)
-  
-- **azure_devops_get_pull_request**: Get details of a specific pull request
-  - Parameters: `project`, `repository`, `pull_request_id`
-  
-- **azure_devops_comment_on_pull_request**: Add a comment to a pull request
-  - Parameters: `project`, `repository`, `pull_request_id`, `content`
+```bash
+# Query pull requests
+codex "Show me all active pull requests that need my review"
+codex "Find pull requests created by john.doe@company.com"
 
-### Wiki
-
-- **azure_devops_get_wiki_page**: Get content of a wiki page
-  - Parameters: `project`, `wiki`, `path`
-  
-- **azure_devops_update_wiki_page**: Update content of a wiki page
-  - Parameters: `project`, `wiki`, `path`, `content`, `comment` (optional)
+# Comment on pull requests
+codex "Add a comment to PR #45 asking for more test coverage"
+```
 
 ### Pipelines
 
-- **azure_devops_run_pipeline**: Run a pipeline
-  - Parameters: `project`, `pipeline_id`, `branch` (optional), `variables` (optional)
-  
-- **azure_devops_get_pipeline_status**: Get status of a pipeline run
-  - Parameters: `project`, `build_id`
-
-## Using the Integration
-
-Once configured, you can use Codex CLI to interact with Azure DevOps using natural language commands.
-
-### Examples
-
-#### Work Items
-
 ```bash
-# Query work items
-codex "Find all high priority bugs assigned to me in the current sprint"
-
-# Get a specific work item
-codex "Show me the details of work item #123"
-
-# Create a work item
-codex "Create a new task titled 'Update API documentation' with description 'We need to update the API docs to reflect recent changes'"
-
-# Update a work item
-codex "Change the status of bug #123 to 'Resolved'"
-```
-
-#### Pull Requests
-
-```bash
-# Query pull requests
-codex "Show me all active pull requests in the 'backend' repository"
-
-# Get details of a specific PR
-codex "Show me the details of pull request #45 in the 'backend' repository"
-
-# Comment on a PR
-codex "Add a comment to PR #45 saying 'Please add more test coverage for the new feature'"
-```
-
-#### Wiki
-
-```bash
-# Get wiki content
-codex "Show me the content of the 'Getting Started' page in our wiki"
-
-# Update wiki content
-codex "Update the 'Deployment Process' wiki page to include information about the new CI/CD pipeline"
-```
-
-#### Pipelines
-
-```bash
-# Run a pipeline
-codex "Run the 'Build and Deploy' pipeline (ID: 42) on the 'main' branch"
+# Run pipelines
+codex "Run the 'Build and Deploy' pipeline on the main branch"
+codex "Trigger the CI pipeline for the feature/new-login branch"
 
 # Check pipeline status
-codex "What's the status of build #789 in our project?"
+codex "Show me the status of the last 5 pipeline runs"
 ```
 
-## Advanced Usage
-
-### Working with Multiple Projects
-
-If you work with multiple projects, you can specify the project in your commands:
+### Wiki
 
 ```bash
-codex "Find all bugs in the 'Mobile App' project"
+# Read wiki pages
+codex "Show me the content of the 'Getting Started' wiki page"
+
+# Update wiki pages
+codex "Update the API documentation wiki page with the new endpoints"
 ```
 
-Or set a different default project temporarily:
+## Authentication Management
 
+### Check authentication status
 ```bash
-codex "Switch to the 'Backend API' project and show me all open bugs"
+codex "What Azure DevOps organization am I connected to?"
 ```
 
-### Using WIQL Queries
+### Re-authenticate (if needed)
+If you need to switch accounts or re-authenticate:
 
-You can use WIQL (Work Item Query Language) for more complex queries:
+1. **For OAuth**: Delete the saved tokens:
+   ```bash
+   rm ~/.codex/azure_devops_auth.json
+   ```
+   Next command will prompt for authentication again.
 
+2. **For PAT**: Update your environment variable:
+   ```bash
+   export AZURE_DEVOPS_PAT="new-pat-token"
+   ```
+
+### Logout
 ```bash
-codex "Run this WIQL query in the 'MyProject' project: SELECT [System.Id], [System.Title] FROM WorkItems WHERE [System.WorkItemType] = 'Bug' AND [System.State] = 'Active' ORDER BY [System.CreatedDate] DESC"
-```
-
-### Bulk Operations
-
-Perform operations on multiple items:
-
-```bash
-codex "Find all unassigned high priority bugs and assign them to John"
+# This would clear saved OAuth tokens
+codex "logout from Azure DevOps"
 ```
 
 ## Troubleshooting
 
-### Authentication Issues
+### "Authentication failed" errors
+1. **OAuth**: Try deleting `~/.codex/azure_devops_auth.json` and re-authenticating
+2. **PAT**: Check that your PAT hasn't expired and has the right scopes
+3. **Organization URL**: Ensure the URL is correct (e.g., `https://dev.azure.com/your-org`)
 
-If you encounter authentication errors:
+### "Permission denied" errors
+- Check that your account has the necessary permissions in Azure DevOps
+- For PATs, verify the token has the required scopes
 
-1. Verify your PAT is correct and not expired
-2. Check that the environment variable is properly set
-3. Ensure your PAT has the necessary permissions
+### Network/proxy issues
+- OAuth authentication requires internet access to `login.microsoftonline.com`
+- If behind a corporate proxy, ensure it allows access to Microsoft authentication endpoints
 
-### API Limitations
+## Security Notes
 
-Azure DevOps API has rate limits. If you encounter rate limiting:
+- **OAuth tokens** are stored in `~/.codex/azure_devops_auth.json` with restricted file permissions (600)
+- **PATs** should be stored in environment variables, not directly in config files
+- Tokens are automatically refreshed when possible
+- OAuth tokens expire after ~90 days and will prompt for re-authentication
 
-1. Reduce the frequency of requests
-2. Use more specific queries to reduce the number of items returned
+## Comparison: OAuth vs PAT
 
-### Common Error Messages
+| Feature | OAuth Device Code | Personal Access Token |
+|---------|------------------|----------------------|
+| Setup complexity | Easy (no token creation) | Medium (create PAT) |
+| Security | High (short-lived tokens) | Medium (long-lived token) |
+| User experience | Best (automatic refresh) | Good (manual renewal) |
+| Automation friendly | Good | Excellent |
+| Requires browser | Yes (first time only) | No |
+| Token management | Automatic | Manual |
 
-- "TF401019: The Git repository with name or identifier X does not exist" - Check that you're using the correct repository name
-- "VS403463: The user does not have permission to access this feature" - Your PAT needs additional permissions
-
-## Technical Details
-
-### How It Works
-
-When you configure Azure DevOps integration, Codex CLI:
-
-1. Registers the Azure DevOps tools with the OpenAI API
-2. Creates a client that can communicate with the Azure DevOps REST API
-3. Handles authentication using your PAT
-4. Processes tool calls from the AI model and executes them against the Azure DevOps API
-5. Returns the results back to the AI model
-
-### Security Considerations
-
-- Your PAT is sensitive information. We recommend using the environment variable approach rather than storing it directly in the config file.
-- The PAT is only used for communication between Codex CLI and Azure DevOps API.
-- All communication is done over HTTPS.
-
-### Customizing the Integration
-
-Advanced users can modify the Azure DevOps integration by:
-
-1. Editing the Azure DevOps client implementation in `codex-rs/core/src/azure_devops/`
-2. Adding new tools or enhancing existing ones
-3. Building a custom version of Codex CLI with their changes
+**Recommendation**: Use OAuth for interactive use, PAT for automation/CI scenarios.

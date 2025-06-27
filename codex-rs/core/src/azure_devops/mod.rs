@@ -10,9 +10,6 @@ pub mod models;
 pub mod tool_handler;
 pub mod tools;
 pub mod tools_impl;
-pub mod tools_impl_part2;
-pub mod tools_impl_part3;
-pub mod tools_impl_part4;
 
 // Re-export key components for easier access
 pub use auth::AzureDevOpsAuth;

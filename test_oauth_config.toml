@@ -1,0 +1,6 @@
+# Test configuration for Azure DevOps OAuth authentication
+
+[azure_devops]
+organization_url = "https://dev.azure.com/your-organization"
+auth_method = "oauth"
+default_project = "TestProject"

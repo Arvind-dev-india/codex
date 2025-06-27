@@ -1,0 +1,36 @@
+# Azure DevOps Configuration with OAuth Authentication
+# This example shows how to configure Azure DevOps integration with OAuth device code flow
+
+[azure_devops]
+# Your Azure DevOps organization URL
+organization_url = "https://dev.azure.com/your-organization"
+
+# Authentication method (recommended: "oauth" for device code flow)
+# Options:
+#   - "oauth": Use OAuth device code flow (no app registration needed)
+#   - "pat": Use Personal Access Token only
+#   - "auto": Try OAuth first, fall back to PAT (default)
+auth_method = "oauth"
+
+# Optional: Default project to use when not specified in commands
+default_project = "YourProject"
+
+# Optional: PAT as fallback (only used if auth_method is "auto" or "pat")
+# You can set this directly or use an environment variable
+# pat = "your-personal-access-token"
+pat_env_var = "AZURE_DEVOPS_PAT"
+
+# Optional: API version (defaults to "7.0")
+api_version = "7.0"
+
+# Example usage after configuration:
+# 1. First time: codex "find all bugs assigned to me"
+#    - Will prompt for OAuth authentication via device code
+#    - You'll see: "To sign in, use a web browser to open https://microsoft.com/devicelogin and enter code ABC123"
+#    - Complete authentication in browser
+#    - Tokens are saved to ~/.codex/azure_devops_auth.json
+#
+# 2. Subsequent uses: codex "create a new task"
+#    - Uses saved tokens automatically
+#    - Refreshes tokens if needed
+#    - Only re-authenticates if tokens expire (every ~90 days)

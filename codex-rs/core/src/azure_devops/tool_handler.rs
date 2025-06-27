@@ -14,7 +14,7 @@ pub async fn handle_azure_devops_tool_call(
     config: &AzureDevOpsConfig,
 ) -> Result<Value> {
     // Create tools instance
-    let tools = Arc::new(AzureDevOpsTools::new(config)?);
+    let tools = Arc::new(AzureDevOpsTools::new(config).await?);
     
     // Extract tool name and arguments
     let name = &tool_call.name;

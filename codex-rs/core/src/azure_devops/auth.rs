@@ -2,12 +2,18 @@
 
 use crate::error::{CodexErr, EnvVarError, Result};
 use std::env;
+use std::path::Path;
+
+pub mod oauth_auth;
+pub use oauth_auth::{AzureDevOpsOAuthHandler, AzureDevOpsTokens};
 
 /// Authentication methods for Azure DevOps
 #[derive(Debug, Clone)]
 pub enum AzureDevOpsAuth {
     /// Personal Access Token authentication
     PersonalAccessToken(String),
+    /// OAuth authentication (device code flow)
+    OAuth(String), // Contains the access token
     /// No authentication (for public resources)
     None,
 }
@@ -40,6 +46,52 @@ impl AzureDevOpsAuthHandler {
         }
     }
 
+    /// Create a new authentication handler using OAuth (device code flow)
+    pub async fn from_oauth(organization_url: &str, codex_home: &Path) -> Result<Self> {
+        let oauth_handler = AzureDevOpsOAuthHandler::new(codex_home);
+        let access_token = oauth_handler.get_access_token().await?;
+        
+        Ok(Self {
+            organization_url: organization_url.to_string(),
+            auth: AzureDevOpsAuth::OAuth(access_token),
+        })
+    }
+
+    /// Create a new authentication handler, trying OAuth first, then falling back to PAT
+    pub async fn from_config_with_oauth(
+        organization_url: &str,
+        pat_env_var: Option<&str>,
+        codex_home: &Path,
+    ) -> Result<Self> {
+        // First try OAuth if we have saved tokens
+        let oauth_handler = AzureDevOpsOAuthHandler::new(codex_home);
+        if let Ok(access_token) = oauth_handler.get_access_token().await {
+            return Ok(Self {
+                organization_url: organization_url.to_string(),
+                auth: AzureDevOpsAuth::OAuth(access_token),
+            });
+        }
+
+        // Fall back to PAT if provided
+        if let Some(env_var_name) = pat_env_var {
+            if let Ok(pat) = env::var(env_var_name) {
+                if !pat.trim().is_empty() {
+                    return Ok(Self {
+                        organization_url: organization_url.to_string(),
+                        auth: AzureDevOpsAuth::PersonalAccessToken(pat),
+                    });
+                }
+            }
+        }
+
+        // If no PAT, prompt for OAuth authentication
+        let access_token = oauth_handler.get_access_token().await?;
+        Ok(Self {
+            organization_url: organization_url.to_string(),
+            auth: AzureDevOpsAuth::OAuth(access_token),
+        })
+    }
+
     /// Create a new authentication handler with an explicit PAT
     pub fn with_pat(organization_url: &str, pat: &str) -> Self {
         Self {
@@ -64,6 +116,10 @@ impl AzureDevOpsAuthHandler {
                 let auth_string = format!(":{}", pat);
                 let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, auth_string);
                 Some(format!("Basic {}", encoded))
+            }
+            AzureDevOpsAuth::OAuth(access_token) => {
+                // OAuth uses Bearer token
+                Some(format!("Bearer {}", access_token))
             }
             AzureDevOpsAuth::None => None,
         }
