@@ -43,6 +43,12 @@ pub async fn handle_kusto_tool_call(
         "kusto_search_knowledge_base" => {
             tools.search_knowledge_base(args).await
         },
+        "kusto_list_functions" => {
+            tools.list_functions(args).await
+        },
+        "kusto_describe_function" => {
+            tools.describe_function(args).await
+        },
         _ => {
             Err(CodexErr::Other(format!("Unknown Kusto tool: {}", name)))
         }

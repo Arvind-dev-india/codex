@@ -13,6 +13,8 @@ pub fn create_kusto_tools() -> Vec<OpenAiTool> {
         create_get_knowledge_base_summary_tool(),
         create_update_table_description_tool(),
         create_search_knowledge_base_tool(),
+        create_list_functions_tool(),
+        create_describe_function_tool(),
     ]
 }
 
@@ -107,5 +109,30 @@ fn create_search_knowledge_base_tool() -> OpenAiTool {
         "Search the knowledge base for tables, columns, or query patterns. search_type can be 'tables', 'columns', 'patterns', or 'all'",
         parameters,
         &["search_term"],
+    )
+}
+
+/// Create a tool for listing available functions
+fn create_list_functions_tool() -> OpenAiTool {
+    let parameters = BTreeMap::new();
+    
+    create_function_tool(
+        "kusto_list_functions",
+        "List available functions in the Kusto database",
+        parameters,
+        &[],
+    )
+}
+
+/// Create a tool for describing a specific function
+fn create_describe_function_tool() -> OpenAiTool {
+    let mut parameters = BTreeMap::new();
+    parameters.insert("function_name".to_string(), JsonSchema::String);
+    
+    create_function_tool(
+        "kusto_describe_function",
+        "Get detailed information about a specific Kusto function",
+        parameters,
+        &["function_name"],
     )
 }

@@ -481,9 +481,30 @@ codex "Find the best database for storing application logs"
 
 ### Authentication
 
-- Uses the same OAuth authentication as Azure DevOps
-- Supports multiple clusters with separate authentication
-- Tokens are cached and reused across sessions
+- **Dedicated Kusto OAuth**: Uses proper Kusto-specific OAuth scopes (not Azure DevOps scopes)
+- **Automatic Authentication**: Prompts for authentication on first use
+- **Token Management**: Separate token storage for Kusto (`~/.codex/kusto_auth.json`)
+- **Multi-Cluster Support**: Supports multiple clusters with separate authentication
+- **Automatic Refresh**: Tokens are automatically refreshed when needed
+- **Secure Storage**: Tokens are stored securely with proper file permissions
+
+#### First Time Setup
+When you first use a Kusto tool, you'll see:
+```
+Kusto (Azure Data Explorer) Authentication Required
+To sign in, use a web browser to open the page:
+    https://microsoft.com/devicelogin
+And enter the code: ABC123DEF
+
+Waiting for authentication...
+```
+
+After completing authentication in your browser:
+```
+Kusto authentication successful!
+```
+
+Subsequent uses will automatically use the saved tokens.
 
 ## Migration Guide
 

@@ -68,6 +68,9 @@ urlencoding = "2.1.3"
 uuid = { version = "1", features = ["serde", "v4"] }
 wildmatch = "2.4.0"
 
+# Azure Kusto SDK (official Microsoft SDK)
+azure-kusto-data = { git = "https://github.com/Azure/azure-kusto-rust.git", branch = "main" }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 landlock = "0.4.1"
 seccompiler = "0.5.0"

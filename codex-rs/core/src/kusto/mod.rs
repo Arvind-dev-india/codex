@@ -5,6 +5,7 @@
 
 pub mod auth;
 pub mod client;
+pub mod client_sdk;
 pub mod knowledge_base;
 pub mod models;
 pub mod tool_handler;
@@ -14,6 +15,7 @@ pub mod tools_impl;
 // Re-export key components for easier access
 pub use auth::KustoAuth;
 pub use client::KustoClient;
+pub use client_sdk::KustoSdkClient;
 pub use integration::register_kusto_tools_with_openai;
 pub use knowledge_base::*;
 pub use models::*;

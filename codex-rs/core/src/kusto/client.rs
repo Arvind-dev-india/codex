@@ -63,29 +63,56 @@ impl KustoClient {
             "csl": query
         });
         
+        // Log the request details
+        tracing::info!("Kusto Query Request:");
+        tracing::info!("  URL: {}", url);
+        tracing::info!("  Database: {}", self.database);
+        tracing::info!("  Query: {}", query);
+        tracing::info!("  Request Body: {}", serde_json::to_string_pretty(&query_request).unwrap_or_default());
+        
         let response = self.client
             .post(&url)
             .headers(headers)
             .json(&query_request)
             .send()
             .await
-            .map_err(|e| CodexErr::Other(format!("Request failed: {}", e)))?;
+            .map_err(|e| {
+                tracing::error!("Kusto request failed: {}", e);
+                CodexErr::Other(format!("Request failed: {}", e))
+            })?;
             
+        let status = response.status();
+        tracing::info!("Kusto Response Status: {}", status);
+        
         if !response.status().is_success() {
-            let status = response.status();
             let text = response
                 .text()
                 .await
                 .unwrap_or_else(|_| "Failed to get error response".to_string());
+            tracing::error!("Kusto API error response: {}", text);
             return Err(CodexErr::Other(format!(
                 "Kusto API error: {} - {}",
                 status, text
             )));
         }
         
-        response
-            .json::<T>()
+        // Get the response text first for logging
+        let response_text = response
+            .text()
             .await
-            .map_err(|e| CodexErr::Other(format!("Failed to parse response: {}", e)))
+            .map_err(|e| {
+                tracing::error!("Failed to get response text: {}", e);
+                CodexErr::Other(format!("Failed to get response text: {}", e))
+            })?;
+            
+        tracing::info!("Kusto Raw Response: {}", response_text);
+        
+        // Try to parse the response
+        serde_json::from_str::<T>(&response_text)
+            .map_err(|e| {
+                tracing::error!("Failed to parse Kusto response: {}", e);
+                tracing::error!("Response text was: {}", response_text);
+                CodexErr::Other(format!("Failed to parse response: {} - Response: {}", e, response_text))
+            })
     }
 }

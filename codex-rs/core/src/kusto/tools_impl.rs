@@ -5,15 +5,14 @@ use std::sync::Arc;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use crate::kusto::client::KustoClient;
-use crate::kusto::models::*;
+use crate::kusto::client_sdk::KustoSdkClient;
 use crate::kusto::knowledge_base::*;
 use crate::config_types::KustoConfig;
 use crate::error::{CodexErr, Result};
 
 /// Implementation of Kusto tools
 pub struct KustoTools {
-    pub clients: HashMap<String, Arc<KustoClient>>,
+    pub clients: HashMap<String, Arc<KustoSdkClient>>,
     pub config: KustoConfig,
     pub knowledge_base_path: PathBuf,
     pub knowledge_base: Arc<tokio::sync::RwLock<KustoKnowledgeBase>>,
@@ -48,9 +47,11 @@ impl KustoTools {
         
         // Add default database client
         if !config.database.is_empty() {
-            let client = KustoClient::new(auth.clone(), &config.database);
+            let client = KustoSdkClient::new(auth.clone(), &config.database).await?;
             clients.insert("default".to_string(), Arc::new(client));
-            clients.insert(config.database.clone(), Arc::new(KustoClient::new(auth.clone(), &config.database)));
+            
+            let client2 = KustoSdkClient::new(auth.clone(), &config.database).await?;
+            clients.insert(config.database.clone(), Arc::new(client2));
         }
         
         // Add clients for additional databases
@@ -62,7 +63,7 @@ impl KustoTools {
                 auth.clone()
             };
             
-            let client = Arc::new(KustoClient::new(auth.clone(), &db_config.name));
+            let client = Arc::new(KustoSdkClient::new(auth.clone(), &db_config.name).await?);
             clients.insert(db_name.clone(), client.clone());
             clients.insert(db_config.name.clone(), client);
         }
@@ -76,7 +77,7 @@ impl KustoTools {
     }
     
     /// Get the appropriate client for a database
-    fn get_client(&self, database: Option<&str>) -> Result<Arc<KustoClient>> {
+    fn get_client(&self, database: Option<&str>) -> Result<Arc<KustoSdkClient>> {
         let db_name = database.unwrap_or("default");
         
         self.clients.get(db_name)
@@ -169,13 +170,12 @@ impl KustoTools {
         let client = self.get_client(database)?;
         let db_name = database.unwrap_or(&self.config.database);
         
-        // Execute the query
-        let result: KustoQueryResult = client
+        tracing::info!("Executing Kusto query: {} on database: {}", query, db_name);
+        
+        // Execute the query using the SDK client
+        let processed_results = client
             .execute_query(query)
             .await?;
-            
-        // Process the results into a more usable format
-        let processed_results = process_kusto_results(result);
         
         // Update knowledge base with results
         if let Err(e) = self.update_knowledge_base_with_query(db_name, query, &processed_results).await {
@@ -215,16 +215,15 @@ impl KustoTools {
         }
         drop(kb);
         
-        // Use .schema command to get table information
-        let query = format!(".show table {} schema as json", table_name);
+        // Use getschema command to get table information (correct Kusto syntax)
+        let query = format!("{} | getschema", table_name);
         
-        // Execute the query
-        let result: KustoQueryResult = client
+        tracing::info!("Executing Kusto get table schema query: {} on database: {}", query, db_name);
+        
+        // Execute the query using the SDK client
+        let processed_results = client
             .execute_query(&query)
             .await?;
-            
-        // Process the results
-        let processed_results = process_kusto_results(result);
         
         Ok(json!({
             "table_name": table_name,
@@ -264,16 +263,15 @@ impl KustoTools {
         }
         drop(kb);
         
-        // Use .show tables command
-        let query = ".show tables | project TableName, DatabaseName";
+        // Use .show tables command with correct syntax
+        let query = ".show tables | project TableName";
         
-        // Execute the query
-        let result: KustoQueryResult = client
+        tracing::info!("Executing Kusto list tables query: {} on database: {}", query, db_name);
+        
+        // Execute the query using the SDK client
+        let processed_results = client
             .execute_query(query)
             .await?;
-            
-        // Process the results
-        let processed_results = process_kusto_results(result);
         
         Ok(json!({
             "database": db_name,
@@ -445,5 +443,56 @@ impl KustoTools {
         }
         
         Ok(results)
+    }
+    
+    /// List available functions
+    pub async fn list_functions(&self, args: Value) -> Result<Value> {
+        let database = args["database"].as_str();
+        let client = self.get_client(database)?;
+        let db_name = database.unwrap_or(&self.config.database);
+        
+        // Use .show functions command with correct syntax
+        let query = ".show functions | project Name";
+        
+        tracing::info!("Executing Kusto list functions query: {}", query);
+        
+        // Execute the query using the SDK client
+        let processed_results = client
+            .execute_query(query)
+            .await?;
+        
+        Ok(json!({
+            "database": db_name,
+            "functions": processed_results,
+            "source": "live_query"
+        }))
+    }
+    
+    /// Describe a specific function
+    pub async fn describe_function(&self, args: Value) -> Result<Value> {
+        let function_name = args["function_name"].as_str().ok_or_else(|| {
+            CodexErr::Other("function_name parameter is required".to_string())
+        })?;
+        
+        let database = args["database"].as_str();
+        let client = self.get_client(database)?;
+        let db_name = database.unwrap_or(&self.config.database);
+        
+        // Use .show function command with correct syntax
+        let query = format!(".show function {}", function_name);
+        
+        tracing::info!("Executing Kusto describe function query: {}", query);
+        
+        // Execute the query using the SDK client
+        let processed_results = client
+            .execute_query(&query)
+            .await?;
+        
+        Ok(json!({
+            "function_name": function_name,
+            "database": db_name,
+            "function_details": processed_results,
+            "source": "live_query"
+        }))
     }
 }
