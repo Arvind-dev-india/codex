@@ -1,6 +1,6 @@
 //! Code analysis tools using Tree-sitter for parsing and generating code reference graphs.
 
-mod parser_pool;
+pub mod parser_pool;
 pub mod context_extractor;
 pub mod repo_mapper;
 pub mod tools;
@@ -17,3 +17,4 @@ pub use tools::{
     handle_find_symbol_definitions,
     handle_get_symbol_subgraph,
 };
+pub use parser_pool::{get_parser_pool, SupportedLanguage, QueryType};

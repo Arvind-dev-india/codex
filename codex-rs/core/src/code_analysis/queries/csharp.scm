@@ -34,12 +34,18 @@
   (identifier) @name.reference.class
  ) @reference.class
 
+; Member access method calls (e.g., Console.WriteLine, object.Method)
 (invocation_expression
  function:
   (member_access_expression
     name: (identifier) @name.reference.send
  )
 ) @reference.send
+
+; Simple method calls (e.g., MethodB(), Add())
+(invocation_expression
+ function: (identifier) @name.reference.call
+) @reference.call
 
 (namespace_declaration
  name: (identifier) @name.definition.module
