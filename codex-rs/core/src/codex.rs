@@ -639,6 +639,9 @@ async fn submission_loop(
                 
                 // Set Kusto configuration if available
                 mcp_connection_manager.set_kusto_config(config.kusto.clone());
+                
+                // Set Recovery Services configuration if available
+                mcp_connection_manager.set_recovery_services_config(config.recovery_services.clone());
 
                 // Surface individual client start-up failures to the user.
                 if !failed_clients.is_empty() {

@@ -21,8 +21,10 @@ use tokio::task::JoinSet;
 use crate::azure_devops::handle_azure_devops_tool_call;
 use crate::code_analysis::handle_code_analysis_tool_call;
 use crate::kusto::handle_kusto_tool_call;
+use crate::recovery_services::handle_recovery_services_tool_call;
 use crate::config_types::AzureDevOpsConfig;
 use crate::config_types::KustoConfig;
+use crate::config_types::RecoveryServicesConfig;
 use crate::mcp_tool_call::ToolCall;
 use tracing::info;
 
@@ -68,6 +70,9 @@ pub(crate) struct McpConnectionManager {
     
     /// Kusto configuration, if any
     kusto_config: Option<KustoConfig>,
+    
+    /// Recovery Services configuration, if any
+    recovery_services_config: Option<RecoveryServicesConfig>,
 
     /// Fully qualified tool name -> tool instance.
     tools: HashMap<String, Tool>,
@@ -152,6 +157,7 @@ impl McpConnectionManager {
             tools,
             azure_devops_config: None,
             kusto_config: None,
+            recovery_services_config: None,
         }, errors))
     }
 
@@ -169,6 +175,11 @@ impl McpConnectionManager {
     /// Set the Kusto configuration
     pub fn set_kusto_config(&mut self, config: Option<KustoConfig>) {
         self.kusto_config = config;
+    }
+    
+    /// Set the Recovery Services configuration
+    pub fn set_recovery_services_config(&mut self, config: Option<RecoveryServicesConfig>) {
+        self.recovery_services_config = config;
     }
 
     /// Invoke the tool indicated by the (server, tool) pair.
@@ -301,6 +312,52 @@ impl McpConnectionManager {
                 }
             } else {
                 return Err(anyhow!("Kusto is not configured"));
+            }
+        }
+        
+        // Check if this is a Recovery Services tool - either with server="recovery_services" or
+        // with a full tool name that starts with "recovery_services_"
+        let is_recovery_services = server == "recovery_services" || 
+                                  (server.is_empty() && tool.starts_with("recovery_services_"));
+        
+        if is_recovery_services {
+            if let Some(config) = &self.recovery_services_config {
+                // Extract the actual tool name if it's a full name (recovery_services_list_vaults)
+                let actual_tool_name = if tool.starts_with("recovery_services_") {
+                    tool.to_string()
+                } else {
+                    format!("recovery_services_{}", tool)
+                };
+                
+                let tool_call = ToolCall {
+                    name: actual_tool_name,
+                    arguments: arguments.unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new())),
+                };
+                
+                match handle_recovery_services_tool_call(&tool_call, config).await {
+                    Ok(result) => {
+                        // Create a TextContent with the JSON result
+                        let json_str = serde_json::to_string(&result).unwrap_or_default();
+                        let text_content = mcp_types::TextContent {
+                            annotations: None,
+                            text: json_str,
+                            r#type: "text".to_string(),
+                        };
+                        
+                        // Wrap in CallToolResultContent::TextContent
+                        let content = vec![mcp_types::CallToolResultContent::TextContent(text_content)];
+                        
+                        return Ok(mcp_types::CallToolResult {
+                            content,
+                            is_error: None,
+                        });
+                    }
+                    Err(e) => {
+                        return Err(anyhow!("Recovery Services tool call failed: {}", e));
+                    }
+                }
+            } else {
+                return Err(anyhow!("Recovery Services is not configured"));
             }
         }
         

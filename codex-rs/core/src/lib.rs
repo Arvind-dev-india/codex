@@ -44,6 +44,9 @@ pub mod azure_devops;
 // Kusto (Azure Data Explorer) integration
 pub mod kusto;
 
+// Recovery Services (Azure Backup) integration
+pub mod recovery_services;
+
 // Code analysis tools
 pub mod code_analysis;
 

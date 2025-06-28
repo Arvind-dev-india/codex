@@ -1,0 +1,113 @@
+# Recovery Services (Azure Backup) Configuration Example
+# This file shows how to configure Recovery Services integration for SAP HANA and SQL Server backup operations
+
+# =============================================================================
+# BASIC CONFIGURATION (Recommended for most users)
+# =============================================================================
+
+[recovery_services]
+# Enable/disable Recovery Services tools (default: true)
+enabled = true
+
+# Primary Azure subscription ID
+subscription_id = "af95aa3c-30fd-41c6-a938-4b3676fc36fb"
+
+# Primary resource group name
+resource_group = "arvkum-iac-test-rg"
+
+# Primary Recovery Services vault name
+vault_name = "dotnet8tests"
+
+# =============================================================================
+# MULTI-VAULT CONFIGURATION
+# =============================================================================
+# Uncomment and modify this section for multiple vaults
+
+# [recovery_services.vaults.production]
+# name = "prod-backup-vault"
+# subscription_id = "prod-subscription-id"  # Optional: if different from primary
+# resource_group = "prod-rg"                # Optional: if different from primary
+# description = "Production SAP HANA and SQL Server backup vault"
+# is_default = false
+
+# [recovery_services.vaults.staging]
+# name = "staging-backup-vault"
+# description = "Staging environment backup vault"
+# is_default = false
+
+# [recovery_services.vaults.development]
+# name = "dev-backup-vault"
+# subscription_id = "dev-subscription-id"
+# resource_group = "dev-rg"
+# description = "Development environment backup vault"
+# is_default = false
+
+# =============================================================================
+# USAGE EXAMPLES AFTER CONFIGURATION
+# =============================================================================
+
+# Vault Management:
+# codex "list recovery services vaults"
+# codex "test recovery services connection"
+
+# VM Registration:
+# codex "register VM /subscriptions/sub-id/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/saphana-vm1 for SAPHANA backup"
+# codex "register VM /subscriptions/sub-id/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/sql-vm1 for SQLDataBase backup"
+# codex "check registration status for VM saphana-vm1"
+
+# Policy Management:
+# codex "create backup policy SAPHANABackupPolicy for workload SAPHANA"
+# codex "create backup policy SQLServerBackupPolicy for workload SQLDataBase"
+# codex "list backup policies in vault dotnet8tests"
+
+# Protection Management:
+# codex "list protectable items for workload SAPHANA in vault dotnet8tests"
+# codex "enable protection for database HXE on server saphana-vm1 with policy SAPHANABackupPolicy"
+# codex "list protected items for workload SAPHANA"
+
+# Backup Operations:
+# codex "trigger Full backup for database HXE on server saphana-vm1"
+# codex "trigger Log backup for database HXE on server saphana-vm1"
+# codex "list backup jobs in vault dotnet8tests"
+# codex "show backup job status for last 24 hours"
+
+# Recovery Operations:
+# codex "list recovery points for database HXE on server saphana-vm1"
+# codex "restore database HXE to original location using latest recovery point"
+# codex "restore database HXE to alternate server saphana-vm2"
+# codex "restore database HXE as files to /hana/restore/"
+
+# Troubleshooting:
+# codex "reregister VM saphana-vm1 in vault dotnet8tests"
+# codex "clear recovery services auth cache"
+
+# =============================================================================
+# AUTHENTICATION
+# =============================================================================
+# - Uses OAuth 2.0 device code flow with Azure Management API scope
+# - Tokens are stored in ~/.codex/recovery_services_auth.json
+# - Automatic token refresh
+# - Shared authentication pattern with Azure DevOps and Kusto tools
+
+# =============================================================================
+# REQUIRED PERMISSIONS
+# =============================================================================
+# Your Azure account needs the following RBAC roles:
+# - Backup Contributor: For backup operations and policy management
+# - Backup Operator: For restore operations
+# - Virtual Machine Contributor: For VM registration
+
+# =============================================================================
+# SUPPORTED WORKLOADS
+# =============================================================================
+# - SAP HANA: Complete backup and recovery for SAP HANA databases
+# - SQL Server: Full backup and recovery for SQL Server databases
+# - Both workloads use the AzureWorkload backup management type
+
+# =============================================================================
+# CONFIGURATION VALIDATION
+# =============================================================================
+# To test your configuration:
+# 1. Save this file as ~/.codex/config.toml (or merge with existing config)
+# 2. Run: codex "test recovery services connection"
+# 3. Run: codex "list recovery services vaults"

@@ -6,6 +6,7 @@ use std::sync::LazyLock;
 use crate::azure_devops::register_azure_devops_tools_with_openai;
 use crate::code_analysis::register_code_analysis_tools_with_openai;
 use crate::kusto::register_kusto_tools_with_openai;
+use crate::recovery_services::register_recovery_services_tools_with_openai;
 use crate::client_common::Prompt;
 
 #[derive(Debug, Clone, Serialize)]
@@ -33,6 +34,7 @@ pub enum OpenAiTool {
 pub enum JsonSchema {
     String,
     Number,
+    Boolean,
     Array {
         items: Box<JsonSchema>,
     },
@@ -100,6 +102,12 @@ pub(crate) fn create_tools_json_for_responses_api(
         total_capacity += tools.len();
     }
     
+    // Check if Recovery Services is configured
+    let recovery_services_tools = register_recovery_services_tools_with_openai(&prompt.config.recovery_services);
+    if let Some(ref tools) = recovery_services_tools {
+        total_capacity += tools.len();
+    }
+    
     // Get code analysis tools
     let code_analysis_tools = register_code_analysis_tools_with_openai();
     total_capacity += code_analysis_tools.len();
@@ -120,6 +128,13 @@ pub(crate) fn create_tools_json_for_responses_api(
     
     // Add Kusto tools if configured
     if let Some(tools) = &kusto_tools {
+        for t in tools.iter() {
+            tools_json.push(serde_json::to_value(t)?);
+        }
+    }
+    
+    // Add Recovery Services tools if configured
+    if let Some(tools) = &recovery_services_tools {
         for t in tools.iter() {
             tools_json.push(serde_json::to_value(t)?);
         }

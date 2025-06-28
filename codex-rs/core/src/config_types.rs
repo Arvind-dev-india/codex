@@ -18,6 +18,10 @@ pub use config_types_azure::{AzureDevOpsConfig, AzureDevOpsAuthMethod};
 mod config_types_kusto;
 pub use config_types_kusto::{KustoConfig, KustoDatabaseConfig};
 
+// Import Recovery Services configuration
+mod config_types_recovery_services;
+pub use config_types_recovery_services::{RecoveryServicesConfig, RecoveryServicesVaultConfig};
+
 #[derive(Deserialize, Debug, Clone, PartialEq)]
 pub struct McpServerConfig {
     pub command: String,

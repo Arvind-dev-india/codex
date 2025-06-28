@@ -134,6 +134,9 @@ pub struct Config {
     
     /// Kusto (Azure Data Explorer) configuration for integration with Kusto services.
     pub kusto: Option<crate::config_types::KustoConfig>,
+    
+    /// Recovery Services (Azure Backup) configuration for integration with Recovery Services.
+    pub recovery_services: Option<crate::config_types::RecoveryServicesConfig>,
 }
 
 impl Config {
@@ -317,6 +320,10 @@ pub struct ConfigToml {
     /// Kusto (Azure Data Explorer) configuration for integration with Kusto services.
     #[serde(default)]
     pub kusto: Option<crate::config_types::KustoConfig>,
+    
+    /// Recovery Services (Azure Backup) configuration for integration with Recovery Services.
+    #[serde(default)]
+    pub recovery_services: Option<crate::config_types::RecoveryServicesConfig>,
 }
 
 /// Optional overrides for user configuration (e.g., from CLI flags).
@@ -460,6 +467,7 @@ impl Config {
             model_reasoning_summary: cfg.model_reasoning_summary.unwrap_or_default(),
             azure_devops: cfg.azure_devops,
             kusto: cfg.kusto,
+            recovery_services: cfg.recovery_services,
         };
         Ok(config)
     }
@@ -734,6 +742,7 @@ disable_response_storage = true
                 model_provider: fixture.openai_provider.clone(),
                 azure_devops: None,
                 kusto: None,
+                recovery_services: None,
                 approval_policy: AskForApproval::Never,
                 sandbox_policy: SandboxPolicy::new_read_only_policy(),
                 shell_environment_policy: ShellEnvironmentPolicy::default(),
@@ -783,6 +792,7 @@ disable_response_storage = true
             shell_environment_policy: ShellEnvironmentPolicy::default(),
             azure_devops: None,
             kusto: None,
+            recovery_services: None,
             disable_response_storage: false,
             instructions: None,
             notify: None,
@@ -844,6 +854,7 @@ disable_response_storage = true
             shell_environment_policy: ShellEnvironmentPolicy::default(),
             azure_devops: None,
             kusto: None,
+            recovery_services: None,
             disable_response_storage: true,
             instructions: None,
             notify: None,
