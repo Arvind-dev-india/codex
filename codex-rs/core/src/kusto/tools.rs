@@ -15,6 +15,8 @@ pub fn create_kusto_tools() -> Vec<OpenAiTool> {
         create_search_knowledge_base_tool(),
         create_list_functions_tool(),
         create_describe_function_tool(),
+        create_test_connection_tool(),
+        create_clear_auth_cache_tool(),
     ]
 }
 
@@ -134,5 +136,31 @@ fn create_describe_function_tool() -> OpenAiTool {
         "Get detailed information about a specific Kusto function",
         parameters,
         &["function_name"],
+    )
+}
+
+/// Create a tool for testing connection and queries
+fn create_test_connection_tool() -> OpenAiTool {
+    let mut parameters = BTreeMap::new();
+    parameters.insert("test_query".to_string(), JsonSchema::String);
+    parameters.insert("database".to_string(), JsonSchema::String);
+    
+    create_function_tool(
+        "kusto_test_connection",
+        "Test Kusto connection and run a diagnostic query. Use this to debug connection issues and validate queries before running them.",
+        parameters,
+        &[],
+    )
+}
+
+/// Create a tool for clearing authentication cache
+fn create_clear_auth_cache_tool() -> OpenAiTool {
+    let parameters = BTreeMap::new();
+    
+    create_function_tool(
+        "kusto_clear_auth_cache",
+        "Clear Kusto authentication cache and force re-authentication. Use this when getting authentication errors.",
+        parameters,
+        &[],
     )
 }

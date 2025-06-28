@@ -74,23 +74,50 @@ impl KustoOAuthHandler {
 
     /// Get a valid access token, refreshing if necessary or prompting for authentication
     pub async fn get_access_token(&self) -> Result<String> {
+        tracing::info!("=== Kusto Authentication Flow ===");
+        
         // Try to load existing tokens
-        if let Ok(tokens) = self.load_tokens().await {
-            // Check if access token is still valid (with 5 minute buffer)
-            if tokens.expires_at > Utc::now() + chrono::Duration::minutes(5) {
-                return Ok(tokens.access_token);
-            }
-
-            // Try to refresh the token
-            if tokens.refresh_expires_at > Utc::now() {
-                if let Ok(new_tokens) = self.refresh_token(&tokens.refresh_token).await {
-                    self.save_tokens(&new_tokens).await?;
-                    return Ok(new_tokens.access_token);
+        match self.load_tokens().await {
+            Ok(tokens) => {
+                let now = Utc::now();
+                let expires_in = tokens.expires_at.signed_duration_since(now);
+                let refresh_expires_in = tokens.refresh_expires_at.signed_duration_since(now);
+                
+                tracing::info!("Found existing tokens:");
+                tracing::info!("  Access token expires in: {} minutes", expires_in.num_minutes());
+                tracing::info!("  Refresh token expires in: {} days", refresh_expires_in.num_days());
+                
+                // Check if access token is still valid (with 5 minute buffer)
+                if tokens.expires_at > now + chrono::Duration::minutes(5) {
+                    tracing::info!("Access token is still valid, using existing token");
+                    return Ok(tokens.access_token);
                 }
+
+                tracing::info!("Access token expired, attempting refresh...");
+                
+                // Try to refresh the token
+                if tokens.refresh_expires_at > now {
+                    match self.refresh_token(&tokens.refresh_token).await {
+                        Ok(new_tokens) => {
+                            tracing::info!("Token refresh successful");
+                            self.save_tokens(&new_tokens).await?;
+                            return Ok(new_tokens.access_token);
+                        }
+                        Err(e) => {
+                            tracing::warn!("Token refresh failed: {}", e);
+                        }
+                    }
+                } else {
+                    tracing::info!("Refresh token also expired");
+                }
+            }
+            Err(e) => {
+                tracing::info!("No existing tokens found: {}", e);
             }
         }
 
         // Need to authenticate from scratch
+        tracing::info!("Starting new authentication flow...");
         let tokens = self.device_code_flow().await?;
         self.save_tokens(&tokens).await?;
         Ok(tokens.access_token)
@@ -178,6 +205,7 @@ impl KustoOAuthHandler {
 
     /// Refresh an expired access token
     async fn refresh_token(&self, refresh_token: &str) -> Result<KustoTokens> {
+        tracing::info!("Attempting to refresh Kusto access token...");
         let client = reqwest::Client::new();
 
         let token_request = TokenRequest {
@@ -200,6 +228,7 @@ impl KustoOAuthHandler {
                 .await
                 .map_err(|e| CodexErr::Other(format!("Failed to parse refresh response: {}", e)))?;
 
+            tracing::info!("Token refresh successful");
             Ok(KustoTokens {
                 access_token: token_resp.access_token,
                 refresh_token: token_resp.refresh_token.unwrap_or_else(|| refresh_token.to_string()),
@@ -207,9 +236,24 @@ impl KustoOAuthHandler {
                 refresh_expires_at: Utc::now() + chrono::Duration::days(90),
             })
         } else {
+            // Get the status before consuming the response
+            let status = response.status();
+            // Get the error details from the response
+            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            tracing::error!("Token refresh failed with status: {}", status);
+            tracing::error!("Error response: {}", error_text);
+            
+            // Common refresh token errors
+            if error_text.contains("invalid_grant") {
+                tracing::error!("Refresh token is invalid or expired. User needs to re-authenticate.");
+            } else if error_text.contains("invalid_client") {
+                tracing::error!("Client ID is invalid or not authorized for refresh tokens.");
+            }
+            
             Err(CodexErr::Other(format!(
-                "Token refresh failed: {}",
-                response.status()
+                "Token refresh failed: {} - {}",
+                status,
+                error_text
             )))
         }
     }
@@ -217,15 +261,37 @@ impl KustoOAuthHandler {
     /// Load tokens from disk
     async fn load_tokens(&self) -> Result<KustoTokens> {
         let auth_path = self.codex_home.join("kusto_auth.json");
+        tracing::debug!("Looking for Kusto auth file at: {}", auth_path.display());
+        
+        if !auth_path.exists() {
+            tracing::debug!("Kusto auth file does not exist");
+            return Err(CodexErr::Other("No saved Kusto tokens found".to_string()));
+        }
+        
         let mut file = std::fs::File::open(&auth_path)
-            .map_err(|_| CodexErr::Other("No saved Kusto tokens found".to_string()))?;
+            .map_err(|e| {
+                tracing::error!("Failed to open Kusto auth file: {}", e);
+                CodexErr::Other(format!("Failed to open auth file: {}", e))
+            })?;
 
         let mut contents = String::new();
         file.read_to_string(&mut contents)
-            .map_err(|e| CodexErr::Other(format!("Failed to read auth file: {}", e)))?;
+            .map_err(|e| {
+                tracing::error!("Failed to read Kusto auth file: {}", e);
+                CodexErr::Other(format!("Failed to read auth file: {}", e))
+            })?;
 
-        serde_json::from_str(&contents)
-            .map_err(|e| CodexErr::Other(format!("Failed to parse auth file: {}", e)))
+        tracing::debug!("Kusto auth file contents length: {} bytes", contents.len());
+        
+        let tokens: KustoTokens = serde_json::from_str(&contents)
+            .map_err(|e| {
+                tracing::error!("Failed to parse Kusto auth file: {}", e);
+                tracing::debug!("Auth file contents: {}", contents);
+                CodexErr::Other(format!("Failed to parse auth file: {}", e))
+            })?;
+            
+        tracing::debug!("Successfully loaded Kusto tokens");
+        Ok(tokens)
     }
 
     /// Save tokens to disk

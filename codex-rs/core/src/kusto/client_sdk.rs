@@ -37,25 +37,89 @@ impl KustoSdkClient {
         let client = KustoClient::try_from(connection_string)
             .map_err(|e| CodexErr::Other(format!("Failed to create Kusto client: {}", e)))?;
 
-        Ok(Self {
+        let sdk_client = Self {
             client,
             database: database.to_string(),
-        })
+        };
+
+        // Test basic connectivity with a simple query
+        tracing::info!("Testing Kusto SDK connectivity...");
+        match sdk_client.test_connectivity().await {
+            Ok(_) => tracing::info!("Kusto SDK connectivity test passed"),
+            Err(e) => tracing::warn!("Kusto SDK connectivity test failed: {}", e),
+        }
+
+        Ok(sdk_client)
     }
 
     /// Execute a Kusto query using the official SDK
     pub async fn execute_query(&self, query: &str) -> Result<Vec<HashMap<String, Value>>> {
-        tracing::info!("Executing Kusto query with official SDK:");
-        tracing::info!("  Database: {}", self.database);
-        tracing::info!("  Query: {}", query);
+        tracing::info!("=== Kusto SDK Query Execution ===");
+        tracing::info!("  Database: '{}'", self.database);
+        tracing::info!("  Query: '{}'", query);
+        tracing::info!("  Query Length: {} characters", query.len());
+        tracing::info!("  Query Type: {}", if query.starts_with('.') { "Management Command" } else { "Data Query" });
+        
+        // Clean and validate query before sending to server
+        let cleaned_query = query.trim()
+            .trim_start_matches('`')  // Remove leading backticks
+            .trim_end_matches('`')    // Remove trailing backticks
+            .trim();                  // Remove any remaining whitespace
+            
+        if cleaned_query.is_empty() {
+            return Err(CodexErr::Other("Query cannot be empty".to_string()));
+        }
+        
+        // Log if we cleaned the query
+        if cleaned_query != query.trim() {
+            tracing::info!("Cleaned query from '{}' to '{}'", query, cleaned_query);
+        }
+        
+        // Check if this looks like a bare table name (common mistake)
+        if !cleaned_query.contains("|") && !cleaned_query.starts_with(".") && !cleaned_query.contains(" ") {
+            tracing::warn!("Query '{}' looks like a bare table name. This might cause a 400 error.", cleaned_query);
+            tracing::warn!("Consider using: '{} | take 10' to get sample data", cleaned_query);
+        }
 
         // Execute the query using the official SDK
         let response = self.client
-            .execute_query(self.database.clone(), query, None)
+            .execute_query(self.database.clone(), cleaned_query, None)
             .await
             .map_err(|e| {
-                tracing::error!("Kusto SDK query failed: {}", e);
-                CodexErr::Other(format!("Query execution failed: {}", e))
+                tracing::error!("Kusto SDK query failed with detailed error:");
+                tracing::error!("  Error: {}", e);
+                tracing::error!("  Error Debug: {:?}", e);
+                tracing::error!("  Database: {}", self.database);
+                tracing::error!("  Original Query: {}", query);
+                tracing::error!("  Cleaned Query: {}", cleaned_query);
+                
+                // Try to extract more details from the error
+                let error_string = format!("{:?}", e);
+                let error_display = format!("{}", e);
+                
+                if error_string.contains("400") || error_display.contains("400") {
+                    tracing::error!("  This is a 400 Bad Request error - likely query syntax or database issue");
+                    tracing::error!("  Common causes:");
+                    tracing::error!("    1. Invalid query syntax - ensure query follows KQL syntax");
+                    tracing::error!("    2. Table/database doesn't exist");
+                    tracing::error!("    3. Missing permissions to access the database/table");
+                    tracing::error!("    4. Query is a bare table name - try adding '| take 10' or '| limit 10'");
+                    
+                    // Provide specific suggestions based on the query
+                    if !cleaned_query.contains("|") && !cleaned_query.starts_with(".") && !cleaned_query.contains(" ") {
+                        tracing::error!("  SUGGESTION: Query '{}' looks like a table name. Try: '{} | take 10'", cleaned_query, cleaned_query);
+                    }
+                }
+                
+                // Create a more detailed error message
+                let detailed_error = if error_display.contains("400") {
+                    format!("Error in azure-core: server returned error status which will not be retried: 400\n\nDetailed Analysis:\n- Database: {}\n- Original Query: {}\n- Cleaned Query: {}\n- Issue: 400 Bad Request indicates query syntax or permission problem\n\nSuggestions:\n1. If '{}' is a table name, try: '{} | take 10'\n2. Verify the database '{}' exists and you have access\n3. Check if the table exists with: '.show tables | where TableName == \"{}\"'\n4. Ensure your query follows KQL (Kusto Query Language) syntax", 
+                        self.database, query, cleaned_query, cleaned_query, cleaned_query, self.database, cleaned_query)
+                } else {
+                    format!("Query execution failed: {} (Database: {}, Query: {})", e, self.database, query)
+                };
+                
+                CodexErr::Other(detailed_error)
             })?;
 
         tracing::info!("Kusto SDK query executed successfully");
@@ -111,5 +175,24 @@ impl KustoSdkClient {
 
         tracing::info!("Processed {} result rows", processed_results.len());
         Ok(processed_results)
+    }
+
+    /// Test basic connectivity with a simple query
+    async fn test_connectivity(&self) -> Result<()> {
+        // Use a very simple query that should work on any database
+        let test_query = "print 'connectivity_test'";
+        
+        tracing::info!("Testing connectivity with query: {}", test_query);
+        
+        let response = self.client
+            .execute_query(self.database.clone(), test_query, None)
+            .await
+            .map_err(|e| {
+                tracing::error!("Connectivity test failed: {}", e);
+                CodexErr::Other(format!("Connectivity test failed: {}", e))
+            })?;
+
+        tracing::info!("Connectivity test successful - received {} results", response.results.len());
+        Ok(())
     }
 }

@@ -49,6 +49,12 @@ pub async fn handle_kusto_tool_call(
         "kusto_describe_function" => {
             tools.describe_function(args).await
         },
+        "kusto_test_connection" => {
+            tools.test_connection(args).await
+        },
+        "kusto_clear_auth_cache" => {
+            tools.clear_auth_cache(args).await
+        },
         _ => {
             Err(CodexErr::Other(format!("Unknown Kusto tool: {}", name)))
         }
