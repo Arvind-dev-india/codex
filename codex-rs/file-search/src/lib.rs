@@ -6,12 +6,14 @@ use nucleo_matcher::pattern::AtomKind;
 use nucleo_matcher::pattern::CaseMatching;
 use nucleo_matcher::pattern::Normalization;
 use nucleo_matcher::pattern::Pattern;
+use serde::Serialize;
 use std::cell::UnsafeCell;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::num::NonZero;
 use std::path::Path;
-use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use tokio::process::Command;
@@ -20,13 +22,31 @@ mod cli;
 
 pub use cli::Cli;
 
+/// A single match result returned from the search.
+///
+/// * `score` – Relevance score returned by `nucleo_matcher`.
+/// * `path`  – Path to the matched file (relative to the search directory).
+/// * `indices` – Optional list of character indices that matched the query.
+///   These are only filled when the caller of [`run`] sets
+///   `compute_indices` to `true`.  The indices vector follows the
+///   guidance from `nucleo_matcher::Pattern::indices`: they are
+///   unique and sorted in ascending order so that callers can use
+///   them directly for highlighting.
+#[derive(Debug, Clone, Serialize)]
+pub struct FileMatch {
+    pub score: u32,
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub indices: Option<Vec<u32>>, // Sorted & deduplicated when present
+}
+
 pub struct FileSearchResults {
-    pub matches: Vec<(u32, String)>,
+    pub matches: Vec<FileMatch>,
     pub total_match_count: usize,
 }
 
 pub trait Reporter {
-    fn report_match(&self, file: &str, score: u32);
+    fn report_match(&self, file_match: &FileMatch);
     fn warn_matches_truncated(&self, total_match_count: usize, shown_match_count: usize);
     fn warn_no_search_pattern(&self, search_directory: &Path);
 }
@@ -36,6 +56,7 @@ pub async fn run_main<T: Reporter>(
         pattern,
         limit,
         cwd,
+        compute_indices,
         json: _,
         exclude,
         threads,
@@ -72,15 +93,24 @@ pub async fn run_main<T: Reporter>(
         }
     };
 
+    let cancel_flag = Arc::new(AtomicBool::new(false));
     let FileSearchResults {
         total_match_count,
         matches,
-    } = run(&pattern_text, limit, search_directory, exclude, threads).await?;
+    } = run(
+        &pattern_text,
+        limit,
+        &search_directory,
+        exclude,
+        threads,
+        cancel_flag,
+        compute_indices,
+    )?;
     let match_count = matches.len();
     let matches_truncated = total_match_count > match_count;
 
-    for (score, file) in matches {
-        reporter.report_match(&file, score);
+    for file_match in matches {
+        reporter.report_match(&file_match);
     }
     if matches_truncated {
         reporter.warn_matches_truncated(total_match_count, match_count);
@@ -89,12 +119,16 @@ pub async fn run_main<T: Reporter>(
     Ok(())
 }
 
-pub async fn run(
+/// The worker threads will periodically check `cancel_flag` to see if they
+/// should stop processing files.
+pub fn run(
     pattern_text: &str,
     limit: NonZero<usize>,
-    search_directory: PathBuf,
+    search_directory: &Path,
     exclude: Vec<String>,
     threads: NonZero<usize>,
+    cancel_flag: Arc<AtomicBool>,
+    compute_indices: bool,
 ) -> anyhow::Result<FileSearchResults> {
     let pattern = create_pattern(pattern_text);
     // Create one BestMatchesList per worker thread so that each worker can
@@ -116,10 +150,10 @@ pub async fn run(
 
     // Use the same tree-walker library that ripgrep uses. We use it directly so
     // that we can leverage the parallelism it provides.
-    let mut walk_builder = WalkBuilder::new(&search_directory);
+    let mut walk_builder = WalkBuilder::new(search_directory);
     walk_builder.threads(num_walk_builder_threads);
     if !exclude.is_empty() {
-        let mut override_builder = OverrideBuilder::new(&search_directory);
+        let mut override_builder = OverrideBuilder::new(search_directory);
         for exclude in exclude {
             // The `!` prefix is used to indicate an exclude pattern.
             let exclude_pattern = format!("!{}", exclude);
@@ -134,15 +168,28 @@ pub async fn run(
     // `BestMatchesList` to update.
     let index_counter = AtomicUsize::new(0);
     walker.run(|| {
-        let search_directory = search_directory.clone();
         let index = index_counter.fetch_add(1, Ordering::Relaxed);
         let best_list_ptr = best_matchers_per_worker[index].get();
         let best_list = unsafe { &mut *best_list_ptr };
+
+        // Each worker keeps a local counter so we only read the atomic flag
+        // every N entries which is cheaper than checking on every file.
+        const CHECK_INTERVAL: usize = 1024;
+        let mut processed = 0;
+
+        let cancel = cancel_flag.clone();
+
         Box::new(move |entry| {
-            if let Some(path) = get_file_path(&entry, &search_directory) {
+            if let Some(path) = get_file_path(&entry, search_directory) {
                 best_list.insert(path);
             }
-            ignore::WalkState::Continue
+
+            processed += 1;
+            if processed % CHECK_INTERVAL == 0 && cancel.load(Ordering::Relaxed) {
+                ignore::WalkState::Quit
+            } else {
+                ignore::WalkState::Continue
+            }
         })
     });
 
@@ -164,6 +211,14 @@ pub async fn run(
         }
     }
 
+    // If the cancel flag is set, we return early with an empty result.
+    if cancel_flag.load(Ordering::Relaxed) {
+        return Ok(FileSearchResults {
+            matches: Vec::new(),
+            total_match_count: 0,
+        });
+    }
+
     // Merge results across best_matchers_per_worker.
     let mut global_heap: BinaryHeap<Reverse<(u32, String)>> = BinaryHeap::new();
     let mut total_match_count = 0;
@@ -182,13 +237,54 @@ pub async fn run(
         }
     }
 
-    let mut matches: Vec<(u32, String)> = global_heap.into_iter().map(|r| r.0).collect();
-    matches.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    let mut raw_matches: Vec<(u32, String)> = global_heap.into_iter().map(|r| r.0).collect();
+    sort_matches(&mut raw_matches);
+
+    // Transform into `FileMatch`, optionally computing indices.
+    let mut matcher = if compute_indices {
+        Some(Matcher::new(nucleo_matcher::Config::DEFAULT))
+    } else {
+        None
+    };
+
+    let matches: Vec<FileMatch> = raw_matches
+        .into_iter()
+        .map(|(score, path)| {
+            let indices = if compute_indices {
+                let mut buf = Vec::<char>::new();
+                let haystack: Utf32Str<'_> = Utf32Str::new(&path, &mut buf);
+                let mut idx_vec: Vec<u32> = Vec::new();
+                if let Some(ref mut m) = matcher {
+                    // Ignore the score returned from indices – we already have `score`.
+                    pattern.indices(haystack, m, &mut idx_vec);
+                }
+                idx_vec.sort_unstable();
+                idx_vec.dedup();
+                Some(idx_vec)
+            } else {
+                None
+            };
+
+            FileMatch {
+                score,
+                path,
+                indices,
+            }
+        })
+        .collect();
 
     Ok(FileSearchResults {
         matches,
         total_match_count,
     })
+}
+
+/// Sort matches in-place by descending score, then ascending path.
+fn sort_matches(matches: &mut [(u32, String)]) {
+    matches.sort_by(|a, b| match b.0.cmp(&a.0) {
+        std::cmp::Ordering::Equal => a.1.cmp(&b.1),
+        other => other,
+    });
 }
 
 /// Maintains the `max_count` best matches for a given pattern.
@@ -280,5 +376,25 @@ mod tests {
         let pattern = create_pattern("zzz");
         let score = pattern.score(haystack, &mut matcher);
         assert_eq!(score, None);
+    }
+
+    #[test]
+    fn tie_breakers_sort_by_path_when_scores_equal() {
+        let mut matches = vec![
+            (100, "b_path".to_string()),
+            (100, "a_path".to_string()),
+            (90, "zzz".to_string()),
+        ];
+
+        sort_matches(&mut matches);
+
+        // Highest score first; ties broken alphabetically.
+        let expected = vec![
+            (100, "a_path".to_string()),
+            (100, "b_path".to_string()),
+            (90, "zzz".to_string()),
+        ];
+
+        assert_eq!(matches, expected);
     }
 }

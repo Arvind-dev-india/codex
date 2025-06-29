@@ -38,6 +38,7 @@ use crate::bottom_pane::InputResult;
 use crate::conversation_history_widget::ConversationHistoryWidget;
 use crate::history_cell::PatchEventType;
 use crate::user_approval_widget::ApprovalRequest;
+use codex_file_search::FileMatch;
 
 pub(crate) struct ChatWidget<'a> {
     app_event_tx: AppEventSender,
@@ -138,11 +139,12 @@ impl ChatWidget<'_> {
     }
 
     pub(crate) fn handle_key_event(&mut self, key_event: KeyEvent) {
+        self.bottom_pane.clear_ctrl_c_quit_hint();
         // Special-case <Tab>: normally toggles focus between history and bottom panes.
         // However, when the slash-command popup is visible we forward the key
         // to the bottom pane so it can handle auto-completion.
         if matches!(key_event.code, crossterm::event::KeyCode::Tab)
-            && !self.bottom_pane.is_command_popup_visible()
+            && !self.bottom_pane.is_popup_visible()
         {
             self.input_focus = match self.input_focus {
                 InputFocus::HistoryPane => InputFocus::BottomPane,
@@ -244,6 +246,7 @@ impl ChatWidget<'_> {
                 }
             }
             EventMsg::TaskStarted => {
+                self.bottom_pane.clear_ctrl_c_quit_hint();
                 self.bottom_pane.set_task_running(true);
                 self.request_redraw();
             }
@@ -400,6 +403,27 @@ impl ChatWidget<'_> {
         };
         self.conversation_history.scroll(magnified_scroll_delta);
         self.request_redraw();
+    }
+
+    /// Forward file-search results to the bottom pane.
+    pub(crate) fn apply_file_search_result(&mut self, query: String, matches: Vec<FileMatch>) {
+        self.bottom_pane.on_file_search_result(query, matches);
+    }
+
+    /// Handle Ctrl-C key press.
+    /// Returns true if the key press was handled, false if it was not.
+    /// If the key press was not handled, the caller should handle it (likely by exiting the process).
+    pub(crate) fn on_ctrl_c(&mut self) -> bool {
+        if self.bottom_pane.is_task_running() {
+            self.bottom_pane.clear_ctrl_c_quit_hint();
+            self.submit_op(Op::Interrupt);
+            false
+        } else if self.bottom_pane.ctrl_c_quit_hint_visible() {
+            true
+        } else {
+            self.bottom_pane.show_ctrl_c_quit_hint();
+            false
+        }
     }
 
     /// Forward an `Op` directly to codex.
