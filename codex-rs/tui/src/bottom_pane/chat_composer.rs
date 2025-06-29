@@ -40,9 +40,7 @@ pub(crate) struct ChatComposer<'a> {
     active_popup: ActivePopup,
     app_event_tx: AppEventSender,
     history: ChatComposerHistory,
-<<<<<<< HEAD
     has_focus: bool,
-=======
     ctrl_c_quit_hint: bool,
     dismissed_file_popup_token: Option<String>,
     current_file_query: Option<String>,
@@ -53,7 +51,6 @@ enum ActivePopup {
     None,
     Command(CommandPopup),
     File(FileSearchPopup),
->>>>>>> main
 }
 
 impl ChatComposer<'_> {
@@ -67,13 +64,10 @@ impl ChatComposer<'_> {
             active_popup: ActivePopup::None,
             app_event_tx,
             history: ChatComposerHistory::new(),
-<<<<<<< HEAD
             has_focus: has_input_focus,
-=======
             ctrl_c_quit_hint: false,
             dismissed_file_popup_token: None,
             current_file_query: None,
->>>>>>> main
         };
         this.update_border(has_input_focus);
         this
@@ -546,11 +540,13 @@ impl ChatComposer<'_> {
         let bs = if has_focus {
             if self.ctrl_c_quit_hint {
                 BlockState {
+                    left_title,
                     right_title: Line::from("Ctrl+C to quit").alignment(Alignment::Right),
                     border_style: Style::default(),
                 }
             } else {
                 BlockState {
+                    left_title,
                     right_title: Line::from("Enter to send | Ctrl+D to quit | Ctrl+J for newline")
                         .alignment(Alignment::Right),
                     border_style: Style::default(),

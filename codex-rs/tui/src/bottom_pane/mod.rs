@@ -231,6 +231,8 @@ impl BottomPane<'_> {
     /// Refresh the code graph status display (now handled by status indicator at top)
     pub(crate) fn refresh_code_graph_status(&mut self) {
         // Status is now shown at the top in status indicator widget
+    }
+
     pub(crate) fn on_file_search_result(&mut self, query: String, matches: Vec<FileMatch>) {
         self.composer.on_file_search_result(query, matches);
         self.request_redraw();
