@@ -36,6 +36,12 @@
     declarator: (qualified_identifier 
       name: (identifier) @name.definition.constructor))) @definition.constructor
 
+; Destructor definitions  
+(function_definition 
+  declarator: (function_declarator 
+    declarator: (qualified_identifier 
+      name: (destructor_name) @name.definition.destructor))) @definition.destructor
+
 ; Template function definitions
 (template_declaration 
   (function_definition 
@@ -47,7 +53,7 @@
   (class_specifier name: (type_identifier) @name.definition.class)) @definition.class
 
 ; Namespace definitions
-(namespace_definition name: (namespace_identifier) @name.definition.module) @definition.module
+(namespace_definition name: (identifier) @name.definition.module) @definition.module
 
 ; Method calls with member access (obj.method(), obj->method())
 (call_expression 
@@ -62,6 +68,11 @@
 ; Simple function calls (function())
 (call_expression 
   function: (identifier) @name.reference.call) @reference.call
+
+; Constructor calls in initialization lists
+(field_initializer_list 
+  (field_initializer 
+    (identifier) @name.reference.call)) @reference.call
 
 ; Constructor calls with new
 (new_expression 
@@ -88,6 +99,10 @@
   (qualified_identifier 
     scope: (namespace_identifier) @name.reference.module)) @reference.module
 
+; Include directives (preprocessor)
+(preproc_include 
+  path: (string_literal) @name.reference.include) @reference.include
+
 ; Field access (obj.field, obj->field)
 (field_expression 
   field: (field_identifier) @name.reference.field) @reference.field
@@ -96,3 +111,15 @@
 (qualified_identifier 
   scope: (namespace_identifier) @name.reference.module 
   name: (identifier) @name.reference.identifier) @reference.identifier
+
+; Assignment expressions (for operator= calls)
+(assignment_expression 
+  left: (identifier) @name.reference.assignment) @reference.assignment
+
+; Binary expressions (for operator overloads)
+(binary_expression 
+  left: (identifier) @name.reference.operator) @reference.operator
+
+; Cast expressions
+(cast_expression 
+  type: (type_identifier) @name.reference.cast) @reference.cast
