@@ -29,7 +29,7 @@ pub async fn handle_code_analysis_tool_call(
     }
     
     // Fix file paths in the arguments if needed
-    if name.as_str() == "code_analysis.analyze_code" {
+    if name.as_str() == "code_analysis_analyze_code" {
         if let Some(obj) = args.as_object_mut() {
             if let Some(file_path_value) = obj.get("file_path") {
                 if let Some(file_path) = file_path_value.as_str() {
@@ -61,22 +61,22 @@ pub async fn handle_code_analysis_tool_call(
     
     // Dispatch to appropriate tool function
     match name.as_str() {
-        "code_analysis.analyze_code" => {
+        "code_analysis_analyze_code" => {
             Ok(handle_analyze_code(args)
                 .ok_or_else(|| CodexErr::Other("Failed to handle analyze_code".to_string()))?
                 .map_err(|e| CodexErr::Other(e.to_string()))?)
         },
-        "code_analysis.find_symbol_references" => {
+        "code_analysis_find_symbol_references" => {
             Ok(handle_find_symbol_references(args)
                 .ok_or_else(|| CodexErr::Other("Failed to handle find_symbol_references".to_string()))?
                 .map_err(|e| CodexErr::Other(e.to_string()))?)
         },
-        "code_analysis.find_symbol_definitions" => {
+        "code_analysis_find_symbol_definitions" => {
             Ok(handle_find_symbol_definitions(args)
                 .ok_or_else(|| CodexErr::Other("Failed to handle find_symbol_definitions".to_string()))?
                 .map_err(|e| CodexErr::Other(e.to_string()))?)
         },
-        "code_analysis.get_symbol_subgraph" => {
+        "code_analysis_get_symbol_subgraph" => {
             Ok(handle_get_symbol_subgraph(args)
                 .ok_or_else(|| CodexErr::Other("Failed to handle get_symbol_subgraph".to_string()))?
                 .map_err(|e| CodexErr::Other(e.to_string()))?)

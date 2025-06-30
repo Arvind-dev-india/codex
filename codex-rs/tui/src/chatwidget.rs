@@ -461,9 +461,9 @@ impl ChatWidget<'_> {
                     • **Symbols found:** {}\n\
                     • **Initialization time:** {}ms\n\n\
                     The code graph is ready! You can now use code analysis tools like:\n\
-                    • `code_analysis.find_symbol_references`\n\
-                    • `code_analysis.find_symbol_definitions`\n\
-                    • `code_analysis.get_symbol_subgraph`",
+                    • `code_analysis_find_symbol_references`\n\
+                    • `code_analysis_find_symbol_definitions`\n\
+                    • `code_analysis_get_symbol_subgraph`",
                     files_processed, symbols_found, initialization_time_ms
                 )
             }

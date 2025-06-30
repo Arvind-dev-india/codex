@@ -30,7 +30,7 @@ fn create_analyze_code_tool() -> OpenAiTool {
     );
     
     create_function_tool(
-        "code_analysis.analyze_code",
+        "code_analysis_analyze_code",
         "Analyzes the code in a file and returns information about functions, classes, and other symbols. Only works with files that exist in the repository and are from supported languages (Rust, JavaScript, TypeScript, Python, Go, C++, C#, Java). The code graph is automatically initialized when the CLI starts.",
         properties,
         &["file_path"],
@@ -47,7 +47,7 @@ fn create_find_symbol_references_tool() -> OpenAiTool {
     );
     
     create_function_tool(
-        "code_analysis.find_symbol_references",
+        "code_analysis_find_symbol_references",
         "Finds all references to a symbol (function, class, variable, etc.) in the codebase. Uses the pre-initialized code graph for fast lookups.",
         properties,
         &["symbol_name"],
@@ -64,7 +64,7 @@ fn create_find_symbol_definitions_tool() -> OpenAiTool {
     );
     
     create_function_tool(
-        "code_analysis.find_symbol_definitions",
+        "code_analysis_find_symbol_definitions",
         "Finds the definition of a symbol (function, class, variable, etc.) in the codebase. Uses the pre-initialized code graph for fast lookups.",
         properties,
         &["symbol_name"],
@@ -87,7 +87,7 @@ fn create_get_symbol_subgraph_tool() -> OpenAiTool {
     );
     
     create_function_tool(
-        "code_analysis.get_symbol_subgraph",
+        "code_analysis_get_symbol_subgraph",
         "Returns a subgraph of code references starting from a specific symbol, with a maximum traversal depth. If multiple symbols have the same name (e.g., in different namespaces), includes all of them in the subgraph. Uses the pre-initialized code graph for fast lookups.",
         properties,
         &["symbol_name", "max_depth"],
@@ -104,7 +104,7 @@ fn create_update_code_graph_tool() -> OpenAiTool {
     );
     
     create_function_tool(
-        "code_analysis.update_code_graph",
+        "code_analysis_update_code_graph",
         "Updates the code graph by re-parsing any files that have changed since the last parse.",
         properties,
         &[],

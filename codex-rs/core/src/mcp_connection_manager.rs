@@ -240,7 +240,7 @@ impl McpConnectionManager {
         if server == "code_analysis" {
             // Create a tool call object
             let tool_call = ToolCall {
-                name: format!("code_analysis.{}", tool),
+                name: format!("code_analysis_{}", tool),
                 arguments: arguments.clone().unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new())),
             };
             
