@@ -11,6 +11,7 @@ pub fn register_azure_devops_tools() -> Vec<OpenAiTool> {
         create_get_work_item_tool(),
         create_create_work_item_tool(),
         create_update_work_item_tool(),
+        create_add_work_item_comment_tool(),
         create_query_pull_requests_tool(),
         create_get_pull_request_tool(),
         create_comment_on_pull_request_tool(),
@@ -156,6 +157,33 @@ fn create_update_work_item_tool() -> OpenAiTool {
         "Update an existing work item in Azure DevOps",
         properties,
         &["project", "id"]
+    )
+}
+
+/// Create a tool for adding a comment to a work item
+fn create_add_work_item_comment_tool() -> OpenAiTool {
+    let mut properties = BTreeMap::new();
+    
+    properties.insert(
+        "project".to_string(),
+        JsonSchema::String,
+    );
+    
+    properties.insert(
+        "id".to_string(),
+        JsonSchema::Number,
+    );
+    
+    properties.insert(
+        "comment".to_string(),
+        JsonSchema::String,
+    );
+
+    create_function_tool(
+        "azure_devops_add_work_item_comment",
+        "Add a comment to the discussion of a work item in Azure DevOps",
+        properties,
+        &["project", "id", "comment"]
     )
 }
 

@@ -48,6 +48,9 @@ pub async fn handle_azure_devops_tool_call(
         "azure_devops_update_work_item" => {
             tools.update_work_item(args).await
         },
+        "azure_devops_add_work_item_comment" => {
+            tools.add_work_item_comment(args).await
+        },
         "azure_devops_query_pull_requests" => {
             tools.query_pull_requests(args).await
         },

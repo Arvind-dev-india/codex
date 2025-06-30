@@ -41,10 +41,17 @@ impl AzureDevOpsClient {
 
     /// Create the common headers used for API requests
     fn create_headers(&self) -> Result<HeaderMap> {
+        self.create_headers_with_content_type("application/json")
+    }
+
+    /// Create headers with a specific content type
+    fn create_headers_with_content_type(&self, content_type: &str) -> Result<HeaderMap> {
         let mut headers = HeaderMap::new();
         
         // Add content type and accept headers
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        headers.insert(CONTENT_TYPE, HeaderValue::from_str(content_type).map_err(|_| {
+            CodexErr::Other("Failed to create content-type header".to_string())
+        })?);
         headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
         
         // Add authorization header if available
@@ -153,6 +160,42 @@ impl AzureDevOpsClient {
     ) -> Result<T> {
         let url = self.build_url(project, endpoint);
         let headers = self.create_headers()?;
+        
+        let response = self.client
+            .patch(&url)
+            .headers(headers)
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| CodexErr::Other(format!("Request failed: {}", e)))?;
+            
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Failed to get error response".to_string());
+            return Err(CodexErr::Other(format!(
+                "Azure DevOps API error: {} - {}",
+                status, text
+            )));
+        }
+        
+        response
+            .json::<T>()
+            .await
+            .map_err(|e| CodexErr::Other(format!("Failed to parse response: {}", e)))
+    }
+
+    /// Make a PATCH request with JSON Patch content type for work items
+    pub async fn patch_work_item<T: DeserializeOwned, B: Serialize>(
+        &self,
+        project: Option<&str>,
+        endpoint: &str,
+        body: &B,
+    ) -> Result<T> {
+        let url = self.build_url(project, endpoint);
+        let headers = self.create_headers_with_content_type("application/json-patch+json")?;
         
         let response = self.client
             .patch(&url)

@@ -190,7 +190,7 @@ impl AzureDevOpsTools {
         // Create the work item
         let endpoint = format!("wit/workitems/${}", work_item_type);
         let work_item: Value = self.client
-            .patch(Some(project), &endpoint, &field_updates)
+            .patch_work_item(Some(project), &endpoint, &field_updates)
             .await?;
             
         Ok(work_item)
@@ -255,10 +255,38 @@ impl AzureDevOpsTools {
         // Update the work item
         let endpoint = format!("wit/workitems/{}", id);
         let work_item: Value = self.client
-            .patch(Some(project), &endpoint, &field_updates)
+            .patch_work_item(Some(project), &endpoint, &field_updates)
             .await?;
             
         Ok(work_item)
+    }
+
+    /// Add a comment to a work item
+    pub async fn add_work_item_comment(&self, args: Value) -> Result<Value> {
+        let project = args["project"].as_str().ok_or_else(|| {
+            CodexErr::Other("project parameter is required".to_string())
+        })?;
+        
+        let id = args["id"].as_u64().ok_or_else(|| {
+            CodexErr::Other("id parameter is required".to_string())
+        })? as i32;
+        
+        let comment_text = args["comment"].as_str().ok_or_else(|| {
+            CodexErr::Other("comment parameter is required".to_string())
+        })?;
+        
+        // Create the comment request body
+        let comment_request = json!({
+            "text": comment_text
+        });
+        
+        // Add the comment to the work item
+        let endpoint = format!("wit/workitems/{}/comments", id);
+        let comment: Value = self.client
+            .post(Some(project), &endpoint, &comment_request)
+            .await?;
+            
+        Ok(comment)
     }
     
     /// Query pull requests
@@ -344,8 +372,8 @@ impl AzureDevOpsTools {
             CodexErr::Other("pull_request_id parameter is required".to_string())
         })? as i32;
         
-        let comment = args["comment"].as_str().ok_or_else(|| {
-            CodexErr::Other("comment parameter is required".to_string())
+        let comment = args["content"].as_str().ok_or_else(|| {
+            CodexErr::Other("content parameter is required".to_string())
         })?;
         
         // Create the comment request
@@ -369,8 +397,8 @@ impl AzureDevOpsTools {
             CodexErr::Other("project parameter is required".to_string())
         })?;
         
-        let wiki_identifier = args["wiki_identifier"].as_str().ok_or_else(|| {
-            CodexErr::Other("wiki_identifier parameter is required".to_string())
+        let wiki_identifier = args["wiki"].as_str().ok_or_else(|| {
+            CodexErr::Other("wiki parameter is required".to_string())
         })?;
         
         let path = args["path"].as_str().ok_or_else(|| {
@@ -392,8 +420,8 @@ impl AzureDevOpsTools {
             CodexErr::Other("project parameter is required".to_string())
         })?;
         
-        let wiki_identifier = args["wiki_identifier"].as_str().ok_or_else(|| {
-            CodexErr::Other("wiki_identifier parameter is required".to_string())
+        let wiki_identifier = args["wiki"].as_str().ok_or_else(|| {
+            CodexErr::Other("wiki parameter is required".to_string())
         })?;
         
         let path = args["path"].as_str().ok_or_else(|| {
@@ -462,25 +490,15 @@ impl AzureDevOpsTools {
             CodexErr::Other("project parameter is required".to_string())
         })?;
         
-        let pipeline_id = args["pipeline_id"].as_u64().ok_or_else(|| {
-            CodexErr::Other("pipeline_id parameter is required".to_string())
+        let build_id = args["build_id"].as_u64().ok_or_else(|| {
+            CodexErr::Other("build_id parameter is required".to_string())
         })? as i32;
         
-        // Get run ID if provided, otherwise get latest runs
-        if let Some(run_id) = args["run_id"].as_u64() {
-            let endpoint = format!("pipelines/{}/runs/{}", pipeline_id, run_id);
-            let run: Value = self.client
-                .get(Some(project), &endpoint)
-                .await?;
-            Ok(run)
-        } else {
-            // Get recent runs
-            let top = args["top"].as_u64().unwrap_or(10);
-            let endpoint = format!("pipelines/{}/runs?$top={}", pipeline_id, top);
-            let runs: Value = self.client
-                .get(Some(project), &endpoint)
-                .await?;
-            Ok(runs)
-        }
+        // Get build details - this is actually for getting build status, not pipeline runs
+        let endpoint = format!("build/builds/{}", build_id);
+        let build: Value = self.client
+            .get(Some(project), &endpoint)
+            .await?;
+        Ok(build)
     }
 }
