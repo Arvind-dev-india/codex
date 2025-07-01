@@ -727,6 +727,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e9b18233253483ce2f65329a24072ec414db782531bdbb7d0bbc4bd2ce6b7e21"
 
 [[package]]
+name = "code-analysis-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cc",
+ "clap",
+ "codex-core",
+ "mcp-types",
+ "once_cell",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "tree-sitter 0.20.10",
+]
+
+[[package]]
 name = "codex-ansi-escape"
 version = "0.0.0"
 dependencies = [
@@ -745,7 +763,7 @@ dependencies = [
  "similar",
  "tempfile",
  "thiserror 2.0.12",
- "tree-sitter",
+ "tree-sitter 0.25.6",
  "tree-sitter-bash",
 ]
 
@@ -823,7 +841,7 @@ dependencies = [
  "tokio-util",
  "toml",
  "tracing",
- "tree-sitter",
+ "tree-sitter 0.25.6",
  "tree-sitter-bash",
  "tree-sitter-c-sharp",
  "tree-sitter-cpp",
@@ -5341,6 +5359,16 @@ dependencies = [
  "tracing",
  "tracing-core",
  "tracing-log",
+]
+
+[[package]]
+name = "tree-sitter"
+version = "0.20.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e747b1f9b7b931ed39a548c1fae149101497de3c1fc8d9e18c62c1a66c683d3d"
+dependencies = [
+ "cc",
+ "regex",
 ]
 
 [[package]]

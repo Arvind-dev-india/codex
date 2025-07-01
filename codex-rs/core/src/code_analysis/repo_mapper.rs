@@ -338,8 +338,24 @@ impl RepoMapper {
             }
         }
         
-        // Process each modified file
-        for file_path in modified_files {
+        if modified_files.is_empty() {
+            return Ok(());
+        }
+        
+        // Find all files that reference symbols from the modified files
+        let mut files_to_reparse = HashSet::new();
+        files_to_reparse.extend(modified_files.iter().cloned());
+        
+        for modified_file in &modified_files {
+            // Find all files that have references to symbols defined in this modified file
+            let referencing_files = self.find_files_referencing_symbols_from_file(modified_file);
+            files_to_reparse.extend(referencing_files);
+        }
+        
+        tracing::debug!("Files to reparse due to changes: {:?}", files_to_reparse);
+        
+        // Process each file that needs reparsing
+        for file_path in files_to_reparse {
             // Remove existing symbols and references for this file
             self.context_extractor.remove_symbols_for_file(&file_path);
             
@@ -351,6 +367,48 @@ impl RepoMapper {
         self.build_graph_from_context();
         
         Ok(())
+    }
+    
+    /// Find all files that reference symbols defined in the given file
+    fn find_files_referencing_symbols_from_file(&self, target_file: &str) -> HashSet<String> {
+        let mut referencing_files = HashSet::new();
+        
+        // Get all symbols defined in the target file
+        let symbols_in_file: Vec<String> = self.context_extractor
+            .get_symbols()
+            .iter()
+            .filter(|(_, symbol)| symbol.file_path == target_file)
+            .map(|(fqn, _)| fqn.clone())
+            .collect();
+        
+        // Find all references to these symbols
+        for symbol_fqn in symbols_in_file {
+            let references = self.context_extractor.find_references_by_fqn(&symbol_fqn);
+            for reference in references {
+                if reference.reference_file != target_file {
+                    referencing_files.insert(reference.reference_file.clone());
+                }
+            }
+        }
+        
+        // Also check by symbol name (for cases where FQN resolution might not work perfectly)
+        let symbol_names: Vec<String> = self.context_extractor
+            .get_symbols()
+            .iter()
+            .filter(|(_, symbol)| symbol.file_path == target_file)
+            .map(|(_, symbol)| symbol.name.clone())
+            .collect();
+        
+        for symbol_name in symbol_names {
+            let references = self.context_extractor.find_references(&symbol_name);
+            for reference in references {
+                if reference.reference_file != target_file {
+                    referencing_files.insert(reference.reference_file.clone());
+                }
+            }
+        }
+        
+        referencing_files
     }
 
     /// Build the graph from the extracted context

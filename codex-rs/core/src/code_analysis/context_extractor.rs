@@ -228,6 +228,7 @@ impl ContextExtractor {
             "constant" => SymbolType::Constant,
             "module" => SymbolType::Module,
             "package" => SymbolType::Package,
+            "import" => SymbolType::Import,
             "type" => SymbolType::Class, // Map type definitions to class for now
             _ => {
                 tracing::debug!("Unknown symbol type: {}", symbol_type_str);
@@ -283,6 +284,8 @@ impl ContextExtractor {
             "implementation" => ReferenceType::Implementation,
             "type" => ReferenceType::Usage,
             "send" => ReferenceType::Call,
+            "import" => ReferenceType::Import,
+            "usage" => ReferenceType::Usage,
             _ => {
                 tracing::debug!("Unknown reference type: {}", ref_type_str);
                 return Ok(());

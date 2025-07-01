@@ -390,8 +390,25 @@ pub fn get_graph_status() -> GraphStatus {
     }
 }
 
+/// Get the current root path from the global graph manager
+pub fn get_root_path() -> Option<PathBuf> {
+    let manager = get_graph_manager();
+    if let Ok(manager) = manager.read() {
+        manager.get_root_path().map(|p| p.to_path_buf())
+    } else {
+        None
+    }
+}
+
 /// Get symbols from the global graph
 pub fn get_symbols() -> Option<HashMap<String, CodeSymbol>> {
+    // First, ensure the graph is up-to-date by checking for file changes
+    if let Some(root_path) = get_root_path() {
+        if let Err(e) = ensure_graph_for_path(&root_path) {
+            tracing::warn!("Failed to update graph before getting symbols: {}", e);
+        }
+    }
+    
     let manager = get_graph_manager();
     let manager = manager.read().ok()?;
     manager.get_symbols().cloned()
@@ -399,6 +416,13 @@ pub fn get_symbols() -> Option<HashMap<String, CodeSymbol>> {
 
 /// Find symbol references using the global graph
 pub fn find_symbol_references(symbol_name: &str) -> Vec<SymbolReference> {
+    // First, ensure the graph is up-to-date by checking for file changes
+    if let Some(root_path) = get_root_path() {
+        if let Err(e) = ensure_graph_for_path(&root_path) {
+            tracing::warn!("Failed to update graph before finding symbol references: {}", e);
+        }
+    }
+    
     let manager = get_graph_manager();
     if let Ok(manager) = manager.read() {
         manager.find_symbol_references(symbol_name)
@@ -412,6 +436,13 @@ pub fn find_symbol_references(symbol_name: &str) -> Vec<SymbolReference> {
 
 /// Find symbol definitions using the global graph
 pub fn find_symbol_definitions(symbol_name: &str) -> Vec<CodeSymbol> {
+    // First, ensure the graph is up-to-date by checking for file changes
+    if let Some(root_path) = get_root_path() {
+        if let Err(e) = ensure_graph_for_path(&root_path) {
+            tracing::warn!("Failed to update graph before finding symbol definitions: {}", e);
+        }
+    }
+    
     let manager = get_graph_manager();
     if let Ok(manager) = manager.read() {
         manager.find_symbol_definitions(symbol_name)
