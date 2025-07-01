@@ -18,6 +18,17 @@
  name: (identifier) @name.definition.method
  ) @definition.method
 
+; Constructor declarations (special case of method_declaration)
+(constructor_declaration
+ name: (identifier) @name.definition.method
+ ) @definition.method
+
+; Property declarations
+(property_declaration
+ name: (identifier) @name.definition.property
+ ) @definition.property
+
+
 (object_creation_expression
   (identifier) @name.reference.class
  ) @reference.class

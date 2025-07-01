@@ -1,6 +1,7 @@
-use codex_core::code_analysis::{get_parser_pool, SupportedLanguage};
+use codex_core::code_analysis::get_parser_pool;
 use std::fs;
 use tempfile::tempdir;
+use tree_sitter::StreamingIterator;
 
 fn print_ast_node(node: tree_sitter::Node, source: &str, depth: usize) {
     let indent = "  ".repeat(depth);
@@ -27,22 +28,27 @@ fn print_ast_node(node: tree_sitter::Node, source: &str, depth: usize) {
 }
 
 #[test]
-fn debug_csharp_method_call_ast() {
+fn debug_csharp_interface_abstract_ast() {
     let dir = tempdir().unwrap();
-    let file_path = dir.path().join("DebugCalls.cs");
+    let file_path = dir.path().join("DebugInterfaceAbstract.cs");
     
     let content = r#"
-public class Test
+interface ICalculator
 {
-    public void MethodA()
+    int Calculate(int x, int y);
+}
+
+abstract class BaseCalculator
+{
+    public abstract int Calculate(int x, int y);
+}
+
+class ConcreteCalculator : BaseCalculator
+{
+    public override int Calculate(int x, int y)
     {
-        MethodB();
-        this.MethodC();
-        Console.WriteLine("test");
+        return x + y;
     }
-    
-    public void MethodB() { }
-    public void MethodC() { }
 }
 "#;
     
@@ -53,4 +59,25 @@ public class Test
     
     println!("=== FULL AST STRUCTURE ===");
     print_ast_node(parsed_file.tree.root_node(), &parsed_file.source, 0);
+    
+    // Test current query
+    let query_source = std::fs::read_to_string("src/code_analysis/queries/csharp.scm").unwrap();
+    let language = &parsed_file.tree.language();
+    let query = tree_sitter::Query::new(language, &query_source).unwrap();
+    let mut cursor = tree_sitter::QueryCursor::new();
+    let mut matches = cursor.matches(&query, parsed_file.tree.root_node(), parsed_file.source.as_bytes());
+    
+    println!("\n=== QUERY MATCHES ===");
+    while let Some(m) = matches.next() {
+        for capture in m.captures {
+            let node = capture.node;
+            let text = &parsed_file.source[node.byte_range()];
+            println!("  {}: {} ({}:{})", 
+                query.capture_names()[capture.index as usize],
+                text,
+                node.start_position().row + 1,
+                node.start_position().column + 1
+            );
+        }
+    }
 }

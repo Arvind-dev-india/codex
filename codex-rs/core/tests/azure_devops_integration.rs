@@ -6,7 +6,7 @@ mod tests {
     use tokio::sync::Notify;
     
     use codex_core::config::Config;
-    use codex_core::config_types::AzureDevOpsConfig;
+    use codex_core::config_types::{AzureDevOpsConfig, AzureDevOpsAuthMethod};
     use codex_core::Codex;
     
     /// Test that Azure DevOps tools are included when Azure DevOps is configured
@@ -27,6 +27,7 @@ mod tests {
         // Add Azure DevOps configuration
         config.azure_devops = Some(AzureDevOpsConfig {
             organization_url: "https://dev.azure.com/test-org".to_string(),
+            auth_method: AzureDevOpsAuthMethod::Pat,
             pat: Some("test-pat".to_string()),
             pat_env_var: None,
             default_project: Some("TestProject".to_string()),

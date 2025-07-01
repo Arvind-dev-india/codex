@@ -4,7 +4,7 @@ use std::path::Path;
 
 #[test]
 fn test_csharp_basic_class_parsing() {
-    let test_file = "test_files/csharp_test_suite/BasicClass.cs";
+    let test_file = "../test_files/csharp_test_suite/BasicClass.cs";
     
     // Ensure the file exists
     assert!(Path::new(test_file).exists(), "Test file {} does not exist", test_file);
@@ -62,7 +62,7 @@ fn test_csharp_basic_class_parsing() {
 
 #[test]
 fn test_csharp_inheritance_parsing() {
-    let test_file = "test_files/csharp_test_suite/InheritanceExample.cs";
+    let test_file = "../test_files/csharp_test_suite/InheritanceExample.cs";
     
     assert!(Path::new(test_file).exists(), "Test file {} does not exist", test_file);
     
@@ -111,9 +111,9 @@ fn test_csharp_inheritance_parsing() {
 fn test_csharp_inter_file_references() {
     // First, parse all files to build the complete symbol table
     let files = [
-        "test_files/csharp_test_suite/BasicClass.cs",
-        "test_files/csharp_test_suite/InheritanceExample.cs",
-        "test_files/csharp_test_suite/InterFileReferences.cs",
+        "../test_files/csharp_test_suite/BasicClass.cs",
+        "../test_files/csharp_test_suite/InheritanceExample.cs",
+        "../test_files/csharp_test_suite/InterFileReferences.cs",
     ];
     
     for file in &files {
@@ -162,7 +162,7 @@ fn test_csharp_inter_file_references() {
 
 #[test]
 fn test_csharp_generic_parsing() {
-    let test_file = "test_files/csharp_test_suite/GenericAndAdvanced.cs";
+    let test_file = "../test_files/csharp_test_suite/GenericAndAdvanced.cs";
     
     assert!(Path::new(test_file).exists(), "Test file {} does not exist", test_file);
     
@@ -255,7 +255,7 @@ fn test_csharp_line_numbers_accuracy() {
 
 #[test]
 fn test_csharp_namespace_detection() {
-    let test_file = "test_files/csharp_test_suite/BasicClass.cs";
+    let test_file = "../test_files/csharp_test_suite/BasicClass.cs";
     
     assert!(Path::new(test_file).exists(), "Test file {} does not exist", test_file);
     
@@ -278,7 +278,7 @@ fn test_csharp_namespace_detection() {
 
 #[test]
 fn test_csharp_parser_pool_integration() {
-    let test_file = "test_files/csharp_test_suite/BasicClass.cs";
+    let test_file = "../test_files/csharp_test_suite/BasicClass.cs";
     
     assert!(Path::new(test_file).exists(), "Test file {} does not exist", test_file);
     

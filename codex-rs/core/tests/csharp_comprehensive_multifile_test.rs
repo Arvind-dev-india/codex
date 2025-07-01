@@ -131,9 +131,9 @@ async fn test_find_symbol_references_tool(base_path: &Path) {
     });
     
     let result = handle_find_symbol_references(references_input);
-    assert!(result.is_some());
+    assert!(result.is_some(), "handle_find_symbol_references should return Some");
     let output = result.unwrap();
-    assert!(output.is_ok());
+    assert!(output.is_ok(), "handle_find_symbol_references should return Ok: {:?}", output.err());
     
     let json_result = output.unwrap();
     println!("User class references: {}", serde_json::to_string_pretty(&json_result).unwrap());
@@ -171,9 +171,9 @@ async fn test_find_symbol_references_tool(base_path: &Path) {
     });
     
     let result = handle_find_symbol_references(references_input);
-    assert!(result.is_some());
+    assert!(result.is_some(), "handle_find_symbol_references should return Some");
     let output = result.unwrap();
-    assert!(output.is_ok());
+    assert!(output.is_ok(), "handle_find_symbol_references should return Ok: {:?}", output.err());
     
     let json_result = output.unwrap();
     if let Some(references) = json_result.get("references") {
@@ -190,9 +190,9 @@ async fn test_find_symbol_references_tool(base_path: &Path) {
     });
     
     let result = handle_find_symbol_references(references_input);
-    assert!(result.is_some());
+    assert!(result.is_some(), "handle_find_symbol_references should return Some");
     let output = result.unwrap();
-    assert!(output.is_ok());
+    assert!(output.is_ok(), "handle_find_symbol_references should return Ok: {:?}", output.err());
     
     let json_result = output.unwrap();
     if let Some(references) = json_result.get("references") {
@@ -213,9 +213,9 @@ async fn test_find_symbol_definitions_tool(_base_path: &Path) {
     });
     
     let result = handle_find_symbol_definitions(definitions_input);
-    assert!(result.is_some());
+    assert!(result.is_some(), "handle_find_symbol_definitions should return Some");
     let output = result.unwrap();
-    assert!(output.is_ok());
+    assert!(output.is_ok(), "handle_find_symbol_definitions should return Ok: {:?}", output.err());
     
     let json_result = output.unwrap();
     println!("User class definitions: {}", serde_json::to_string_pretty(&json_result).unwrap());
@@ -224,12 +224,22 @@ async fn test_find_symbol_definitions_tool(_base_path: &Path) {
         if let Some(defs_array) = definitions.as_array() {
             println!("Found {} definitions of User class", defs_array.len());
             
-            // Should find exactly one definition of User class
-            assert_eq!(defs_array.len(), 1, "Should find exactly one User class definition");
+            // Should find at least one definition of User class (class + constructor)
+            assert!(defs_array.len() >= 1, "Should find at least one User class definition");
             
-            let user_def = &defs_array[0];
-            assert_eq!(user_def.get("symbol").and_then(|n| n.as_str()), Some("User"));
-            assert_eq!(user_def.get("symbol_type").and_then(|t| t.as_str()), Some("class"));
+            // Check that we have the User class definition
+            let has_class = defs_array.iter().any(|def| 
+                def.get("symbol_type").and_then(|t| t.as_str()) == Some("class")
+            );
+            assert!(has_class, "Should find User class definition");
+            
+            // Find the class definition specifically
+            let user_class_def = defs_array.iter().find(|def| 
+                def.get("symbol_type").and_then(|t| t.as_str()) == Some("class")
+            ).expect("Should find User class definition");
+            
+            assert_eq!(user_class_def.get("symbol").and_then(|n| n.as_str()), Some("User"));
+            assert_eq!(user_class_def.get("symbol_type").and_then(|t| t.as_str()), Some("class"));
             
             println!("✅ User class definition test passed");
         }
@@ -241,9 +251,9 @@ async fn test_find_symbol_definitions_tool(_base_path: &Path) {
     });
     
     let result = handle_find_symbol_definitions(definitions_input);
-    assert!(result.is_some());
+    assert!(result.is_some(), "handle_find_symbol_definitions should return Some");
     let output = result.unwrap();
-    assert!(output.is_ok());
+    assert!(output.is_ok(), "handle_find_symbol_definitions should return Ok: {:?}", output.err());
     
     let json_result = output.unwrap();
     if let Some(definitions) = json_result.get("definitions") {
@@ -268,9 +278,9 @@ async fn test_get_symbol_subgraph_tool(_base_path: &Path) {
     });
     
     let result = handle_get_symbol_subgraph(subgraph_input);
-    assert!(result.is_some());
+    assert!(result.is_some(), "handle_get_symbol_subgraph should return Some");
     let output = result.unwrap();
-    assert!(output.is_ok());
+    assert!(output.is_ok(), "handle_get_symbol_subgraph should return Ok: {:?}", output.err());
     
     let json_result = output.unwrap();
     println!("CreateUser subgraph: {}", serde_json::to_string_pretty(&json_result).unwrap());
@@ -308,9 +318,9 @@ async fn test_get_symbol_subgraph_tool(_base_path: &Path) {
     });
     
     let result = handle_get_symbol_subgraph(subgraph_input);
-    assert!(result.is_some());
+    assert!(result.is_some(), "handle_get_symbol_subgraph should return Some");
     let output = result.unwrap();
-    assert!(output.is_ok());
+    assert!(output.is_ok(), "handle_get_symbol_subgraph should return Ok: {:?}", output.err());
     
     let json_result = output.unwrap();
     if let Some(nodes) = json_result.get("nodes") {
@@ -339,9 +349,9 @@ async fn test_complex_cross_file_relationships(_base_path: &Path) {
     });
     
     let result = handle_get_symbol_subgraph(subgraph_input);
-    assert!(result.is_some());
+    assert!(result.is_some(), "handle_get_symbol_subgraph should return Some");
     let output = result.unwrap();
-    assert!(output.is_ok());
+    assert!(output.is_ok(), "handle_get_symbol_subgraph should return Ok: {:?}", output.err());
     
     let json_result = output.unwrap();
     

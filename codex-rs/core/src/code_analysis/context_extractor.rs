@@ -18,6 +18,7 @@ pub enum SymbolType {
     Interface,
     Variable,
     Constant,
+    Property,
     Import,
     Module,
     Package,
@@ -226,6 +227,7 @@ impl ContextExtractor {
             "interface" => SymbolType::Interface,
             "variable" => SymbolType::Variable,
             "constant" => SymbolType::Constant,
+            "property" => SymbolType::Property,
             "module" => SymbolType::Module,
             "package" => SymbolType::Package,
             "import" => SymbolType::Import,
@@ -238,7 +240,12 @@ impl ContextExtractor {
         
         let name = name_capture.text.clone();
         let parent = None; // TODO: Extract parent information from context
-        let fqn = self.generate_fqn(&name, &symbol_type, &parsed_file.path, &parent);
+        let mut fqn = self.generate_fqn(&name, &symbol_type, &parsed_file.path, &parent);
+        
+        // For methods, add line number to ensure uniqueness (handles interface/abstract/override methods)
+        if matches!(symbol_type, SymbolType::Method) {
+            fqn = format!("{}::{}", fqn, def_capture.start_point.0 + 1);
+        }
         
         let symbol = CodeSymbol {
             name: name.clone(),
@@ -516,6 +523,7 @@ impl ContextExtractor {
             SymbolType::Interface => "interface",
             SymbolType::Variable => "variable",
             SymbolType::Constant => "constant",
+            SymbolType::Property => "property",
             SymbolType::Import => "import",
             SymbolType::Module => "module",
             SymbolType::Package => "package",
@@ -524,6 +532,13 @@ impl ContextExtractor {
         
         // Add symbol name
         fqn_parts.push(name.to_string());
+        
+        // For methods with the same name, add line number to make them unique
+        // This handles cases like interface methods, abstract methods, and overrides
+        if matches!(symbol_type, SymbolType::Method) {
+            // We don't have access to line numbers here, so we'll need to modify the caller
+            // For now, just use the basic FQN and handle uniqueness in the caller
+        }
         
         // Join with double colons to form FQN
         fqn_parts.join("::")
