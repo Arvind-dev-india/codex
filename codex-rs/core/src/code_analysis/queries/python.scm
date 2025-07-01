@@ -2,15 +2,23 @@
 (class_definition
   name: (identifier) @name.definition.class) @definition.class
 
-;; Function definitions
-(function_definition
-  name: (identifier) @name.definition.function) @definition.function
-
 ;; Method definitions (functions inside classes)
 (class_definition
   body: (block
     (function_definition
       name: (identifier) @name.definition.method) @definition.method))
+
+;; Method definitions with decorators (decorated functions inside classes)
+(class_definition
+  body: (block
+    (decorated_definition
+      definition: (function_definition
+        name: (identifier) @name.definition.method) @definition.method)))
+
+;; Standalone function definitions (functions at module level, not inside classes)
+(module
+  (function_definition
+    name: (identifier) @name.definition.function) @definition.function)
 
 ;; Variable assignments
 (assignment

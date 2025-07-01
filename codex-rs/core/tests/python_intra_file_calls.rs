@@ -243,7 +243,7 @@ if __name__ == "__main__":
     assert!(calculator_class.start_line > 0);
     assert!(scientific_calc_class.start_line > calculator_class.end_line);
     
-    // Test that we found the expected methods (in Python, methods are detected as functions)
+    // Test that we found the expected methods (in Python, methods are detected as methods)
     let expected_methods = [
         "__init__", "add", "subtract", "multiply", "divide", "power", "sqrt",
         "get_value", "get_history", "clear", "complex_calculation",
@@ -254,7 +254,7 @@ if __name__ == "__main__":
     
     for method_name in &expected_methods {
         let method = symbols.values()
-            .find(|s| s.name == *method_name && matches!(s.symbol_type, SymbolType::Function))
+            .find(|s| s.name == *method_name && matches!(s.symbol_type, SymbolType::Method))
             .expect(&format!("{} method should be found", method_name));
         
         assert!(method.start_line > 0);

@@ -31,16 +31,16 @@ fn test_python_basic_class_parsing() {
     assert!(basic_class.start_line > 0, "BasicClass start line should be positive");
     assert!(basic_class.end_line > basic_class.start_line, "BasicClass end line should be after start line");
     
-    // Test method detection (in Python, methods are detected as functions)
+    // Test method detection (in Python, methods are detected as methods)
     let init_method = symbols.values()
-        .find(|s| s.name == "__init__" && matches!(s.symbol_type, SymbolType::Function))
+        .find(|s| s.name == "__init__" && matches!(s.symbol_type, SymbolType::Method))
         .expect("__init__ method should be found");
     
     assert!(init_method.start_line > 0);
     assert!(init_method.end_line > init_method.start_line);
     
     let add_method = symbols.values()
-        .find(|s| s.name == "add" && matches!(s.symbol_type, SymbolType::Function))
+        .find(|s| s.name == "add" && matches!(s.symbol_type, SymbolType::Method))
         .expect("add method should be found");
     
     assert!(add_method.start_line > 0);
