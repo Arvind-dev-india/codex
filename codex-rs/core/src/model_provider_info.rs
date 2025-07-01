@@ -81,6 +81,7 @@ impl Default for ModelProviderInfo {
             env_key: Some("OPENAI_API_KEY".into()),
             env_key_instructions: Some("Create an API key (https://platform.openai.com) and export it as an environment variable.".into()),
             wire_api: WireApi::Responses,
+            query_params: None,
         }
     }
 }
