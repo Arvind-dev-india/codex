@@ -22,7 +22,7 @@ pub mod exec_env;
 mod flags;
 mod is_safe_command;
 mod mcp_connection_manager;
-mod mcp_tool_call;
+pub mod mcp_tool_call;
 mod message_history;
 mod model_provider_info;
 pub use model_provider_info::ModelProviderInfo;

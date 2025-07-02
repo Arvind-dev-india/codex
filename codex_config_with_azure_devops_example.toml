@@ -1,0 +1,30 @@
+# Example ~/.codex/config.toml with Azure DevOps integration
+# This shows how to add Azure DevOps configuration to your main codex config
+
+# Your existing codex configuration
+model = "claude-3-5-sonnet-20241022"
+approval_policy = "ask"
+
+# Add Azure DevOps configuration
+[azure_devops]
+organization_url = "https://dev.azure.com/your-organization-name"
+auth_method = "oauth"  # Recommended: uses OAuth device code flow
+default_project = "your-default-project"  # Optional: default project for tool calls
+
+# Alternative authentication methods:
+# auth_method = "pat"  # Use Personal Access Token
+# pat = "your-personal-access-token"
+# 
+# auth_method = "auto"  # Try OAuth first, fall back to PAT
+# pat_env_var = "AZURE_DEVOPS_PAT"  # Read PAT from environment variable
+
+# Your other codex configuration continues...
+# [tui]
+# [model_providers]
+# etc.
+
+# Benefits of using the main codex config:
+# 1. Single configuration file for all codex functionality
+# 2. Shared OAuth tokens between codex CLI and MCP server
+# 3. Automatic token refresh and management
+# 4. Consistent authentication experience

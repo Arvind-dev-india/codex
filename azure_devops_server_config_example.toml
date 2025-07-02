@@ -1,0 +1,37 @@
+# Azure DevOps Server Configuration Example
+# Copy this file and customize it for your Azure DevOps setup
+
+# Required: Your Azure DevOps organization URL
+# This should be the full URL: https://dev.azure.com/{organization}
+organization_url = "https://dev.azure.com/your-organization-name"
+
+# Authentication method: "pat", "oauth", or "auto" (default: "auto")
+# - "pat": Use Personal Access Token only
+# - "oauth": Use OAuth device code flow only
+# - "auto": Try OAuth first, fall back to PAT
+auth_method = "pat"
+
+# Required: Personal Access Token for authentication
+# Generate this from: https://dev.azure.com/{organization}/_usersSettings/tokens
+# Required scopes: Work Items (read/write), Code (read/write), Build (read/execute), Wiki (read/write)
+pat = "your-personal-access-token"
+
+# Alternative: Use environment variable for PAT (more secure)
+# pat_env_var = "AZURE_DEVOPS_PAT"
+
+# Optional: Default project to use when not specified in tool calls
+# This can be the project name or project ID
+default_project = "your-default-project"
+
+# Optional: API version (defaults to "7.0")
+# api_version = "7.0"
+
+# Example usage:
+# 1. Copy this file to azure_devops_config.toml
+# 2. Replace the placeholder values with your actual Azure DevOps details
+# 3. Run: ./azure-devops-server --config azure_devops_config.toml
+#
+# Alternative: Use environment variables instead of a config file:
+# export AZURE_DEVOPS_ORG="your-organization-name"  # Will be converted to full URL
+# export AZURE_DEVOPS_PAT="your-personal-access-token"
+# export AZURE_DEVOPS_PROJECT="your-default-project"  # Optional

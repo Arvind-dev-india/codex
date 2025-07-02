@@ -11,14 +11,17 @@ use serde::Deserialize;
 use serde::Serialize;
 
 // Import Azure DevOps configuration
+#[path = "config_types/config_types_azure.rs"]
 mod config_types_azure;
 pub use config_types_azure::{AzureDevOpsConfig, AzureDevOpsAuthMethod};
 
 // Import Kusto configuration
+#[path = "config_types/config_types_kusto.rs"]
 mod config_types_kusto;
 pub use config_types_kusto::{KustoConfig, KustoDatabaseConfig};
 
 // Import Recovery Services configuration
+#[path = "config_types/config_types_recovery_services.rs"]
 mod config_types_recovery_services;
 pub use config_types_recovery_services::{RecoveryServicesConfig, RecoveryServicesVaultConfig};
 
