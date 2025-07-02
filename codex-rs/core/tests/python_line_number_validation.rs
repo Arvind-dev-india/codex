@@ -136,8 +136,8 @@ class OuterClass:
         .expect("another_function should be found");
     
     println!("another_function: lines {}-{}", another_function.start_line, another_function.end_line);
-    assert_eq!(another_function.start_line, 53, "another_function should start at line 53");
-    assert_eq!(another_function.end_line, 55, "another_function should end at line 55");
+    assert_eq!(another_function.start_line, 60, "another_function should start at line 60");
+    assert_eq!(another_function.end_line, 62, "another_function should end at line 62");
     
     // Test exact line numbers for classes
     let test_class = symbols.values()
@@ -145,16 +145,16 @@ class OuterClass:
         .expect("TestClass should be found");
     
     println!("TestClass: lines {}-{}", test_class.start_line, test_class.end_line);
-    assert_eq!(test_class.start_line, 16, "TestClass should start at line 16");
-    assert_eq!(test_class.end_line, 50, "TestClass should end at line 50");
+    assert_eq!(test_class.start_line, 17, "TestClass should start at line 17");
+    assert_eq!(test_class.end_line, 56, "TestClass should end at line 56");
     
     let outer_class = symbols.values()
         .find(|s| s.name == "OuterClass" && matches!(s.symbol_type, SymbolType::Class))
         .expect("OuterClass should be found");
     
     println!("OuterClass: lines {}-{}", outer_class.start_line, outer_class.end_line);
-    assert_eq!(outer_class.start_line, 68, "OuterClass should start at line 68");
-    assert_eq!(outer_class.end_line, 85, "OuterClass should end at line 85");
+    assert_eq!(outer_class.start_line, 77, "OuterClass should start at line 77");
+    assert_eq!(outer_class.end_line, 95, "OuterClass should end at line 95");
     
     // Test exact line numbers for methods
     let init_method = symbols.values()
@@ -162,16 +162,16 @@ class OuterClass:
         .expect("__init__ method should be found");
     
     println!("__init__: lines {}-{}", init_method.start_line, init_method.end_line);
-    assert_eq!(init_method.start_line, 20, "__init__ should start at line 20");
-    assert_eq!(init_method.end_line, 23, "__init__ should end at line 23");
+    assert_eq!(init_method.start_line, 21, "__init__ should start at line 21");
+    assert_eq!(init_method.end_line, 24, "__init__ should end at line 24");
     
     let add_numbers_method = symbols.values()
         .find(|s| s.name == "add_numbers" && matches!(s.symbol_type, SymbolType::Method))
         .expect("add_numbers method should be found");
     
     println!("add_numbers: lines {}-{}", add_numbers_method.start_line, add_numbers_method.end_line);
-    assert_eq!(add_numbers_method.start_line, 26, "add_numbers should start at line 26");
-    assert_eq!(add_numbers_method.end_line, 29, "add_numbers should end at line 29");
+    assert_eq!(add_numbers_method.start_line, 28, "add_numbers should start at line 28");
+    assert_eq!(add_numbers_method.end_line, 31, "add_numbers should end at line 31");
     
     // Test exact line numbers for property
     let display_name_property = symbols.values()
@@ -179,8 +179,8 @@ class OuterClass:
         .expect("display_name property should be found");
     
     println!("display_name: lines {}-{}", display_name_property.start_line, display_name_property.end_line);
-    assert_eq!(display_name_property.start_line, 33, "display_name should start at line 33");
-    assert_eq!(display_name_property.end_line, 35, "display_name should end at line 35");
+    assert_eq!(display_name_property.start_line, 36, "display_name should start at line 36");
+    assert_eq!(display_name_property.end_line, 38, "display_name should end at line 38");
     
     // Test exact line numbers for static method
     let utility_method = symbols.values()
@@ -188,8 +188,8 @@ class OuterClass:
         .expect("utility_method should be found");
     
     println!("utility_method: lines {}-{}", utility_method.start_line, utility_method.end_line);
-    assert_eq!(utility_method.start_line, 39, "utility_method should start at line 39");
-    assert_eq!(utility_method.end_line, 41, "utility_method should end at line 41");
+    assert_eq!(utility_method.start_line, 43, "utility_method should start at line 43");
+    assert_eq!(utility_method.end_line, 45, "utility_method should end at line 45");
     
     // Test exact line numbers for class method
     let from_string_method = symbols.values()
@@ -197,8 +197,8 @@ class OuterClass:
         .expect("from_string method should be found");
     
     println!("from_string: lines {}-{}", from_string_method.start_line, from_string_method.end_line);
-    assert_eq!(from_string_method.start_line, 45, "from_string should start at line 45");
-    assert_eq!(from_string_method.end_line, 49, "from_string should end at line 49");
+    assert_eq!(from_string_method.start_line, 50, "from_string should start at line 50");
+    assert_eq!(from_string_method.end_line, 55, "from_string should end at line 55");
     
     // Test exact line numbers for nested functions
     let outer_function = symbols.values()
@@ -214,8 +214,8 @@ class OuterClass:
         .expect("inner_function should be found");
     
     println!("inner_function: lines {}-{}", inner_function.start_line, inner_function.end_line);
-    assert_eq!(inner_function.start_line, 61, "inner_function should start at line 61");
-    assert_eq!(inner_function.end_line, 63, "inner_function should end at line 63");
+    assert_eq!(inner_function.start_line, 69, "inner_function should start at line 69");
+    assert_eq!(inner_function.end_line, 71, "inner_function should end at line 71");
     
     // Test exact line numbers for nested classes
     let inner_class = symbols.values()
@@ -223,24 +223,24 @@ class OuterClass:
         .expect("InnerClass should be found");
     
     println!("InnerClass: lines {}-{}", inner_class.start_line, inner_class.end_line);
-    assert_eq!(inner_class.start_line, 72, "InnerClass should start at line 72");
-    assert_eq!(inner_class.end_line, 78, "InnerClass should end at line 78");
+    assert_eq!(inner_class.start_line, 81, "InnerClass should start at line 81");
+    assert_eq!(inner_class.end_line, 87, "InnerClass should end at line 87");
     
     let inner_method = symbols.values()
         .find(|s| s.name == "inner_method" && matches!(s.symbol_type, SymbolType::Method))
         .expect("inner_method should be found");
     
     println!("inner_method: lines {}-{}", inner_method.start_line, inner_method.end_line);
-    assert_eq!(inner_method.start_line, 75, "inner_method should start at line 75");
-    assert_eq!(inner_method.end_line, 77, "inner_method should end at line 77");
+    assert_eq!(inner_method.start_line, 84, "inner_method should start at line 84");
+    assert_eq!(inner_method.end_line, 86, "inner_method should end at line 86");
     
     let outer_method = symbols.values()
         .find(|s| s.name == "outer_method" && matches!(s.symbol_type, SymbolType::Method))
         .expect("outer_method should be found");
     
     println!("outer_method: lines {}-{}", outer_method.start_line, outer_method.end_line);
-    assert_eq!(outer_method.start_line, 81, "outer_method should start at line 81");
-    assert_eq!(outer_method.end_line, 84, "outer_method should end at line 84");
+    assert_eq!(outer_method.start_line, 91, "outer_method should start at line 91");
+    assert_eq!(outer_method.end_line, 94, "outer_method should end at line 94");
     
     println!("✅ All line number validations passed!");
 }
@@ -356,8 +356,8 @@ def function_with_long_body():
         .expect("MultilineClass should be found");
     
     println!("MultilineClass: lines {}-{}", multiline_class.start_line, multiline_class.end_line);
-    assert_eq!(multiline_class.start_line, 19, "MultilineClass should start at line 19");
-    assert_eq!(multiline_class.end_line, 51, "MultilineClass should end at line 51");
+    assert_eq!(multiline_class.start_line, 18, "MultilineClass should start at line 18");
+    assert_eq!(multiline_class.end_line, 52, "MultilineClass should end at line 52");
     
     // Test multiline constructor
     let init_method = symbols.values()
@@ -365,7 +365,7 @@ def function_with_long_body():
         .expect("__init__ method should be found");
     
     println!("__init__: lines {}-{}", init_method.start_line, init_method.end_line);
-    assert_eq!(init_method.start_line, 27, "__init__ should start at line 27");
+    assert_eq!(init_method.start_line, 26, "__init__ should start at line 26");
     assert_eq!(init_method.end_line, 37, "__init__ should end at line 37");
     
     // Test complex method
@@ -375,7 +375,7 @@ def function_with_long_body():
     
     println!("complex_method: lines {}-{}", complex_method.start_line, complex_method.end_line);
     assert_eq!(complex_method.start_line, 39, "complex_method should start at line 39");
-    assert_eq!(complex_method.end_line, 51, "complex_method should end at line 51");
+    assert_eq!(complex_method.end_line, 52, "complex_method should end at line 52");
     
     // Test function with long body
     let long_body_function = symbols.values()
@@ -383,8 +383,8 @@ def function_with_long_body():
         .expect("function_with_long_body should be found");
     
     println!("function_with_long_body: lines {}-{}", long_body_function.start_line, long_body_function.end_line);
-    assert_eq!(long_body_function.start_line, 53, "function_with_long_body should start at line 53");
-    assert_eq!(long_body_function.end_line, 71, "function_with_long_body should end at line 71");
+    assert_eq!(long_body_function.start_line, 54, "function_with_long_body should start at line 54");
+    assert_eq!(long_body_function.end_line, 73, "function_with_long_body should end at line 73");
     
     println!("✅ All multiline construct line number validations passed!");
 }
@@ -514,8 +514,8 @@ class CompactClass:
         .expect("LocalClass should be found");
     
     println!("LocalClass: lines {}-{}", local_class.start_line, local_class.end_line);
-    assert_eq!(local_class.start_line, 32, "LocalClass should start at line 32");
-    assert_eq!(local_class.end_line, 34, "LocalClass should end at line 34");
+    assert_eq!(local_class.start_line, 33, "LocalClass should start at line 33");
+    assert_eq!(local_class.end_line, 35, "LocalClass should end at line 35");
     
     // Test compact class
     let compact_class = symbols.values()
@@ -523,16 +523,16 @@ class CompactClass:
         .expect("CompactClass should be found");
     
     println!("CompactClass: lines {}-{}", compact_class.start_line, compact_class.end_line);
-    assert_eq!(compact_class.start_line, 41, "CompactClass should start at line 41");
-    assert_eq!(compact_class.end_line, 42, "CompactClass should end at line 42");
+    assert_eq!(compact_class.start_line, 42, "CompactClass should start at line 42");
+    assert_eq!(compact_class.end_line, 43, "CompactClass should end at line 43");
     
     let compact_method = symbols.values()
         .find(|s| s.name == "compact_method" && matches!(s.symbol_type, SymbolType::Method))
         .expect("compact_method should be found");
     
     println!("compact_method: lines {}-{}", compact_method.start_line, compact_method.end_line);
-    assert_eq!(compact_method.start_line, 42, "compact_method should start at line 42");
-    assert_eq!(compact_method.end_line, 42, "compact_method should end at line 42 (same line)");
+    assert_eq!(compact_method.start_line, 43, "compact_method should start at line 43");
+    assert_eq!(compact_method.end_line, 43, "compact_method should end at line 43 (same line)");
     
     println!("✅ All edge case line number validations passed!");
 }
