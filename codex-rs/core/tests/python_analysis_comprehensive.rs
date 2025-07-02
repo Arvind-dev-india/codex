@@ -1,5 +1,4 @@
 use codex_core::code_analysis::context_extractor::{ContextExtractor, SymbolType};
-use codex_core::code_analysis::{get_parser_pool, SupportedLanguage, QueryType};
 use std::path::Path;
 
 #[test]
@@ -106,7 +105,7 @@ fn test_python_inheritance_parsing() {
     let user_methods = ["__init__", "add_order", "get_order", "get_total_order_value", "_log_activity", "__str__", "__repr__"];
     for method_name in &user_methods {
         let method = symbols.values()
-            .find(|s| s.name == *method_name && matches!(s.symbol_type, SymbolType::Function))
+            .find(|s| s.name == *method_name && matches!(s.symbol_type, SymbolType::Method))
             .expect(&format!("{} method should be found", method_name));
         
         assert!(method.start_line > 0);
@@ -116,7 +115,7 @@ fn test_python_inheritance_parsing() {
     let admin_methods = ["add_permission", "has_permission", "promote_user"];
     for method_name in &admin_methods {
         let method = symbols.values()
-            .find(|s| s.name == *method_name && matches!(s.symbol_type, SymbolType::Function))
+            .find(|s| s.name == *method_name && matches!(s.symbol_type, SymbolType::Method))
             .expect(&format!("{} method should be found", method_name));
         
         assert!(method.start_line > 0);
@@ -168,7 +167,7 @@ fn test_python_enum_and_complex_types() {
     let calculation_methods = ["calculate_subtotal", "calculate_discount", "calculate_tax", "calculate_total"];
     for method_name in &calculation_methods {
         let method = symbols.values()
-            .find(|s| s.name == *method_name && matches!(s.symbol_type, SymbolType::Function))
+            .find(|s| s.name == *method_name && matches!(s.symbol_type, SymbolType::Method))
             .expect(&format!("{} method should be found", method_name));
         
         assert!(method.start_line > 0);
@@ -228,7 +227,7 @@ fn test_python_generic_and_abstract_classes() {
     let abstract_methods = ["add", "get_by_id", "get_all", "update", "delete"];
     for method_name in &abstract_methods {
         let method = symbols.values()
-            .find(|s| s.name == *method_name && matches!(s.symbol_type, SymbolType::Function))
+            .find(|s| s.name == *method_name && matches!(s.symbol_type, SymbolType::Method))
             .expect(&format!("{} abstract method should be found", method_name));
         
         assert!(method.start_line > 0);
@@ -289,7 +288,7 @@ fn test_python_utility_functions_and_decorators() {
     let timer_methods = ["__enter__", "__exit__", "elapsed"];
     for method_name in &timer_methods {
         let method = symbols.values()
-            .find(|s| s.name == *method_name && matches!(s.symbol_type, SymbolType::Function))
+            .find(|s| s.name == *method_name && matches!(s.symbol_type, SymbolType::Method))
             .expect(&format!("{} method should be found", method_name));
         
         assert!(method.start_line > 0);
@@ -328,7 +327,7 @@ fn test_python_line_number_accuracy() {
     
     // Test method line numbers
     let add_method = symbols.values()
-        .find(|s| s.name == "add" && matches!(s.symbol_type, SymbolType::Function))
+        .find(|s| s.name == "add" && matches!(s.symbol_type, SymbolType::Method))
         .expect("add method should be found");
     
     let method_line = lines.get(add_method.start_line as usize - 1)

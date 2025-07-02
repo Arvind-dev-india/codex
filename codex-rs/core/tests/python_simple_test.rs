@@ -1,8 +1,7 @@
 use codex_core::code_analysis::context_extractor::{ContextExtractor, SymbolType};
 use codex_core::code_analysis::{get_parser_pool, SupportedLanguage, QueryType};
-use std::path::Path;
-use std::fs;
 use tempfile::tempdir;
+use std::fs;
 
 #[test]
 fn test_python_simple_parsing() {
@@ -177,16 +176,16 @@ if __name__ == "__main__":
     assert!(another_function.start_line > 0);
     assert!(another_function.end_line > another_function.start_line);
     
-    // Test methods (in Python, methods are detected as functions)
+    // Test methods (in Python, methods are detected as methods)
     let init_method = symbols.values()
-        .find(|s| s.name == "__init__" && matches!(s.symbol_type, SymbolType::Function))
+        .find(|s| s.name == "__init__" && matches!(s.symbol_type, SymbolType::Method))
         .expect("__init__ method should be found");
     
     assert!(init_method.start_line > 0);
     assert!(init_method.end_line > init_method.start_line);
     
     let add_numbers_method = symbols.values()
-        .find(|s| s.name == "add_numbers" && matches!(s.symbol_type, SymbolType::Function))
+        .find(|s| s.name == "add_numbers" && matches!(s.symbol_type, SymbolType::Method))
         .expect("add_numbers method should be found");
     
     assert!(add_numbers_method.start_line > 0);
@@ -194,21 +193,21 @@ if __name__ == "__main__":
     
     // Test property and special methods
     let display_name_property = symbols.values()
-        .find(|s| s.name == "display_name" && matches!(s.symbol_type, SymbolType::Function))
+        .find(|s| s.name == "display_name" && matches!(s.symbol_type, SymbolType::Method))
         .expect("display_name property should be found");
     
     assert!(display_name_property.start_line > 0);
     assert!(display_name_property.end_line > display_name_property.start_line);
     
     let utility_method = symbols.values()
-        .find(|s| s.name == "utility_method" && matches!(s.symbol_type, SymbolType::Function))
+        .find(|s| s.name == "utility_method" && matches!(s.symbol_type, SymbolType::Method))
         .expect("utility_method static method should be found");
     
     assert!(utility_method.start_line > 0);
     assert!(utility_method.end_line > utility_method.start_line);
     
     let from_string_method = symbols.values()
-        .find(|s| s.name == "from_string" && matches!(s.symbol_type, SymbolType::Function))
+        .find(|s| s.name == "from_string" && matches!(s.symbol_type, SymbolType::Method))
         .expect("from_string class method should be found");
     
     assert!(from_string_method.start_line > 0);
@@ -271,11 +270,11 @@ person.greet()
         .expect("Person class should be found");
     
     let init_method = symbols.values()
-        .find(|s| s.name == "__init__" && matches!(s.symbol_type, SymbolType::Function))
+        .find(|s| s.name == "__init__" && matches!(s.symbol_type, SymbolType::Method))
         .expect("__init__ method should be found");
     
     let greet_method = symbols.values()
-        .find(|s| s.name == "greet" && matches!(s.symbol_type, SymbolType::Function))
+        .find(|s| s.name == "greet" && matches!(s.symbol_type, SymbolType::Method))
         .expect("greet method should be found");
     
     // Test line number relationships
@@ -418,7 +417,7 @@ class MultipleInheritance(Base1, Base2):
     let special_methods = ["__init__", "__str__", "__repr__", "__len__"];
     for method_name in &special_methods {
         let method = symbols.values()
-            .find(|s| s.name == *method_name && matches!(s.symbol_type, SymbolType::Function))
+            .find(|s| s.name == *method_name && matches!(s.symbol_type, SymbolType::Method))
             .expect(&format!("{} method should be found", method_name));
         
         assert!(method.start_line > 0);
@@ -427,7 +426,7 @@ class MultipleInheritance(Base1, Base2):
     
     // Test property methods
     let value_property = symbols.values()
-        .find(|s| s.name == "value" && matches!(s.symbol_type, SymbolType::Function))
+        .find(|s| s.name == "value" && matches!(s.symbol_type, SymbolType::Method))
         .expect("value property should be found");
     
     assert!(value_property.start_line > 0);

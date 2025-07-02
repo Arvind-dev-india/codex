@@ -20,6 +20,12 @@
   (function_definition
     name: (identifier) @name.definition.function) @definition.function)
 
+;; Nested function definitions (functions inside other functions)
+(function_definition
+  body: (block
+    (function_definition
+      name: (identifier) @name.definition.function) @definition.function))
+
 ;; Variable assignments
 (assignment
   left: (identifier) @name.definition.variable) @definition.variable

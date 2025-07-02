@@ -1,5 +1,4 @@
 use codex_core::code_analysis::context_extractor::{ContextExtractor, SymbolType, ReferenceType};
-use codex_core::code_analysis::{get_parser_pool, SupportedLanguage, QueryType};
 use std::fs;
 use tempfile::tempdir;
 
