@@ -3951,6 +3951,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "recovery-services-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "codex-core",
+ "mcp-types",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.5.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"

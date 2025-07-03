@@ -31,6 +31,7 @@ pub mod integration {
             // Check if Recovery Services is enabled (default: true)
             if recovery_services_config.enabled.unwrap_or(true) {
                 // Check if Recovery Services is properly configured
+                // The actual structure has enabled, subscription_id, resource_group, vault_name, and vaults
                 if !recovery_services_config.subscription_id.is_empty() && 
                    !recovery_services_config.resource_group.is_empty() &&
                    !recovery_services_config.vault_name.is_empty() {

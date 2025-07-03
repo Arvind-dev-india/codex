@@ -17,6 +17,7 @@ members = [
     "mcp-client",
     "mcp-server",
     "mcp-types",
+    "recovery-services-server",
     "tui",
 ]
 

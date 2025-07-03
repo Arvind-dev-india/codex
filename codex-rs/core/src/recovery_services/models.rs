@@ -10,6 +10,8 @@ pub enum WorkloadType {
     SapHana,
     #[serde(rename = "SQLDataBase")]
     SqlServer,
+    #[serde(rename = "VM")]
+    VM,
 }
 
 impl std::fmt::Display for WorkloadType {
@@ -17,6 +19,7 @@ impl std::fmt::Display for WorkloadType {
         match self {
             WorkloadType::SapHana => write!(f, "SAPHANA"),
             WorkloadType::SqlServer => write!(f, "SQLDataBase"),
+            WorkloadType::VM => write!(f, "VM"),
         }
     }
 }

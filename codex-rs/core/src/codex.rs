@@ -1334,6 +1334,15 @@ async fn handle_function_call(
             )
             .await
         }
+        // Check for Recovery Services tools directly
+        name if name.starts_with("recovery_services_") => {
+            // For Recovery Services tools, use "recovery_services" as server name
+            let timeout = None;
+            handle_mcp_tool_call(
+                sess, &sub_id, call_id, "recovery_services".to_string(), name.to_string(), arguments, timeout,
+            )
+            .await
+        }
         _ => {
             match try_parse_fully_qualified_tool_name(&name) {
                 Some((server, tool_name)) => {
