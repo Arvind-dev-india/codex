@@ -16,14 +16,47 @@ This document provides a comprehensive reference for the Azure Recovery Services
 
 ## API Versions
 
-- **Recovery Services API**: `2023-04-01` (current stable)
-- **Backup API**: `2023-04-01` (current stable)
-- **Preview API**: `2025-02-01` (preview version)
+- **Recovery Services API**: `2025-02-01` (current stable)
+- **Backup API**: `2025-02-01` (current stable)
+- **Previous Stable API**: `2023-04-01` (previous stable version)
 
 ## Base URLs
 
 - **Management API**: `https://management.azure.com`
 - **Resource Provider**: `Microsoft.RecoveryServices`
+
+## Supported Workload Types
+
+The 2025-02-01 API supports the following workload types for backup and recovery operations:
+
+### Primary Workload Types
+- **VM**: Azure Virtual Machines (IaaS VMs)
+- **SQLDataBase**: SQL Server databases running on Azure VMs
+- **SAPHanaDatabase**: SAP HANA databases running on Azure VMs
+- **SAPAseDatabase**: SAP ASE (Adaptive Server Enterprise) databases
+- **SAPHanaDBInstance**: SAP HANA database instances
+- **AzureFileShare**: Azure File Shares
+- **AzureSqlDb**: Azure SQL Database (PaaS)
+
+### Additional Workload Types
+- **FileFolder**: File and folder backup (MARS agent)
+- **Exchange**: Microsoft Exchange Server
+- **Sharepoint**: Microsoft SharePoint Server
+- **VMwareVM**: VMware virtual machines
+- **SystemState**: Windows System State
+- **Client**: Client machines (MARS agent)
+- **GenericDataSource**: Generic data sources
+- **SQLDB**: Legacy SQL Database reference
+
+### Backup Management Types
+- **AzureIaasVM**: Azure Infrastructure as a Service VMs
+- **AzureWorkload**: Database workloads (SQL, SAP HANA, SAP ASE)
+- **AzureStorage**: Azure Storage (File Shares)
+- **AzureSql**: Azure SQL Database
+- **MAB**: Microsoft Azure Backup (MARS agent)
+- **DPM**: Data Protection Manager
+- **AzureBackupServer**: Azure Backup Server
+- **DefaultBackup**: Default backup type
 
 ## Authentication
 
@@ -39,13 +72,13 @@ All APIs require Azure Active Directory (AAD) authentication with appropriate RB
 
 #### List Vaults by Subscription
 ```http
-GET https://management.azure.com/subscriptions/{subscriptionId}/providers/Microsoft.RecoveryServices/vaults?api-version=2023-04-01
+GET https://management.azure.com/subscriptions/{subscriptionId}/providers/Microsoft.RecoveryServices/vaults?api-version=2025-02-01
 ```
 
 Example curl:
 ```bash
 curl -X GET \
-  "https://management.azure.com/subscriptions/{subscriptionId}/providers/Microsoft.RecoveryServices/vaults?api-version=2023-04-01" \
+  "https://management.azure.com/subscriptions/{subscriptionId}/providers/Microsoft.RecoveryServices/vaults?api-version=2025-02-01" \
   -H "Authorization: Bearer {access_token}" \
   -H "Content-Type: application/json"
 ```
@@ -69,26 +102,26 @@ Response:
 
 #### List Vaults by Resource Group
 ```http
-GET https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.RecoveryServices/vaults?api-version=2023-04-01
+GET https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.RecoveryServices/vaults?api-version=2025-02-01
 ```
 
 Example curl:
 ```bash
 curl -X GET \
-  "https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.RecoveryServices/vaults?api-version=2023-04-01" \
+  "https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.RecoveryServices/vaults?api-version=2025-02-01" \
   -H "Authorization: Bearer {access_token}" \
   -H "Content-Type: application/json"
 ```
 
 #### Get Vault
 ```http
-GET https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.RecoveryServices/vaults/{vaultName}?api-version=2023-04-01
+GET https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.RecoveryServices/vaults/{vaultName}?api-version=2025-02-01
 ```
 
 Example curl:
 ```bash
 curl -X GET \
-  "https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.RecoveryServices/vaults/{vaultName}?api-version=2023-04-01" \
+  "https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.RecoveryServices/vaults/{vaultName}?api-version=2025-02-01" \
   -H "Authorization: Bearer {access_token}" \
   -H "Content-Type: application/json"
 ```
@@ -1069,28 +1102,243 @@ x-ms-correlation-request-id: {correlation-id}
 - **Write operations**: 1,200 requests per hour
 - **Long-running operations**: 500 requests per hour
 
+## Workload-Specific Operations (2025-02-01)
+
+### SQL Server Database Backup
+
+#### List SQL Workload Items
+```http
+GET https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.RecoveryServices/vaults/{vaultName}/backupFabrics/Azure/protectionContainers/{containerName}/items?api-version=2025-02-01&$filter=backupManagementType eq 'AzureWorkload'
+```
+
+Example response for SQL workload:
+```json
+{
+  "value": [
+    {
+      "id": "/subscriptions/.../protectableItems/SQLInstance;MSSQLSERVER",
+      "name": "SQLInstance;MSSQLSERVER",
+      "properties": {
+        "backupManagementType": "AzureWorkload",
+        "workloadType": "SQL",
+        "workloadItemType": "SQLInstance",
+        "friendlyName": "MSSQLSERVER",
+        "protectionState": "NotProtected",
+        "serverName": "sqlserver-1.contoso.com",
+        "isAutoProtectable": true,
+        "subWorkloadItemCount": 3
+      }
+    }
+  ]
+}
+```
+
+#### Create SQL Database Backup Policy
+```http
+PUT https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.RecoveryServices/vaults/{vaultName}/backupPolicies/{policyName}?api-version=2025-02-01
+```
+
+Example request body for SQL Database:
+```json
+{
+  "properties": {
+    "backupManagementType": "AzureWorkload",
+    "workLoadType": "SQLDataBase",
+    "settings": {
+      "timeZone": "Pacific Standard Time",
+      "issqlcompression": false
+    },
+    "subProtectionPolicy": [
+      {
+        "policyType": "Full",
+        "schedulePolicy": {
+          "schedulePolicyType": "SimpleSchedulePolicy",
+          "scheduleRunFrequency": "Weekly",
+          "scheduleRunTimes": ["2018-01-24T10:00:00Z"],
+          "scheduleRunDays": ["Sunday", "Tuesday"]
+        },
+        "retentionPolicy": {
+          "retentionPolicyType": "LongTermRetentionPolicy",
+          "weeklySchedule": {
+            "daysOfTheWeek": ["Sunday", "Tuesday"],
+            "retentionTimes": ["2018-01-24T10:00:00Z"],
+            "retentionDuration": {
+              "count": 2,
+              "durationType": "Weeks"
+            }
+          }
+        }
+      },
+      {
+        "policyType": "Log",
+        "schedulePolicy": {
+          "schedulePolicyType": "LogSchedulePolicy",
+          "scheduleFrequencyInMins": 60
+        },
+        "retentionPolicy": {
+          "retentionPolicyType": "SimpleRetentionPolicy",
+          "retentionDuration": {
+            "count": 30,
+            "durationType": "Days"
+          }
+        }
+      }
+    ]
+  }
+}
+```
+
+### SAP HANA Database Backup
+
+#### Create SAP HANA Backup Policy
+```http
+PUT https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.RecoveryServices/vaults/{vaultName}/backupPolicies/{policyName}?api-version=2025-02-01
+```
+
+Example request body for SAP HANA:
+```json
+{
+  "properties": {
+    "backupManagementType": "AzureWorkload",
+    "workLoadType": "SAPHanaDatabase",
+    "settings": {
+      "timeZone": "UTC"
+    },
+    "subProtectionPolicy": [
+      {
+        "policyType": "Full",
+        "schedulePolicy": {
+          "schedulePolicyType": "SimpleSchedulePolicy",
+          "scheduleRunFrequency": "Weekly",
+          "scheduleRunTimes": ["2018-01-24T02:00:00Z"],
+          "scheduleRunDays": ["Sunday"]
+        },
+        "retentionPolicy": {
+          "retentionPolicyType": "LongTermRetentionPolicy",
+          "weeklySchedule": {
+            "daysOfTheWeek": ["Sunday"],
+            "retentionTimes": ["2018-01-24T02:00:00Z"],
+            "retentionDuration": {
+              "count": 4,
+              "durationType": "Weeks"
+            }
+          }
+        }
+      },
+      {
+        "policyType": "Incremental",
+        "schedulePolicy": {
+          "schedulePolicyType": "SimpleSchedulePolicy",
+          "scheduleRunFrequency": "Daily",
+          "scheduleRunTimes": ["2018-01-24T02:00:00Z"]
+        },
+        "retentionPolicy": {
+          "retentionPolicyType": "SimpleRetentionPolicy",
+          "retentionDuration": {
+            "count": 7,
+            "durationType": "Days"
+          }
+        }
+      },
+      {
+        "policyType": "Log",
+        "schedulePolicy": {
+          "schedulePolicyType": "LogSchedulePolicy",
+          "scheduleFrequencyInMins": 15
+        },
+        "retentionPolicy": {
+          "retentionPolicyType": "SimpleRetentionPolicy",
+          "retentionDuration": {
+            "count": 35,
+            "durationType": "Days"
+          }
+        }
+      }
+    ]
+  }
+}
+```
+
+### Azure File Share Backup
+
+#### Create File Share Backup Policy
+```http
+PUT https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.RecoveryServices/vaults/{vaultName}/backupPolicies/{policyName}?api-version=2025-02-01
+```
+
+Example request body for Azure File Share:
+```json
+{
+  "properties": {
+    "backupManagementType": "AzureStorage",
+    "workLoadType": "AzureFileShare",
+    "schedulePolicy": {
+      "schedulePolicyType": "SimpleSchedulePolicy",
+      "scheduleRunFrequency": "Daily",
+      "scheduleRunTimes": ["2021-09-29T02:00:00.000Z"]
+    },
+    "retentionPolicy": {
+      "retentionPolicyType": "LongTermRetentionPolicy",
+      "dailySchedule": {
+        "retentionTimes": ["2021-09-29T02:00:00.000Z"],
+        "retentionDuration": {
+          "count": 30,
+          "durationType": "Days"
+        }
+      }
+    },
+    "timeZone": "UTC"
+  }
+}
+```
+
 ## Best Practices
 
-1. **Use the latest API version** for new implementations
+1. **Use the latest API version** (2025-02-01) for new implementations
 2. **Implement proper error handling** for all API calls
 3. **Use pagination** for list operations that may return large result sets
 4. **Implement retry logic** with exponential backoff for transient failures
 5. **Cache authentication tokens** and refresh before expiration
 6. **Use appropriate RBAC roles** for least privilege access
 7. **Monitor rate limits** and implement throttling if necessary
+8. **Support all major workload types**: VM, SQL Server, SAP HANA, SAP ASE, Azure File Shares
+9. **Implement workload-specific policy configurations** with appropriate backup types
+10. **Handle container naming conventions** properly for different workload types
 
 ## Implementation Notes
 
+### API Version Updates
+- **2025-02-01**: Latest stable version with enhanced workload support
+- **Enhanced Features**: Better support for SAP HANA, SAP ASE, Azure File Shares
+- **Backward Compatibility**: Previous 2023-04-01 endpoints still supported
+
 ### Fabric Names
 - For Azure VMs: `Azure`
+- For Azure Workloads (SQL, SAP HANA): `Azure`
+- For Azure Storage (File Shares): `Azure`
 - For on-premises: Varies by backup agent
 
-### Container Names
-- For Azure VMs: `iaasvmcontainer;iaasvmcontainerv2;{resourceGroupName};{vmName}`
-- Format varies by workload type
+### Container Names by Workload Type
+- **Azure VMs**: `iaasvmcontainer;iaasvmcontainerv2;{resourceGroupName};{vmName}`
+- **SQL Server**: `VMAppContainer;Compute;{resourceGroupName};{vmName}`
+- **SAP HANA**: `VMAppContainer;Compute;{resourceGroupName};{vmName}`
+- **Azure File Shares**: `StorageContainer;Storage;{resourceGroupName};{storageAccountName}`
 
-### Protected Item Names
-- For Azure VMs: `vm;iaasvmcontainerv2;{resourceGroupName};{vmName}`
-- Format varies by workload type
+### Protected Item Names by Workload Type
+- **Azure VMs**: `vm;iaasvmcontainerv2;{resourceGroupName};{vmName}`
+- **SQL Databases**: `SQLDataBase;{instanceName};{databaseName}`
+- **SAP HANA Databases**: `SAPHanaDatabase;{systemId};{databaseName}`
+- **Azure File Shares**: `AzureFileShare;{fileShareName}`
 
-This reference should be used to ensure our Recovery Services implementation follows the official API specifications and uses the correct endpoints, parameters, and response formats.
+### Workload-Specific Considerations
+- **SQL Server**: Supports Full, Differential, and Log backup types
+- **SAP HANA**: Supports Full, Incremental, and Log backup types
+- **SAP ASE**: Similar to SAP HANA with database-specific configurations
+- **Azure File Shares**: Supports snapshot-based backups with daily/weekly schedules
+- **Policy Types**: Use `subProtectionPolicy` array for database workloads
+
+### Authentication Scopes
+- **Management API**: `https://management.azure.com/.default`
+- **Required Permissions**: Backup Contributor, Virtual Machine Contributor for workload registration
+
+This reference should be used to ensure our Recovery Services implementation follows the official API specifications and uses the correct endpoints, parameters, and response formats for all supported workload types in the 2025-02-01 API version.

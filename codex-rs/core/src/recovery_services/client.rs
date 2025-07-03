@@ -55,7 +55,7 @@ impl RecoveryServicesClient {
             .get(&url)
             .header("Authorization", format!("Bearer {}", self.access_token))
             .header("Content-Type", "application/json")
-            .query(&[("api-version", "2023-04-01")])
+            .query(&[("api-version", "2025-02-01")])
             .send()
             .await
             .map_err(|e| CodexErr::Other(format!("Failed to send GET request: {}", e)))?;
@@ -74,7 +74,7 @@ impl RecoveryServicesClient {
             .post(&url)
             .header("Authorization", format!("Bearer {}", self.access_token))
             .header("Content-Type", "application/json")
-            .query(&[("api-version", "2021-12-01")])
+            .query(&[("api-version", "2025-02-01")])
             .json(&body)
             .send()
             .await
@@ -166,8 +166,8 @@ impl RecoveryServicesClient {
             .get(&url)
             .header("Authorization", format!("Bearer {}", self.access_token))
             .header("Content-Type", "application/json")
-            // Use the stable API version
-            .query(&[("api-version", "2023-04-01")])
+            // Use the latest stable API version
+            .query(&[("api-version", "2025-02-01")])
             .send()
             .await
             .map_err(|e| CodexErr::Other(format!("Failed to list vaults: {}", e)))?;
@@ -273,25 +273,59 @@ impl RecoveryServicesClient {
 
     /// List protectable items
     pub async fn list_protectable_items(&self, workload_type: Option<WorkloadType>) -> Result<Vec<ProtectableItem>> {
-        let mut endpoint = "/backupProtectableItems".to_string();
+        // First, get all containers to find protectable items within them
+        let containers = self.list_backup_containers().await?;
+        let mut all_items = Vec::new();
         
-        if let Some(wl_type) = workload_type {
-            endpoint.push_str(&format!("?$filter=backupManagementType eq 'AzureWorkload' and workloadType eq '{}'", wl_type));
-        }
+        // If no containers, try the direct endpoint as fallback
+        if containers.is_empty() {
+            let mut endpoint = "/backupProtectableItems".to_string();
+            
+            if let Some(wl_type) = workload_type {
+                endpoint.push_str(&format!("?$filter=backupManagementType eq 'AzureWorkload' and workloadType eq '{}'", wl_type));
+            } else {
+                endpoint.push_str("?$filter=backupManagementType eq 'AzureWorkload'");
+            }
 
-        let response = self.get_request(&endpoint).await?;
-        
-        if let Some(items_array) = response.get("value").and_then(|v| v.as_array()) {
-            let mut items = Vec::new();
-            for item_json in items_array {
-                if let Ok(item) = serde_json::from_value::<ProtectableItem>(item_json.clone()) {
-                    items.push(item);
+            let response = self.get_request(&endpoint).await?;
+            
+            if let Some(items_array) = response.get("value").and_then(|v| v.as_array()) {
+                for item_json in items_array {
+                    if let Ok(item) = serde_json::from_value::<ProtectableItem>(item_json.clone()) {
+                        all_items.push(item);
+                    }
                 }
             }
-            Ok(items)
         } else {
-            Ok(Vec::new())
+            // List protectable items for each container
+            for container in containers {
+                let container_name = container.name;
+                let mut endpoint = format!("/backupFabrics/Azure/protectionContainers/{}/protectableItems", container_name);
+                
+                if let Some(wl_type) = &workload_type {
+                    endpoint.push_str(&format!("?$filter=backupManagementType eq 'AzureWorkload' and workloadType eq '{}'", wl_type));
+                } else {
+                    endpoint.push_str("?$filter=backupManagementType eq 'AzureWorkload'");
+                }
+
+                match self.get_request(&endpoint).await {
+                    Ok(response) => {
+                        if let Some(items_array) = response.get("value").and_then(|v| v.as_array()) {
+                            for item_json in items_array {
+                                if let Ok(item) = serde_json::from_value::<ProtectableItem>(item_json.clone()) {
+                                    all_items.push(item);
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to list protectable items for container {}: {}", container_name, e);
+                    }
+                }
+            }
         }
+        
+        Ok(all_items)
     }
 
     /// List protected items

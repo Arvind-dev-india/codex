@@ -203,8 +203,8 @@ impl RecoveryServicesTools {
         })?;
         
         let workload_type = match workload_type_str {
-            "SAPHANA" => WorkloadType::SapHana,
-            "SQLDataBase" => WorkloadType::SqlServer,
+            "SAPHANA" => WorkloadType::SapHanaDatabase,
+            "SQLDataBase" => WorkloadType::SqlDatabase,
             _ => return Err(CodexErr::Other("workload_type must be 'SAPHANA' or 'SQLDataBase'".to_string())),
         };
         
@@ -228,8 +228,8 @@ impl RecoveryServicesTools {
     pub async fn list_protectable_items(&self, args: Value) -> Result<Value> {
         let workload_type = if let Some(wl_str) = args["workload_type"].as_str() {
             match wl_str {
-                "SAPHANA" => Some(WorkloadType::SapHana),
-                "SQLDataBase" => Some(WorkloadType::SqlServer),
+                "SAPHANA" => Some(WorkloadType::SapHanaDatabase),
+                "SQLDataBase" => Some(WorkloadType::SqlDatabase),
                 _ => return Err(CodexErr::Other("workload_type must be 'SAPHANA' or 'SQLDataBase'".to_string())),
             }
         } else {
@@ -267,8 +267,8 @@ impl RecoveryServicesTools {
     pub async fn list_protected_items(&self, args: Value) -> Result<Value> {
         let workload_type = if let Some(wl_str) = args["workload_type"].as_str() {
             match wl_str {
-                "SAPHANA" => Some(WorkloadType::SapHana),
-                "SQLDataBase" => Some(WorkloadType::SqlServer),
+                "SAPHANA" => Some(WorkloadType::SapHanaDatabase),
+                "SQLDataBase" => Some(WorkloadType::SqlDatabase),
                 _ => return Err(CodexErr::Other("workload_type must be 'SAPHANA' or 'SQLDataBase'".to_string())),
             }
         } else {
@@ -344,8 +344,8 @@ impl RecoveryServicesTools {
     pub async fn list_policies(&self, args: Value) -> Result<Value> {
         let workload_type = if let Some(wl_str) = args["workload_type"].as_str() {
             match wl_str {
-                "SAPHANA" => Some(WorkloadType::SapHana),
-                "SQLDataBase" => Some(WorkloadType::SqlServer),
+                "SAPHANA" => Some(WorkloadType::SapHanaDatabase),
+                "SQLDataBase" => Some(WorkloadType::SqlDatabase),
                 _ => return Err(CodexErr::Other("workload_type must be 'SAPHANA' or 'SQLDataBase'".to_string())),
             }
         } else {
@@ -386,10 +386,53 @@ impl RecoveryServicesTools {
         }))
     }
 
+    /// Check VM registration status
+    pub async fn check_registration_status(&self, args: Value) -> Result<Value> {
+        let vm_name = args["vm_name"].as_str().ok_or_else(|| {
+            CodexErr::Other("vm_name parameter is required".to_string())
+        })?;
+        
+        let vault_name = args["vault_name"].as_str();
+        let client = self.get_client(vault_name)?;
+        
+        tracing::info!("Checking registration status for VM: {}", vm_name);
+        
+        // List all backup containers to find the VM
+        let containers = client.list_backup_containers().await?;
+        
+        // Look for the VM in the containers
+        let vm_container = containers.iter().find(|container| {
+            container.properties.friendly_name.contains(vm_name) ||
+            container.name.contains(vm_name)
+        });
+        
+        if let Some(container) = vm_container {
+            Ok(json!({
+                "vm_name": vm_name,
+                "registration_status": "Registered",
+                "container_name": container.name,
+                "friendly_name": container.properties.friendly_name,
+                "backup_management_type": container.properties.backup_management_type,
+                "health_status": container.properties.health_status,
+                "container_type": container.properties.container_type,
+                "registration_details": {
+                    "status": container.properties.registration_status,
+                    "container_id": container.id
+                }
+            }))
+        } else {
+            Ok(json!({
+                "vm_name": vm_name,
+                "registration_status": "Not Registered",
+                "message": format!("VM '{}' is not registered for backup in this vault", vm_name),
+                "suggestion": "Use 'recovery_services_register_vm' to register this VM for backup"
+            }))
+        }
+    }
+
     // TODO: Implement remaining methods:
     // - reregister_vm
     // - unregister_vm
-    // - check_registration_status
     // - create_policy
     // - get_policy_details
     // - enable_protection

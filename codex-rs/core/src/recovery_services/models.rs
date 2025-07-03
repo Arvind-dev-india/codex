@@ -3,38 +3,101 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Supported workload types for Recovery Services
+/// Supported workload types for Recovery Services (2025-02-01 API)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum WorkloadType {
-    #[serde(rename = "SAPHANA")]
-    SapHana,
-    #[serde(rename = "SQLDataBase")]
-    SqlServer,
+    #[serde(rename = "Invalid")]
+    Invalid,
     #[serde(rename = "VM")]
     VM,
+    #[serde(rename = "FileFolder")]
+    FileFolder,
+    #[serde(rename = "AzureSqlDb")]
+    AzureSqlDb,
+    #[serde(rename = "SQLDB")]
+    SqlDb,
+    #[serde(rename = "Exchange")]
+    Exchange,
+    #[serde(rename = "Sharepoint")]
+    Sharepoint,
+    #[serde(rename = "VMwareVM")]
+    VMwareVM,
+    #[serde(rename = "SystemState")]
+    SystemState,
+    #[serde(rename = "Client")]
+    Client,
+    #[serde(rename = "GenericDataSource")]
+    GenericDataSource,
+    #[serde(rename = "SQLDataBase")]
+    SqlDatabase,
+    #[serde(rename = "AzureFileShare")]
+    AzureFileShare,
+    #[serde(rename = "SAPHanaDatabase")]
+    SapHanaDatabase,
+    #[serde(rename = "SAPAseDatabase")]
+    SapAseDatabase,
+    #[serde(rename = "SAPHanaDBInstance")]
+    SapHanaDbInstance,
 }
 
 impl std::fmt::Display for WorkloadType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            WorkloadType::SapHana => write!(f, "SAPHANA"),
-            WorkloadType::SqlServer => write!(f, "SQLDataBase"),
+            WorkloadType::Invalid => write!(f, "Invalid"),
             WorkloadType::VM => write!(f, "VM"),
+            WorkloadType::FileFolder => write!(f, "FileFolder"),
+            WorkloadType::AzureSqlDb => write!(f, "AzureSqlDb"),
+            WorkloadType::SqlDb => write!(f, "SQLDB"),
+            WorkloadType::Exchange => write!(f, "Exchange"),
+            WorkloadType::Sharepoint => write!(f, "Sharepoint"),
+            WorkloadType::VMwareVM => write!(f, "VMwareVM"),
+            WorkloadType::SystemState => write!(f, "SystemState"),
+            WorkloadType::Client => write!(f, "Client"),
+            WorkloadType::GenericDataSource => write!(f, "GenericDataSource"),
+            WorkloadType::SqlDatabase => write!(f, "SQLDataBase"),
+            WorkloadType::AzureFileShare => write!(f, "AzureFileShare"),
+            WorkloadType::SapHanaDatabase => write!(f, "SAPHanaDatabase"),
+            WorkloadType::SapAseDatabase => write!(f, "SAPAseDatabase"),
+            WorkloadType::SapHanaDbInstance => write!(f, "SAPHanaDBInstance"),
         }
     }
 }
 
-/// Backup management types
+/// Backup management types (2025-02-01 API)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum BackupManagementType {
+    #[serde(rename = "Invalid")]
+    Invalid,
+    #[serde(rename = "AzureIaasVM")]
+    AzureIaasVM,
+    #[serde(rename = "MAB")]
+    MAB,
+    #[serde(rename = "DPM")]
+    DPM,
+    #[serde(rename = "AzureSql")]
+    AzureSql,
+    #[serde(rename = "AzureBackupServer")]
+    AzureBackupServer,
     #[serde(rename = "AzureWorkload")]
     AzureWorkload,
+    #[serde(rename = "AzureStorage")]
+    AzureStorage,
+    #[serde(rename = "DefaultBackup")]
+    DefaultBackup,
 }
 
 impl std::fmt::Display for BackupManagementType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            BackupManagementType::Invalid => write!(f, "Invalid"),
+            BackupManagementType::AzureIaasVM => write!(f, "AzureIaasVM"),
+            BackupManagementType::MAB => write!(f, "MAB"),
+            BackupManagementType::DPM => write!(f, "DPM"),
+            BackupManagementType::AzureSql => write!(f, "AzureSql"),
+            BackupManagementType::AzureBackupServer => write!(f, "AzureBackupServer"),
             BackupManagementType::AzureWorkload => write!(f, "AzureWorkload"),
+            BackupManagementType::AzureStorage => write!(f, "AzureStorage"),
+            BackupManagementType::DefaultBackup => write!(f, "DefaultBackup"),
         }
     }
 }
@@ -304,4 +367,191 @@ pub struct ErrorDetail {
     pub code: String,
     pub message: String,
     pub details: Option<Vec<ErrorDetail>>,
+}
+
+/// Policy types for workload backup policies (2025-02-01 API)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum PolicyType {
+    #[serde(rename = "Full")]
+    Full,
+    #[serde(rename = "Incremental")]
+    Incremental,
+    #[serde(rename = "Differential")]
+    Differential,
+    #[serde(rename = "Log")]
+    Log,
+}
+
+impl std::fmt::Display for PolicyType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PolicyType::Full => write!(f, "Full"),
+            PolicyType::Incremental => write!(f, "Incremental"),
+            PolicyType::Differential => write!(f, "Differential"),
+            PolicyType::Log => write!(f, "Log"),
+        }
+    }
+}
+
+/// Sub-protection policy for workload backup policies
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubProtectionPolicy {
+    #[serde(rename = "policyType")]
+    pub policy_type: PolicyType,
+    #[serde(rename = "schedulePolicy")]
+    pub schedule_policy: SchedulePolicy,
+    #[serde(rename = "retentionPolicy")]
+    pub retention_policy: RetentionPolicy,
+}
+
+/// Schedule policy for backup policies
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SchedulePolicy {
+    #[serde(rename = "schedulePolicyType")]
+    pub schedule_policy_type: String,
+    #[serde(rename = "scheduleRunFrequency")]
+    pub schedule_run_frequency: Option<String>,
+    #[serde(rename = "scheduleRunTimes")]
+    pub schedule_run_times: Option<Vec<String>>,
+    #[serde(rename = "scheduleRunDays")]
+    pub schedule_run_days: Option<Vec<String>>,
+    #[serde(rename = "scheduleFrequencyInMins")]
+    pub schedule_frequency_in_mins: Option<i32>,
+}
+
+/// Retention policy for backup policies
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RetentionPolicy {
+    #[serde(rename = "retentionPolicyType")]
+    pub retention_policy_type: String,
+    #[serde(rename = "retentionDuration")]
+    pub retention_duration: Option<RetentionDuration>,
+    #[serde(rename = "dailySchedule")]
+    pub daily_schedule: Option<DailyRetentionSchedule>,
+    #[serde(rename = "weeklySchedule")]
+    pub weekly_schedule: Option<WeeklyRetentionSchedule>,
+    #[serde(rename = "monthlySchedule")]
+    pub monthly_schedule: Option<MonthlyRetentionSchedule>,
+}
+
+/// Retention duration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RetentionDuration {
+    pub count: i32,
+    #[serde(rename = "durationType")]
+    pub duration_type: String, // Days, Weeks, Months, Years
+}
+
+/// Daily retention schedule
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DailyRetentionSchedule {
+    #[serde(rename = "retentionTimes")]
+    pub retention_times: Vec<String>,
+    #[serde(rename = "retentionDuration")]
+    pub retention_duration: RetentionDuration,
+}
+
+/// Weekly retention schedule
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WeeklyRetentionSchedule {
+    #[serde(rename = "daysOfTheWeek")]
+    pub days_of_the_week: Vec<String>,
+    #[serde(rename = "retentionTimes")]
+    pub retention_times: Vec<String>,
+    #[serde(rename = "retentionDuration")]
+    pub retention_duration: RetentionDuration,
+}
+
+/// Monthly retention schedule
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MonthlyRetentionSchedule {
+    #[serde(rename = "retentionScheduleFormatType")]
+    pub retention_schedule_format_type: String, // Daily, Weekly
+    #[serde(rename = "retentionScheduleDaily")]
+    pub retention_schedule_daily: Option<DailyRetentionFormat>,
+    #[serde(rename = "retentionScheduleWeekly")]
+    pub retention_schedule_weekly: Option<WeeklyRetentionFormat>,
+    #[serde(rename = "retentionTimes")]
+    pub retention_times: Vec<String>,
+    #[serde(rename = "retentionDuration")]
+    pub retention_duration: RetentionDuration,
+}
+
+/// Daily retention format for monthly schedule
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DailyRetentionFormat {
+    #[serde(rename = "daysOfTheMonth")]
+    pub days_of_the_month: Vec<Day>,
+}
+
+/// Weekly retention format for monthly schedule
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WeeklyRetentionFormat {
+    #[serde(rename = "daysOfTheWeek")]
+    pub days_of_the_week: Vec<String>,
+    #[serde(rename = "weeksOfTheMonth")]
+    pub weeks_of_the_month: Vec<String>,
+}
+
+/// Day representation for retention schedules
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Day {
+    pub date: i32,
+    #[serde(rename = "isLast")]
+    pub is_last: bool,
+}
+
+/// Workload backup policy settings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkloadSettings {
+    #[serde(rename = "timeZone")]
+    pub time_zone: Option<String>,
+    #[serde(rename = "issqlcompression")]
+    pub is_sql_compression: Option<bool>,
+    #[serde(rename = "isCompression")]
+    pub is_compression: Option<bool>,
+}
+
+/// Enhanced backup policy properties for 2025-02-01 API
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnhancedBackupPolicyProperties {
+    #[serde(rename = "backupManagementType")]
+    pub backup_management_type: BackupManagementType,
+    #[serde(rename = "workLoadType")]
+    pub workload_type: WorkloadType,
+    pub settings: Option<WorkloadSettings>,
+    #[serde(rename = "subProtectionPolicy")]
+    pub sub_protection_policy: Option<Vec<SubProtectionPolicy>>,
+    #[serde(rename = "protectedItemsCount")]
+    pub protected_items_count: Option<i32>,
+}
+
+/// Workload item types for different workloads
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum WorkloadItemType {
+    #[serde(rename = "SQLInstance")]
+    SqlInstance,
+    #[serde(rename = "SQLDataBase")]
+    SqlDatabase,
+    #[serde(rename = "SAPHanaSystem")]
+    SapHanaSystem,
+    #[serde(rename = "SAPHanaDatabase")]
+    SapHanaDatabase,
+    #[serde(rename = "SAPAseSystem")]
+    SapAseSystem,
+    #[serde(rename = "SAPAseDatabase")]
+    SapAseDatabase,
+}
+
+impl std::fmt::Display for WorkloadItemType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WorkloadItemType::SqlInstance => write!(f, "SQLInstance"),
+            WorkloadItemType::SqlDatabase => write!(f, "SQLDataBase"),
+            WorkloadItemType::SapHanaSystem => write!(f, "SAPHanaSystem"),
+            WorkloadItemType::SapHanaDatabase => write!(f, "SAPHanaDatabase"),
+            WorkloadItemType::SapAseSystem => write!(f, "SAPAseSystem"),
+            WorkloadItemType::SapAseDatabase => write!(f, "SAPAseDatabase"),
+        }
+    }
 }

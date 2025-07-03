@@ -34,6 +34,9 @@ pub async fn handle_recovery_services_tool_call(
         "recovery_services_register_vm" => {
             tools.register_vm(args).await
         },
+        "recovery_services_check_registration_status" => {
+            tools.check_registration_status(args).await
+        },
         // TODO: Add other VM registration methods
         
         // Policy management
