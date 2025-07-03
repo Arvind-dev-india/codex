@@ -2757,6 +2757,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "kusto-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "codex-core",
+ "mcp-types",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "lalrpop"
 version = "0.19.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -1,0 +1,69 @@
+//! Implementation of Kusto (Azure Data Explorer) tool functions.
+
+use serde_json::{json, Value};
+use std::sync::Arc;
+use std::collections::HashMap;
+use std::path::PathBuf;
+
+use crate::kusto::client_rest::KustoRestClient;
+use crate::kusto::knowledge_base::*;
+use crate::config_types::KustoConfig;
+use crate::error::{CodexErr, Result};
+
+/// Implementation of Kusto tools
+pub struct KustoTools {
+    pub clients: HashMap<String, Arc<KustoRestClient>>,
+    pub config: KustoConfig,
+    pub knowledge_base_path: PathBuf,
+    pub knowledge_base: Arc<tokio::sync::RwLock<KustoKnowledgeBase>>,
+}
+
+impl KustoTools {
+    // ... [existing implementation] ...
+
+    /// Get schema information for a table
+    pub async fn get_table_schema(&self, args: Value) -> Result<Value> {
+        let table_name = args["table_name"].as_str().ok_or_else(|| {
+            CodexErr::Other("table_name parameter is required".to_string())
+        })?;
+        
+        let database = args["database"].as_str();
+        let client = self.get_client(database)?;
+        let db_name = database.unwrap_or(&self.config.database);
+        
+        // First check knowledge base for cached schema
+        let kb = self.knowledge_base.read().await;
+        if let Some(table_info) = kb.get_table_info(db_name, table_name) {
+            return Ok(json!({
+                "table_name": table_name,
+                "database": db_name,
+                "columns": table_info.columns,
+                "description": table_info.description,
+                "sample_data": table_info.sample_data,
+                "estimated_row_count": table_info.estimated_row_count,
+                "source": "knowledge_base"
+            }));
+        }
+        drop(kb);
+        
+        // Use .show table schema command instead of getschema
+        // This is more reliable and works for all table types
+        let query = format!(".show table {} schema", table_name);
+        
+        tracing::info!("Executing Kusto get table schema query: {} on database: {}", query, db_name);
+        
+        // Execute the query using the REST client
+        let processed_results = client
+            .execute_query(&query)
+            .await?;
+        
+        Ok(json!({
+            "table_name": table_name,
+            "database": db_name,
+            "schema": processed_results,
+            "source": "live_query"
+        }))
+    }
+
+    // ... [rest of the implementation] ...
+}

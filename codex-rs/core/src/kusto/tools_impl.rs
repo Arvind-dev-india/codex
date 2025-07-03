@@ -270,8 +270,9 @@ impl KustoTools {
         }
         drop(kb);
         
-        // Use getschema command to get table information (correct Kusto syntax)
-        let query = format!("{} | getschema", table_name);
+        // Use .show table schema command instead of getschema
+        // This is more reliable and works for all table types
+        let query = format!(".show table {} schema", table_name);
         
         tracing::info!("Executing Kusto get table schema query: {} on database: {}", query, db_name);
         
@@ -294,32 +295,9 @@ impl KustoTools {
         let client = self.get_client(database)?;
         let db_name = database.unwrap_or(&self.config.database);
         
-        // First check knowledge base for cached tables
-        let kb = self.knowledge_base.read().await;
-        if let Some(tables) = kb.get_database_tables(db_name) {
-            let table_list: Vec<_> = tables.iter().map(|(name, info)| {
-                json!({
-                    "table_name": name,
-                    "description": info.description,
-                    "column_count": info.columns.len(),
-                    "query_count": info.query_count,
-                    "last_accessed": info.last_accessed,
-                    "source": "knowledge_base"
-                })
-            }).collect();
-            
-            if !table_list.is_empty() {
-                return Ok(json!({
-                    "database": db_name,
-                    "tables": table_list,
-                    "source": "knowledge_base"
-                }));
-            }
-        }
-        drop(kb);
-        
-        // Use .show tables command with correct syntax
-        let query = ".show tables | project TableName";
+        // Always query Kusto directly for the most up-to-date list of tables
+        // Use .show tables command to get all tables in the database
+        let query = ".show tables | project TableName, DatabaseName, Folder";
         
         tracing::info!("Executing Kusto list tables query: {} on database: {}", query, db_name);
         
@@ -328,10 +306,32 @@ impl KustoTools {
             .execute_query(query)
             .await?;
         
+        // Optionally enrich with descriptions from knowledge base if available
+        let mut enriched_results = Vec::new();
+        let kb = self.knowledge_base.read().await;
+        
+        for table in &processed_results {
+            let mut table_info = table.clone();
+            
+            // Try to get table name
+            if let Some(table_name) = table.get("TableName").and_then(|v| v.as_str()) {
+                // Try to get description from knowledge base
+                if let Some(tables) = kb.get_database_tables(db_name) {
+                    if let Some(info) = tables.get(table_name) {
+                        table_info.insert("description".to_string(), json!(info.description));
+                    }
+                }
+            }
+            
+            enriched_results.push(table_info);
+        }
+        drop(kb);
+        
         Ok(json!({
             "database": db_name,
-            "tables": processed_results,
-            "source": "live_query"
+            "tables": enriched_results,
+            "source": "live_query",
+            "count": enriched_results.len()
         }))
     }
     
