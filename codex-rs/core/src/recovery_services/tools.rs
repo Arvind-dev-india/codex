@@ -94,7 +94,7 @@ fn create_register_vm_tool() -> OpenAiTool {
     
     create_function_tool(
         "recovery_services_register_vm",
-        "Register a VM for backup protection. workload_type should be 'SAPHANA' or 'SQLDataBase'",
+        "Register a VM for backup protection. Parameters: vm_resource_id (required): Full Azure resource ID format /subscriptions/{subscription}/resourceGroups/{rg}/providers/Microsoft.Compute/virtualMachines/{vm_name}. workload_type (required): 'VM' (standard Azure VM backup), 'SAPHANA'/'SapHanaDatabase' (SAP HANA workload), 'SQLDataBase'/'SqlDatabase' (SQL Server workload), 'AnyDatabase' (generic database workload). vault_name (optional): Target Recovery Services vault. This registers the VM container for the specified workload type. For database workloads, additional configuration may be needed after registration.",
         parameters,
         &["vm_resource_id", "workload_type"],
     )
@@ -132,13 +132,14 @@ fn create_unregister_vm_tool() -> OpenAiTool {
 fn create_check_registration_status_tool() -> OpenAiTool {
     let mut parameters = BTreeMap::new();
     parameters.insert("vm_name".to_string(), JsonSchema::String);
+    parameters.insert("vm_resource_group".to_string(), JsonSchema::String);
     parameters.insert("vault_name".to_string(), JsonSchema::String);
     
     create_function_tool(
         "recovery_services_check_registration_status",
-        "Check the registration status of a VM in the backup vault",
+        "Check if a VM is registered for backup in the vault. Parameters: vm_name (required): Name of the virtual machine. vm_resource_group (recommended): Resource group containing the VM - improves accuracy. vault_name (optional): Specific vault to check. This tool detects VMs registered for: Standard VM backup (AzureIaasVM management type), Database workload backup (AzureWorkload management type): SAP HANA, SQL Server, etc., Any other backup workload types. Returns detailed registration status, health status, container type, and backup management type.",
         parameters,
-        &[],
+        &["vm_name"],
     )
 }
 
@@ -237,13 +238,15 @@ fn create_disable_protection_tool() -> OpenAiTool {
 /// Create a tool for listing protected items
 fn create_list_protected_items_tool() -> OpenAiTool {
     let mut parameters = BTreeMap::new();
+    parameters.insert("backup_management_type".to_string(), JsonSchema::String);
     parameters.insert("workload_type".to_string(), JsonSchema::String);
     parameters.insert("server_name".to_string(), JsonSchema::String);
+    parameters.insert("container_name".to_string(), JsonSchema::String);
     parameters.insert("vault_name".to_string(), JsonSchema::String);
     
     create_function_tool(
         "recovery_services_list_protected_items",
-        "List databases currently protected by backup, optionally filtered by workload type and server",
+        "List items currently protected by backup. Works with just vault_name and automatically searches across all backup management types and item types. Optional filters: backup_management_type ('AzureIaasVM' for standard VM backups, 'AzureWorkload' for database workloads like SAP HANA/SQL Server, 'AzureStorage' for file shares), workload_type ('VM', 'SAPHanaDatabase', 'SAPHanaDBInstance', 'SQLDataBase', 'SAPAseDatabase', 'AnyDatabase', 'AzureFileShare', etc. - Azure API uses 'itemType'), server_name (partial match), container_name (exact match). If no filters specified, searches all types to find protected items.",
         parameters,
         &[],
     )
@@ -299,11 +302,12 @@ fn create_get_job_status_tool() -> OpenAiTool {
 /// Create a tool for getting backup summary
 fn create_get_backup_summary_tool() -> OpenAiTool {
     let mut parameters = BTreeMap::new();
+    parameters.insert("workload_type".to_string(), JsonSchema::String);
     parameters.insert("vault_name".to_string(), JsonSchema::String);
     
     create_function_tool(
         "recovery_services_get_backup_summary",
-        "Get a summary of backup status for all protected items in the vault",
+        "Get summary of backup status and recent activity for the vault",
         parameters,
         &[],
     )
@@ -314,12 +318,12 @@ fn create_list_recovery_points_tool() -> OpenAiTool {
     let mut parameters = BTreeMap::new();
     parameters.insert("item_name".to_string(), JsonSchema::String);
     parameters.insert("server_name".to_string(), JsonSchema::String);
-    parameters.insert("recovery_point_type".to_string(), JsonSchema::String);
+    parameters.insert("time_range_days".to_string(), JsonSchema::Number);
     parameters.insert("vault_name".to_string(), JsonSchema::String);
     
     create_function_tool(
         "recovery_services_list_recovery_points",
-        "List available recovery points for a protected database, optionally filtered by type (Full, Incremental, Log)",
+        "List available recovery points for a protected database",
         parameters,
         &["item_name", "server_name"],
     )
@@ -331,33 +335,33 @@ fn create_restore_original_location_tool() -> OpenAiTool {
     parameters.insert("item_name".to_string(), JsonSchema::String);
     parameters.insert("server_name".to_string(), JsonSchema::String);
     parameters.insert("recovery_point_id".to_string(), JsonSchema::String);
-    parameters.insert("point_in_time".to_string(), JsonSchema::String);
+    parameters.insert("log_point_in_time".to_string(), JsonSchema::String);
     parameters.insert("vault_name".to_string(), JsonSchema::String);
     
     create_function_tool(
         "recovery_services_restore_original_location",
-        "Restore a database to its original location using specified recovery point or point-in-time",
+        "Restore a database to its original location from a recovery point",
         parameters,
-        &["item_name", "server_name"],
+        &["item_name", "server_name", "recovery_point_id"],
     )
 }
 
 /// Create a tool for restoring to alternate location
 fn create_restore_alternate_location_tool() -> OpenAiTool {
     let mut parameters = BTreeMap::new();
-    parameters.insert("source_item_name".to_string(), JsonSchema::String);
-    parameters.insert("source_server_name".to_string(), JsonSchema::String);
-    parameters.insert("target_server_name".to_string(), JsonSchema::String);
-    parameters.insert("target_database_name".to_string(), JsonSchema::String);
+    parameters.insert("item_name".to_string(), JsonSchema::String);
+    parameters.insert("server_name".to_string(), JsonSchema::String);
     parameters.insert("recovery_point_id".to_string(), JsonSchema::String);
-    parameters.insert("point_in_time".to_string(), JsonSchema::String);
+    parameters.insert("target_server".to_string(), JsonSchema::String);
+    parameters.insert("target_database".to_string(), JsonSchema::String);
+    parameters.insert("log_point_in_time".to_string(), JsonSchema::String);
     parameters.insert("vault_name".to_string(), JsonSchema::String);
     
     create_function_tool(
         "recovery_services_restore_alternate_location",
-        "Restore a database to an alternate server/location using specified recovery point or point-in-time",
+        "Restore a database to an alternate location/server from a recovery point",
         parameters,
-        &["source_item_name", "source_server_name", "target_server_name"],
+        &["item_name", "server_name", "recovery_point_id", "target_server", "target_database"],
     )
 }
 
@@ -366,60 +370,60 @@ fn create_restore_as_files_tool() -> OpenAiTool {
     let mut parameters = BTreeMap::new();
     parameters.insert("item_name".to_string(), JsonSchema::String);
     parameters.insert("server_name".to_string(), JsonSchema::String);
-    parameters.insert("target_file_path".to_string(), JsonSchema::String);
     parameters.insert("recovery_point_id".to_string(), JsonSchema::String);
-    parameters.insert("point_in_time".to_string(), JsonSchema::String);
+    parameters.insert("target_container".to_string(), JsonSchema::String);
+    parameters.insert("file_path".to_string(), JsonSchema::String);
+    parameters.insert("log_point_in_time".to_string(), JsonSchema::String);
     parameters.insert("vault_name".to_string(), JsonSchema::String);
     
     create_function_tool(
         "recovery_services_restore_as_files",
-        "Restore a database as files to a specified directory path",
+        "Restore a database as files to a specified location",
         parameters,
-        &["item_name", "server_name", "target_file_path"],
+        &["item_name", "server_name", "recovery_point_id", "target_container", "file_path"],
     )
 }
 
 /// Create a tool for discovering databases
 fn create_discover_databases_tool() -> OpenAiTool {
     let mut parameters = BTreeMap::new();
-    parameters.insert("vault_name".to_string(), JsonSchema::String);
-    parameters.insert("workload_type".to_string(), JsonSchema::String);
     parameters.insert("server_name".to_string(), JsonSchema::String);
+    parameters.insert("workload_type".to_string(), JsonSchema::String);
+    parameters.insert("vault_name".to_string(), JsonSchema::String);
     
     create_function_tool(
         "recovery_services_discover_databases",
-        "Discover databases on a server for backup. workload_type can be 'SAPHANA' or 'SQLDataBase'",
+        "Discover databases on a registered VM for backup protection",
         parameters,
-        &["workload_type"],
+        &["server_name", "workload_type"],
     )
 }
 
 /// Create a tool for registering VM for workload
 fn create_register_vm_for_workload_tool() -> OpenAiTool {
     let mut parameters = BTreeMap::new();
-    parameters.insert("vault_name".to_string(), JsonSchema::String);
-    parameters.insert("vm_name".to_string(), JsonSchema::String);
-    parameters.insert("vm_resource_group".to_string(), JsonSchema::String);
+    parameters.insert("vm_resource_id".to_string(), JsonSchema::String);
     parameters.insert("workload_type".to_string(), JsonSchema::String);
+    parameters.insert("vault_name".to_string(), JsonSchema::String);
     
     create_function_tool(
         "recovery_services_register_vm_for_workload",
-        "Register a VM for workload backup (SAP HANA, SQL Server). workload_type can be 'SAPHANA' or 'SQLDataBase'",
+        "Register a VM for database workload backup (SAP HANA, SQL Server)",
         parameters,
-        &["vm_name", "vm_resource_group", "workload_type"],
+        &["vm_resource_id", "workload_type"],
     )
 }
 
 /// Create a tool for re-registering container
 fn create_reregister_container_tool() -> OpenAiTool {
     let mut parameters = BTreeMap::new();
-    parameters.insert("vault_name".to_string(), JsonSchema::String);
     parameters.insert("container_name".to_string(), JsonSchema::String);
     parameters.insert("workload_type".to_string(), JsonSchema::String);
+    parameters.insert("vault_name".to_string(), JsonSchema::String);
     
     create_function_tool(
         "recovery_services_reregister_container",
-        "Re-register a container for workload backup discovery",
+        "Re-register a container for workload backup (useful for troubleshooting)",
         parameters,
         &["container_name", "workload_type"],
     )
@@ -428,12 +432,12 @@ fn create_reregister_container_tool() -> OpenAiTool {
 /// Create a tool for unregistering container
 fn create_unregister_container_tool() -> OpenAiTool {
     let mut parameters = BTreeMap::new();
-    parameters.insert("vault_name".to_string(), JsonSchema::String);
     parameters.insert("container_name".to_string(), JsonSchema::String);
+    parameters.insert("vault_name".to_string(), JsonSchema::String);
     
     create_function_tool(
         "recovery_services_unregister_container",
-        "Unregister a container from backup",
+        "Unregister a container from backup protection",
         parameters,
         &["container_name"],
     )
@@ -442,145 +446,142 @@ fn create_unregister_container_tool() -> OpenAiTool {
 /// Create a tool for creating workload policy
 fn create_create_workload_policy_tool() -> OpenAiTool {
     let mut parameters = BTreeMap::new();
-    parameters.insert("vault_name".to_string(), JsonSchema::String);
     parameters.insert("policy_name".to_string(), JsonSchema::String);
     parameters.insert("workload_type".to_string(), JsonSchema::String);
-    parameters.insert("full_backup_schedule".to_string(), JsonSchema::String);
-    parameters.insert("log_backup_frequency_minutes".to_string(), JsonSchema::Number);
-    parameters.insert("retention_days".to_string(), JsonSchema::Number);
+    parameters.insert("policy_config".to_string(), JsonSchema::String);
+    parameters.insert("vault_name".to_string(), JsonSchema::String);
     
     create_function_tool(
         "recovery_services_create_workload_policy",
-        "Create a workload-specific backup policy for databases. workload_type can be 'SAPHanaDatabase' or 'SQLDataBase'",
+        "Create a backup policy for database workloads with specific configuration",
         parameters,
-        &["policy_name", "workload_type"],
+        &["policy_name", "workload_type", "policy_config"],
     )
 }
 
 /// Create a tool for enabling database protection
 fn create_enable_database_protection_tool() -> OpenAiTool {
     let mut parameters = BTreeMap::new();
-    parameters.insert("vault_name".to_string(), JsonSchema::String);
-    parameters.insert("server_name".to_string(), JsonSchema::String);
-    parameters.insert("database_name".to_string(), JsonSchema::String);
+    parameters.insert("container_name".to_string(), JsonSchema::String);
+    parameters.insert("protectable_item_name".to_string(), JsonSchema::String);
     parameters.insert("policy_name".to_string(), JsonSchema::String);
     parameters.insert("workload_type".to_string(), JsonSchema::String);
+    parameters.insert("vault_name".to_string(), JsonSchema::String);
     
     create_function_tool(
         "recovery_services_enable_database_protection",
-        "Enable backup protection for a specific database. workload_type can be 'SAPHANA' or 'SQLDataBase'",
+        "Enable backup protection for a specific database using a policy",
         parameters,
-        &["server_name", "database_name", "policy_name", "workload_type"],
+        &["container_name", "protectable_item_name", "policy_name", "workload_type"],
     )
 }
 
 /// Create a tool for disabling database protection
 fn create_disable_database_protection_tool() -> OpenAiTool {
     let mut parameters = BTreeMap::new();
-    parameters.insert("vault_name".to_string(), JsonSchema::String);
-    parameters.insert("server_name".to_string(), JsonSchema::String);
-    parameters.insert("database_name".to_string(), JsonSchema::String);
-    parameters.insert("workload_type".to_string(), JsonSchema::String);
+    parameters.insert("container_name".to_string(), JsonSchema::String);
+    parameters.insert("protected_item_name".to_string(), JsonSchema::String);
     parameters.insert("delete_backup_data".to_string(), JsonSchema::Boolean);
+    parameters.insert("vault_name".to_string(), JsonSchema::String);
     
     create_function_tool(
         "recovery_services_disable_database_protection",
-        "Disable backup protection for a specific database",
+        "Disable backup protection for a database, optionally deleting backup data",
         parameters,
-        &["server_name", "database_name", "workload_type"],
+        &["container_name", "protected_item_name"],
     )
 }
 
 /// Create a tool for triggering database backup
 fn create_trigger_database_backup_tool() -> OpenAiTool {
     let mut parameters = BTreeMap::new();
-    parameters.insert("vault_name".to_string(), JsonSchema::String);
-    parameters.insert("server_name".to_string(), JsonSchema::String);
-    parameters.insert("database_name".to_string(), JsonSchema::String);
+    parameters.insert("container_name".to_string(), JsonSchema::String);
+    parameters.insert("protected_item_name".to_string(), JsonSchema::String);
     parameters.insert("backup_type".to_string(), JsonSchema::String);
     parameters.insert("retention_date".to_string(), JsonSchema::String);
+    parameters.insert("vault_name".to_string(), JsonSchema::String);
     
     create_function_tool(
         "recovery_services_trigger_database_backup",
-        "Trigger an on-demand backup for a database. backup_type can be 'Full', 'Differential', or 'Log'",
+        "Trigger an ad-hoc backup for a protected database",
         parameters,
-        &["server_name", "database_name", "backup_type"],
+        &["container_name", "protected_item_name", "backup_type"],
     )
 }
 
 /// Create a tool for restoring database to original location
 fn create_restore_database_original_tool() -> OpenAiTool {
     let mut parameters = BTreeMap::new();
-    parameters.insert("vault_name".to_string(), JsonSchema::String);
-    parameters.insert("server_name".to_string(), JsonSchema::String);
-    parameters.insert("database_name".to_string(), JsonSchema::String);
+    parameters.insert("container_name".to_string(), JsonSchema::String);
+    parameters.insert("protected_item_name".to_string(), JsonSchema::String);
     parameters.insert("recovery_point_id".to_string(), JsonSchema::String);
     parameters.insert("log_point_in_time".to_string(), JsonSchema::String);
+    parameters.insert("vault_name".to_string(), JsonSchema::String);
     
     create_function_tool(
         "recovery_services_restore_database_original",
-        "Restore a database to its original location. log_point_in_time format: 'dd-MM-yyyy-HH:mm:ss'",
+        "Restore a database to its original location from a recovery point",
         parameters,
-        &["server_name", "database_name", "recovery_point_id"],
+        &["container_name", "protected_item_name", "recovery_point_id"],
     )
 }
 
 /// Create a tool for restoring database to alternate location
 fn create_restore_database_alternate_tool() -> OpenAiTool {
     let mut parameters = BTreeMap::new();
-    parameters.insert("vault_name".to_string(), JsonSchema::String);
-    parameters.insert("source_server_name".to_string(), JsonSchema::String);
-    parameters.insert("source_database_name".to_string(), JsonSchema::String);
-    parameters.insert("target_server_name".to_string(), JsonSchema::String);
-    parameters.insert("target_database_name".to_string(), JsonSchema::String);
+    parameters.insert("container_name".to_string(), JsonSchema::String);
+    parameters.insert("protected_item_name".to_string(), JsonSchema::String);
     parameters.insert("recovery_point_id".to_string(), JsonSchema::String);
+    parameters.insert("target_server".to_string(), JsonSchema::String);
+    parameters.insert("target_database".to_string(), JsonSchema::String);
     parameters.insert("log_point_in_time".to_string(), JsonSchema::String);
+    parameters.insert("vault_name".to_string(), JsonSchema::String);
     
     create_function_tool(
         "recovery_services_restore_database_alternate",
-        "Restore a database to an alternate location/server. log_point_in_time format: 'dd-MM-yyyy-HH:mm:ss'",
+        "Restore a database to an alternate location from a recovery point",
         parameters,
-        &["source_server_name", "source_database_name", "target_server_name", "target_database_name", "recovery_point_id"],
+        &["container_name", "protected_item_name", "recovery_point_id", "target_server", "target_database"],
     )
 }
 
 /// Create a tool for restoring database as files
 fn create_restore_database_as_files_tool() -> OpenAiTool {
     let mut parameters = BTreeMap::new();
-    parameters.insert("vault_name".to_string(), JsonSchema::String);
-    parameters.insert("server_name".to_string(), JsonSchema::String);
-    parameters.insert("database_name".to_string(), JsonSchema::String);
+    parameters.insert("container_name".to_string(), JsonSchema::String);
+    parameters.insert("protected_item_name".to_string(), JsonSchema::String);
     parameters.insert("recovery_point_id".to_string(), JsonSchema::String);
-    parameters.insert("target_server_name".to_string(), JsonSchema::String);
+    parameters.insert("target_container".to_string(), JsonSchema::String);
     parameters.insert("file_path".to_string(), JsonSchema::String);
     parameters.insert("log_point_in_time".to_string(), JsonSchema::String);
+    parameters.insert("vault_name".to_string(), JsonSchema::String);
     
     create_function_tool(
         "recovery_services_restore_database_as_files",
-        "Restore a database as files to a specified path. log_point_in_time format: 'dd-MM-yyyy-HH:mm:ss'",
+        "Restore a database as files to a specified location",
         parameters,
-        &["server_name", "database_name", "recovery_point_id", "target_server_name", "file_path"],
+        &["container_name", "protected_item_name", "recovery_point_id", "target_container", "file_path"],
     )
 }
 
 /// Create a tool for generating recovery configuration
 fn create_generate_recovery_config_tool() -> OpenAiTool {
     let mut parameters = BTreeMap::new();
-    parameters.insert("vault_name".to_string(), JsonSchema::String);
-    parameters.insert("server_name".to_string(), JsonSchema::String);
-    parameters.insert("database_name".to_string(), JsonSchema::String);
+    parameters.insert("container_name".to_string(), JsonSchema::String);
+    parameters.insert("protected_item_name".to_string(), JsonSchema::String);
     parameters.insert("recovery_point_name".to_string(), JsonSchema::String);
     parameters.insert("restore_mode".to_string(), JsonSchema::String);
-    parameters.insert("target_server_name".to_string(), JsonSchema::String);
-    parameters.insert("target_database_name".to_string(), JsonSchema::String);
+    parameters.insert("target_server".to_string(), JsonSchema::String);
+    parameters.insert("target_database".to_string(), JsonSchema::String);
     parameters.insert("log_point_in_time".to_string(), JsonSchema::String);
     parameters.insert("file_path".to_string(), JsonSchema::String);
+    parameters.insert("vault_name".to_string(), JsonSchema::String);
     
     create_function_tool(
         "recovery_services_generate_recovery_config",
-        "Generate recovery configuration for database restore. restore_mode can be 'OriginalLocation', 'AlternateLocation', or 'RestoreAsFiles'",
+        "Generate recovery configuration for database restore operations",
         parameters,
-        &["server_name", "database_name", "recovery_point_name", "restore_mode"],
+        &["container_name", "protected_item_name", "recovery_point_name", "restore_mode"],
     )
 }
 
@@ -590,7 +591,7 @@ fn create_clear_auth_cache_tool() -> OpenAiTool {
     
     create_function_tool(
         "recovery_services_clear_auth_cache",
-        "Clear Recovery Services authentication cache and force re-authentication",
+        "Clear Recovery Services authentication cache to force re-authentication",
         parameters,
         &[],
     )

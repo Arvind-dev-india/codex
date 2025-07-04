@@ -442,8 +442,8 @@ impl RecoveryServicesTools {
         let vault_name = args["vault_name"].as_str();
         let client = self.get_client(vault_name)?;
         
-        // Get backup management type (AzureIaasVM, AzureWorkload, AzureStorage, etc.)
-        let backup_management_type = args["backup_management_type"].as_str().unwrap_or("AzureIaasVM");
+        // Get backup management type - if not specified, try all types
+        let backup_management_type = args["backup_management_type"].as_str();
         
         // Get workload type with enhanced support for all types
         let workload_type_str = args["workload_type"].as_str();
@@ -465,10 +465,10 @@ impl RecoveryServicesTools {
                 "SAPASEDATABASE" | "SAPASE" => Some(WorkloadType::SapAseDatabase),
                 "SAPHANADBINSTANCE" => Some(WorkloadType::SapHanaDbInstance),
                 "ANYDATABASE" => Some(WorkloadType::AnyDatabase),
-                _ => return Err(CodexErr::Other(format!(
-                    "Unsupported workload type: {}. Supported types are: VM, FileFolder, AzureSqlDb, SqlDb, Exchange, Sharepoint, VMwareVM, SystemState, Client, GenericDataSource, SqlDatabase, AzureFileShare, SapHanaDatabase, SapAseDatabase, SapHanaDbInstance, AnyDatabase", 
-                    wl_str
-                ))),
+                _ => {
+                    tracing::warn!("Unknown workload type: {}, will search all types", wl_str);
+                    None
+                }
             }
         } else {
             None
@@ -480,45 +480,218 @@ impl RecoveryServicesTools {
         // Get container name for direct filtering if provided
         let container_name = args["container_name"].as_str();
         
-        tracing::info!("Listing protected items for backup management type: {}, workload: {:?}, server: {:?}", 
-                      backup_management_type, workload_type_str, server_name);
+        tracing::info!("Listing protected items for backup management type: {:?}, workload: {:?}, server: {:?}, container: {:?}", 
+                      backup_management_type, workload_type_str, server_name, container_name);
         
-        // Build direct API query with filters for more reliable results
-        let mut endpoint = "/backupProtectedItems?".to_string();
-        let mut filters = Vec::new();
+        let mut all_items = Vec::new();
         
-        // Add backup management type filter
-        filters.push(format!("backupManagementType eq '{}'", backup_management_type));
-        
-        // Add workload type filter if specified
-        if let Some(wl_str) = workload_type_str {
-            filters.push(format!("workloadType eq '{}'", wl_str));
-        }
-        
-        // Add filters to endpoint
-        endpoint.push_str(&format!("$filter={}", filters.join(" and ")));
-        
-        // Use the list_protected_items method with workload filter
-        let items = client.list_protected_items(workload_type).await?;
-        
-        // Filter by server name if provided
-        let filtered_items: Vec<_> = if let Some(server) = server_name {
-            items.into_iter()
-                .filter(|item| item.properties.server_name.contains(server))
-                .collect()
+        // If backup management type is specified, use it; otherwise try all common types
+        let backup_types_to_try = if let Some(bmt) = backup_management_type {
+            vec![bmt]
         } else {
-            items
+            vec!["AzureIaasVM", "AzureWorkload", "AzureStorage", "AzureSql"]
         };
+        
+        // If workload type is specified, use it; otherwise try common item types
+        // When both backup_management_type and workload_type are specified, only use those exact filters
+        let item_types_to_try = if workload_type_str.is_some() {
+            vec![workload_type_str]
+        } else if backup_management_type.is_some() {
+            // If backup management type is specified but workload type is not,
+            // try a focused set of item types relevant to that backup management type
+            match backup_management_type.unwrap() {
+                "AzureIaasVM" => vec![None, Some("VM")],
+                "AzureWorkload" => vec![None, Some("AnyDatabase"), Some("SAPHanaDatabase"), Some("SQLDataBase"), Some("SAPAseDatabase")],
+                "AzureStorage" => vec![None, Some("AzureFileShare")],
+                "AzureSql" => vec![None, Some("AzureSqlDb")],
+                _ => vec![None] // Just try without item type filter for unknown backup management types
+            }
+        } else {
+            // Comprehensive search when no filters specified
+            vec![
+                None, // Try without item type filter first - this should catch most items
+                Some("VM"),
+                Some("AnyDatabase"), // Try AnyDatabase before specific database types
+                Some("SAPHanaDatabase"),
+                Some("SQLDataBase"),
+                Some("AzureFileShare")
+                // Removed less common types to reduce API calls and timeout risk
+            ]
+        };
+        
+        let mut total_api_calls = 0;
+        // Adjust max API calls based on whether filters are specified
+        let max_api_calls = if backup_management_type.is_some() || workload_type_str.is_some() {
+            5 // Fewer calls needed when filters are specified
+        } else {
+            10 // More calls for comprehensive search
+        };
+        
+        'outer: for backup_type in &backup_types_to_try {
+            for item_type_option in &item_types_to_try {
+                if total_api_calls >= max_api_calls {
+                    tracing::warn!("Reached maximum API calls limit ({}), stopping search to prevent timeout", max_api_calls);
+                    break 'outer;
+                }
+                
+                let current_item_type = item_type_option.or(workload_type_str);
+                
+                tracing::debug!("Querying protected items for backup management type: {}, item type: {:?} (call {}/{})", 
+                               backup_type, current_item_type, total_api_calls + 1, max_api_calls);
+                
+                total_api_calls += 1;
+                
+                // Build API endpoint with filters
+                let mut endpoint = "/backupProtectedItems".to_string();
+                let mut filters = Vec::new();
+                
+                // Add backup management type filter
+                filters.push(format!("backupManagementType eq '{}'", backup_type));
+                
+                // Add item type filter if specified (Azure API uses itemType, not workloadType)
+                if let Some(item_str) = current_item_type {
+                    filters.push(format!("itemType eq '{}'", item_str));
+                }
+                
+                // Add container filter if specified
+                if let Some(container) = container_name {
+                    filters.push(format!("containerName eq '{}'", container));
+                }
+                
+                // Add filters to endpoint if any
+                if !filters.is_empty() {
+                    endpoint.push_str(&format!("?$filter={}", filters.join(" and ")));
+                }
+                
+                tracing::debug!("Querying endpoint: {}", endpoint);
+            
+                // Query the API directly
+                match client.get_request(&endpoint).await {
+                    Ok(response) => {
+                        if let Some(items_array) = response.get("value").and_then(|v| v.as_array()) {
+                            tracing::info!("Found {} protected items for backup type {} with item type {:?}", 
+                                         items_array.len(), backup_type, current_item_type);
+                            
+                            // If this is a comprehensive search and we found items, we can be more selective about continuing
+                            let found_items_count = items_array.len();
+                            
+                            for item_json in items_array {
+                                // Parse each item and add to results
+                                match serde_json::from_value::<ProtectedItem>(item_json.clone()) {
+                                    Ok(item) => {
+                                        // Apply server name filter if specified
+                                        let server_matches = if let Some(server) = server_name {
+                                            item.properties.server_name.to_lowercase().contains(&server.to_lowercase()) ||
+                                            item.properties.friendly_name.to_lowercase().contains(&server.to_lowercase())
+                                        } else {
+                                            true
+                                        };
+                                        
+                                        if server_matches {
+                                            all_items.push(item);
+                                        }
+                                    },
+                                    Err(e) => {
+                                        tracing::debug!("Failed to parse protected item: {}, raw data: {:?}", e, item_json);
+                                        // Still include the raw data for debugging
+                                        // Create a fallback item with available fields
+                                        let fallback_item = json!({
+                                            "id": item_json.get("id").and_then(|v| v.as_str()).unwrap_or("unknown"),
+                                            "name": item_json.get("name").and_then(|v| v.as_str()).unwrap_or("unknown"),
+                                            "properties": {
+                                                "friendlyName": item_json.get("properties")
+                                                    .and_then(|p| p.get("friendlyName"))
+                                                    .and_then(|f| f.as_str())
+                                                    .unwrap_or("unknown"),
+                                                "serverName": item_json.get("properties")
+                                                    .and_then(|p| p.get("serverName"))
+                                                    .and_then(|s| s.as_str())
+                                                    .unwrap_or("unknown"),
+                                                "backupManagementType": backup_type,
+                                                "workloadType": item_json.get("properties")
+                                                    .and_then(|p| p.get("workloadType"))
+                                                    .and_then(|w| w.as_str())
+                                                    .unwrap_or("unknown"),
+                                                "protectionState": item_json.get("properties")
+                                                    .and_then(|p| p.get("protectionState"))
+                                                    .and_then(|ps| ps.as_str())
+                                                    .unwrap_or("unknown"),
+                                                "lastBackupTime": item_json.get("properties")
+                                                    .and_then(|p| p.get("lastBackupTime"))
+                                                    .and_then(|t| t.as_str()),
+                                                "policyId": item_json.get("properties")
+                                                    .and_then(|p| p.get("policyId"))
+                                                    .and_then(|pid| pid.as_str()),
+                                            },
+                                            "raw_data": item_json
+                                        });
+                                        
+                                        // Try to parse as ProtectedItem, but if it fails, use the raw JSON
+                                        match serde_json::from_value::<ProtectedItem>(fallback_item.clone()) {
+                                            Ok(parsed_item) => {
+                                                all_items.push(parsed_item);
+                                            },
+                                            Err(_) => {
+                                                // Just store the raw JSON for debugging
+                                                tracing::debug!("Using raw JSON for unparseable item: {:?}", fallback_item);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            // Early termination optimization: only for comprehensive search (no filters specified)
+                            // If we found items without any item type filter, we can stop here as this
+                            // should include most/all protected items
+                            if backup_management_type.is_none() && workload_type_str.is_none() && 
+                               current_item_type.is_none() && found_items_count > 0 {
+                                tracing::info!("Found {} items without item type filter in comprehensive search, stopping early to prevent timeout", found_items_count);
+                                break 'outer;
+                            }
+                            
+                            // For filtered searches, continue until all specified combinations are tried
+                            // (no early termination when specific filters are provided)
+                        }
+                    },
+                    Err(e) => {
+                        tracing::warn!("Failed to query protected items for backup type {} with item type {:?}: {}", 
+                                     backup_type, current_item_type, e);
+                    }
+                }
+            }
+        }
         
         // Build response
         let response = json!({
-            "protected_items": filtered_items,
-            "total_count": filtered_items.len(),
+            "protected_items": all_items,
+            "total_count": all_items.len(),
             "filter": {
                 "backup_management_type": backup_management_type,
                 "workload_type": workload_type_str,
                 "server_name": server_name,
                 "container_name": container_name
+            },
+            "search_strategy": {
+                "backup_types_searched": backup_types_to_try,
+                "item_types_searched": item_types_to_try,
+                "comprehensive_search": backup_management_type.is_none() && workload_type_str.is_none(),
+                "total_api_calls_made": total_api_calls,
+                "max_api_calls_limit": max_api_calls,
+                "search_optimized": true,
+                "api_note": "Azure API uses 'itemType' parameter, not 'workloadType'"
+            },
+            "message": if all_items.is_empty() { 
+                if backup_management_type.is_none() && workload_type_str.is_none() {
+                    "No protected items found after comprehensive search across all backup management types and item types. This vault may not have any protected items, or they might be in a different vault.".to_string()
+                } else if backup_management_type.is_some() && workload_type_str.is_some() {
+                    format!("No protected items found with the specified filters (backup_management_type: {}, workload_type: {}). Verify the filters are correct or try removing them to search all types.", backup_management_type.unwrap(), workload_type_str.unwrap())
+                } else if backup_management_type.is_some() {
+                    format!("No protected items found for backup management type '{}'. Try a different backup management type or remove the filter to search all types.", backup_management_type.unwrap())
+                } else {
+                    format!("No protected items found for workload type '{}'. Try a different workload type or remove the filter to search all types.", workload_type_str.unwrap())
+                }
+            } else {
+                format!("Found {} protected items successfully", all_items.len())
             }
         });
         

@@ -357,7 +357,7 @@ fn create_disable_protection_tool() -> Tool {
 fn create_list_protected_items_tool() -> Tool {
     Tool {
         name: "recovery_services_list_protected_items".to_string(),
-        description: Some("List items that are currently protected (backed up) in a vault with filtering options".to_string()),
+        description: Some("List items that are currently protected (backed up) in a vault. Works with just vault_name and automatically searches across all backup management types and item types. Optional filters: backup_management_type ('AzureIaasVM' for standard VM backups, 'AzureWorkload' for database workloads like SAP HANA/SQL Server, 'AzureStorage' for file shares), workload_type ('VM', 'SAPHanaDatabase', 'SAPHanaDBInstance', 'SQLDataBase', 'SAPAseDatabase', 'AnyDatabase', 'AzureFileShare', etc. - Azure API uses 'itemType'), server_name (partial match), container_name (exact match). If no filters specified, searches all types to find protected items.".to_string()),
         annotations: None,
         input_schema: ToolInputSchema {
             r#type: "object".to_string(),
@@ -366,24 +366,23 @@ fn create_list_protected_items_tool() -> Tool {
                     "type": "string",
                     "description": "Name of the Recovery Services vault (optional, uses default from config if not specified)"
                 },
-                "workload_type": {
-                    "type": "string",
-                    "description": "Filter by workload type",
-                    "enum": ["VM", "FileFolder", "AzureSqlDb", "SqlDb", "Exchange", "Sharepoint", "VMwareVM", "SystemState", "Client", "GenericDataSource", "SqlDatabase", "AzureFileShare", "SapHanaDatabase", "SapAseDatabase", "SapHanaDbInstance"]
-                },
                 "backup_management_type": {
                     "type": "string",
-                    "description": "Filter by backup management type",
-                    "enum": ["AzureIaasVM", "AzureWorkload", "AzureStorage", "AzureSql"],
-                    "default": "AzureIaasVM"
+                    "description": "Optional filter by backup management type. 'AzureIaasVM' for standard VM backups, 'AzureWorkload' for database workloads (SAP HANA, SQL Server), 'AzureStorage' for file shares, 'AzureSql' for Azure SQL databases. If not specified, searches all types.",
+                    "enum": ["AzureIaasVM", "AzureWorkload", "AzureStorage", "AzureSql"]
+                },
+                "workload_type": {
+                    "type": "string",
+                    "description": "Optional filter by workload/item type (Azure API uses 'itemType'). Common values: 'VM' (virtual machines), 'SAPHanaDatabase' (SAP HANA databases), 'SAPHanaDBInstance' (SAP HANA instances), 'SQLDataBase' (SQL Server), 'SAPAseDatabase' (SAP ASE), 'AnyDatabase' (any database), 'AzureFileShare' (file shares). If not specified, searches all types.",
+                    "enum": ["VM", "SAPHanaDatabase", "SAPHanaDBInstance", "SQLDataBase", "SAPAseDatabase", "AnyDatabase", "AzureFileShare", "FileFolder", "AzureSqlDb", "Exchange", "Sharepoint", "VMwareVM", "SystemState", "Client", "GenericDataSource"]
                 },
                 "server_name": {
                     "type": "string",
-                    "description": "Filter by server name (partial match supported)"
+                    "description": "Optional filter by server name (supports partial matching)"
                 },
                 "container_name": {
                     "type": "string",
-                    "description": "Filter by specific container name"
+                    "description": "Optional filter by specific container name (exact match)"
                 }
             })),
             required: Some(vec![]),
