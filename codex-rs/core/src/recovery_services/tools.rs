@@ -60,11 +60,13 @@ pub fn create_recovery_services_tools() -> Vec<OpenAiTool> {
 
 /// Create a tool for listing Recovery Services vaults
 fn create_list_vaults_tool() -> OpenAiTool {
-    let parameters = BTreeMap::new();
+    let mut parameters = BTreeMap::new();
+    parameters.insert("subscription_id".to_string(), JsonSchema::String);
+    parameters.insert("resource_group".to_string(), JsonSchema::String);
     
     create_function_tool(
         "recovery_services_list_vaults",
-        "List all accessible Recovery Services vaults in the subscription",
+        "List all accessible Recovery Services vaults. If subscription_id is provided, lists vaults in that subscription. If resource_group is also provided, filters to vaults in that resource group only.",
         parameters,
         &[],
     )

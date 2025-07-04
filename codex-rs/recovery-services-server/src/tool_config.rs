@@ -47,14 +47,18 @@ pub fn create_recovery_services_tools() -> Vec<Tool> {
 fn create_list_vaults_tool() -> Tool {
     Tool {
         name: "recovery_services_list_vaults".to_string(),
-        description: Some("List Recovery Services vaults in the subscription".to_string()),
+        description: Some("List Recovery Services vaults in the subscription with optional filtering by resource group".to_string()),
         annotations: None,
         input_schema: ToolInputSchema {
             r#type: "object".to_string(),
             properties: Some(json!({
+                "subscription_id": {
+                    "type": "string",
+                    "description": "Azure subscription ID (optional, uses default from config if not specified)"
+                },
                 "resource_group": {
                     "type": "string",
-                    "description": "Resource group name (optional, lists all if not specified)"
+                    "description": "Resource group name (optional, lists all vaults in subscription if not specified)"
                 }
             })),
             required: Some(vec![]),
@@ -80,25 +84,32 @@ fn create_test_connection_tool() -> Tool {
 fn create_register_vm_tool() -> Tool {
     Tool {
         name: "recovery_services_register_vm".to_string(),
-        description: Some("Register a virtual machine for backup with a Recovery Services vault".to_string()),
+        description: Some("Register a virtual machine for backup with a Recovery Services vault for different workload types".to_string()),
         annotations: None,
         input_schema: ToolInputSchema {
             r#type: "object".to_string(),
             properties: Some(json!({
                 "vault_name": {
                     "type": "string",
-                    "description": "Name of the Recovery Services vault"
+                    "description": "Name of the Recovery Services vault (optional, uses default from config if not specified)"
                 },
-                "vm_name": {
+                "vm_resource_id": {
                     "type": "string",
-                    "description": "Name of the virtual machine to register"
+                    "description": "Full Azure resource ID of the virtual machine to register"
                 },
-                "vm_resource_group": {
+                "workload_type": {
                     "type": "string",
-                    "description": "Resource group containing the VM"
+                    "description": "Type of workload to backup",
+                    "enum": ["VM", "FileFolder", "AzureSqlDb", "SqlDb", "Exchange", "Sharepoint", "VMwareVM", "SystemState", "Client", "GenericDataSource", "SqlDatabase", "AzureFileShare", "SapHanaDatabase", "SapAseDatabase", "SapHanaDbInstance"],
+                    "default": "VM"
+                },
+                "backup_management_type": {
+                    "type": "string",
+                    "description": "Backup management type (optional, auto-detected based on workload type)",
+                    "enum": ["AzureIaasVM", "AzureWorkload", "AzureStorage", "AzureSql"]
                 }
             })),
-            required: Some(vec!["vault_name".to_string(), "vm_name".to_string(), "vm_resource_group".to_string()]),
+            required: Some(vec!["vm_resource_id".to_string()]),
         },
     }
 }
@@ -161,25 +172,25 @@ fn create_unregister_vm_tool() -> Tool {
 fn create_check_registration_status_tool() -> Tool {
     Tool {
         name: "recovery_services_check_registration_status".to_string(),
-        description: Some("Check the registration status of a virtual machine".to_string()),
+        description: Some("Check if a virtual machine is registered for backup in a Recovery Services vault".to_string()),
         annotations: None,
         input_schema: ToolInputSchema {
             r#type: "object".to_string(),
             properties: Some(json!({
                 "vault_name": {
                     "type": "string",
-                    "description": "Name of the Recovery Services vault"
+                    "description": "Name of the Recovery Services vault (optional, uses default from config if not specified)"
                 },
                 "vm_name": {
                     "type": "string",
-                    "description": "Name of the virtual machine"
+                    "description": "Name of the virtual machine to check"
                 },
                 "vm_resource_group": {
                     "type": "string",
-                    "description": "Resource group containing the VM"
+                    "description": "Resource group containing the VM (optional, improves search accuracy if provided)"
                 }
             })),
-            required: Some(vec!["vault_name".to_string(), "vm_name".to_string(), "vm_resource_group".to_string()]),
+            required: Some(vec!["vm_name".to_string()]),
         },
     }
 }
@@ -346,17 +357,36 @@ fn create_disable_protection_tool() -> Tool {
 fn create_list_protected_items_tool() -> Tool {
     Tool {
         name: "recovery_services_list_protected_items".to_string(),
-        description: Some("List items that are currently protected (backed up) in a vault".to_string()),
+        description: Some("List items that are currently protected (backed up) in a vault with filtering options".to_string()),
         annotations: None,
         input_schema: ToolInputSchema {
             r#type: "object".to_string(),
             properties: Some(json!({
                 "vault_name": {
                     "type": "string",
-                    "description": "Name of the Recovery Services vault"
+                    "description": "Name of the Recovery Services vault (optional, uses default from config if not specified)"
+                },
+                "workload_type": {
+                    "type": "string",
+                    "description": "Filter by workload type",
+                    "enum": ["VM", "FileFolder", "AzureSqlDb", "SqlDb", "Exchange", "Sharepoint", "VMwareVM", "SystemState", "Client", "GenericDataSource", "SqlDatabase", "AzureFileShare", "SapHanaDatabase", "SapAseDatabase", "SapHanaDbInstance"]
+                },
+                "backup_management_type": {
+                    "type": "string",
+                    "description": "Filter by backup management type",
+                    "enum": ["AzureIaasVM", "AzureWorkload", "AzureStorage", "AzureSql"],
+                    "default": "AzureIaasVM"
+                },
+                "server_name": {
+                    "type": "string",
+                    "description": "Filter by server name (partial match supported)"
+                },
+                "container_name": {
+                    "type": "string",
+                    "description": "Filter by specific container name"
                 }
             })),
-            required: Some(vec!["vault_name".to_string()]),
+            required: Some(vec![]),
         },
     }
 }

@@ -99,16 +99,81 @@ impl RecoveryServicesTools {
     }
 
     /// List Recovery Services vaults
-    pub async fn list_vaults(&self, _args: Value) -> Result<Value> {
-        let client = self.get_client(None)?;
+    pub async fn list_vaults(&self, args: Value) -> Result<Value> {
+        // Get subscription ID from args or use default from config
+        let subscription_id = args["subscription_id"].as_str()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(&self.config.subscription_id);
         
-        tracing::info!("Listing Recovery Services vaults");
+        // Get resource group from args (optional filter)
+        let resource_group_filter = args["resource_group"].as_str()
+            .filter(|s| !s.is_empty());
         
-        let vaults = client.list_vaults().await?;
+        tracing::info!("Listing Recovery Services vaults for subscription: {}, resource group filter: {:?}", 
+                      subscription_id, resource_group_filter);
+        
+        // Get authentication token
+        use crate::recovery_services::auth::RecoveryServicesAuthHandler;
+        
+        // Get codex home directory for OAuth token storage
+        let codex_home = dirs::home_dir()
+            .ok_or_else(|| CodexErr::Other("Could not determine home directory".to_string()))?
+            .join(".codex");
+        
+        // Create auth handler using OAuth
+        let auth = RecoveryServicesAuthHandler::from_oauth(&codex_home).await?;
+        
+        let access_token = match &auth.auth {
+            crate::recovery_services::auth::RecoveryServicesAuth::OAuth(token) => token.clone(),
+            crate::recovery_services::auth::RecoveryServicesAuth::None => {
+                return Err(CodexErr::Other("No authentication provided".to_string()));
+            }
+        };
+        
+        // Create a client for the specified subscription
+        // Use empty strings for resource group and vault name since we're listing at subscription level
+        let client = Arc::new(RecoveryServicesClient::new(
+            subscription_id.to_string(),
+            String::new(),  // Empty resource group - we'll filter later
+            String::new(),  // Empty vault name
+            access_token
+        ));
+        
+        tracing::info!("Created client for subscription: {}", subscription_id);
+        
+        // Get all vaults in the subscription
+        let all_vaults = client.list_vaults().await?;
+        
+        // Filter by resource group if specified
+        let filtered_vaults: Vec<_> = if let Some(rg_filter) = resource_group_filter {
+            all_vaults.into_iter()
+                .filter(|vault| {
+                    vault.resource_group.eq_ignore_ascii_case(rg_filter)
+                })
+                .collect()
+        } else {
+            all_vaults
+        };
+        
+        // Group vaults by resource group for better organization
+        let mut vaults_by_rg: std::collections::HashMap<String, Vec<&VaultInfo>> = std::collections::HashMap::new();
+        for vault in &filtered_vaults {
+            vaults_by_rg.entry(vault.resource_group.clone()).or_insert_with(Vec::new).push(vault);
+        }
         
         Ok(json!({
-            "vaults": vaults,
-            "total_count": vaults.len()
+            "vaults": filtered_vaults,
+            "vaults_by_resource_group": vaults_by_rg,
+            "total_count": filtered_vaults.len(),
+            "filter": {
+                "subscription_id": subscription_id,
+                "resource_group": resource_group_filter
+            },
+            "config_defaults": {
+                "default_subscription_id": self.config.subscription_id,
+                "default_resource_group": self.config.resource_group,
+                "default_vault_name": self.config.vault_name
+            }
         }))
     }
 
@@ -127,9 +192,9 @@ impl RecoveryServicesTools {
         
         let mut tests = Vec::new();
         
-        // Test 1: Basic connectivity
+        // Test 1: Basic connectivity - test vault properties
         tracing::info!("Testing basic connectivity...");
-        let connectivity_test = match client.test_connectivity().await {
+        let basic_connectivity_test = match client.get_vault_properties().await {
             Ok(_) => json!({
                 "test": "basic_connectivity",
                 "status": "success",
@@ -138,12 +203,30 @@ impl RecoveryServicesTools {
             Err(e) => json!({
                 "test": "basic_connectivity", 
                 "status": "failed",
-                "error": format!("{}", e)
+                "error": format!("Connection failed: {}", e)
             })
         };
-        tests.push(connectivity_test);
+        tests.push(basic_connectivity_test);
         
-        // Test 2: List containers (check permissions)
+        // Test 2: List protected items
+        tracing::info!("Testing protected items listing...");
+        let protected_items_test = match client.list_protected_items(None).await {
+            Ok(items) => {
+                json!({
+                    "test": "list_protected_items",
+                    "status": "success",
+                    "message": format!("Successfully listed {} protected items", items.len())
+                })
+            },
+            Err(e) => json!({
+                "test": "list_protected_items",
+                "status": "failed", 
+                "error": format!("Failed to list protected items: {}", e)
+            })
+        };
+        tests.push(protected_items_test);
+        
+        // Test 3: List backup containers
         tracing::info!("Testing container listing permissions...");
         let containers_test = match client.list_backup_containers().await {
             Ok(containers) => json!({
@@ -154,12 +237,12 @@ impl RecoveryServicesTools {
             Err(e) => json!({
                 "test": "list_containers",
                 "status": "failed", 
-                "error": format!("{}", e)
+                "error": format!("Failed to list containers: {}", e)
             })
         };
         tests.push(containers_test);
         
-        // Test 3: List policies (check read permissions)
+        // Test 4: List policies
         tracing::info!("Testing policy listing permissions...");
         let policies_test = match client.list_backup_policies(None).await {
             Ok(policies) => json!({
@@ -170,10 +253,26 @@ impl RecoveryServicesTools {
             Err(e) => json!({
                 "test": "list_policies",
                 "status": "failed", 
-                "error": format!("{}", e)
+                "error": format!("Failed to list policies: {}", e)
             })
         };
         tests.push(policies_test);
+        
+        // Test 5: Get vault configuration
+        tracing::info!("Testing vault configuration access...");
+        let vault_config_test = match client.get_vault_config().await {
+            Ok(_) => json!({
+                "test": "vault_config",
+                "status": "success",
+                "message": "Successfully retrieved vault configuration"
+            }),
+            Err(e) => json!({
+                "test": "vault_config", 
+                "status": "failed",
+                "error": format!("Failed to get vault configuration: {}", e)
+            })
+        };
+        tests.push(vault_config_test);
         
         results["tests"] = json!(tests);
         
@@ -189,6 +288,19 @@ impl RecoveryServicesTools {
             "overall_status": if failed_tests.is_empty() { "healthy" } else { "issues_detected" }
         });
         
+        // Add configuration information to help with debugging
+        results["configuration"] = json!({
+            "subscription_id": self.config.subscription_id,
+            "resource_group": self.config.resource_group,
+            "vault_name": self.config.vault_name,
+            "additional_vaults": self.config.vaults.keys().collect::<Vec<_>>()
+        });
+        
+        // Add vault details if available
+        if let Ok(vault_details) = client.get_vault_properties().await {
+            results["vault_details"] = json!(vault_details);
+        }
+        
         Ok(results)
     }
 
@@ -198,28 +310,88 @@ impl RecoveryServicesTools {
             CodexErr::Other("vm_resource_id parameter is required".to_string())
         })?;
         
-        let workload_type_str = args["workload_type"].as_str().ok_or_else(|| {
-            CodexErr::Other("workload_type parameter is required".to_string())
-        })?;
+        // Default to VM workload type if not specified
+        let workload_type_str = args["workload_type"].as_str().unwrap_or("VM");
         
-        let workload_type = match workload_type_str {
-            "SAPHANA" => WorkloadType::SapHanaDatabase,
-            "SQLDataBase" => WorkloadType::SqlDatabase,
-            _ => return Err(CodexErr::Other("workload_type must be 'SAPHANA' or 'SQLDataBase'".to_string())),
+        // Map the workload type string to the enum
+        let workload_type = match workload_type_str.to_uppercase().as_str() {
+            "VM" => WorkloadType::VM,
+            "FILEFOLDER" => WorkloadType::FileFolder,
+            "AZURESQLDB" => WorkloadType::AzureSqlDb,
+            "SQLDB" => WorkloadType::SqlDb,
+            "EXCHANGE" => WorkloadType::Exchange,
+            "SHAREPOINT" => WorkloadType::Sharepoint,
+            "VMWAREVM" => WorkloadType::VMwareVM,
+            "SYSTEMSTATE" => WorkloadType::SystemState,
+            "CLIENT" => WorkloadType::Client,
+            "GENERICDATASOURCE" => WorkloadType::GenericDataSource,
+            "SQLDATABASE" => WorkloadType::SqlDatabase,
+            "AZUREFILESHARE" => WorkloadType::AzureFileShare,
+            "SAPHANADATABASE" | "SAPHANA" => WorkloadType::SapHanaDatabase,
+            "SAPASEDATABASE" | "SAPASE" => WorkloadType::SapAseDatabase,
+            "SAPHANADBINSTANCE" => WorkloadType::SapHanaDbInstance,
+            _ => return Err(CodexErr::Other(format!(
+                "Unsupported workload type: {}. Supported types are: VM, FileFolder, AzureSqlDb, SqlDb, Exchange, Sharepoint, VMwareVM, SystemState, Client, GenericDataSource, SqlDatabase, AzureFileShare, SapHanaDatabase, SapAseDatabase, SapHanaDbInstance", 
+                workload_type_str
+            ))),
+        };
+        
+        // Get backup management type from args or default to appropriate value based on workload
+        let backup_management_type = match args["backup_management_type"].as_str() {
+            Some(bmt) => bmt,
+            None => match workload_type {
+                WorkloadType::VM => "AzureIaasVM",
+                WorkloadType::AzureFileShare => "AzureStorage",
+                WorkloadType::AzureSqlDb => "AzureSql",
+                _ => "AzureWorkload", // Default for most workload types
+            }
         };
         
         let vault_name = args["vault_name"].as_str();
         let client = self.get_client(vault_name)?;
         
-        tracing::info!("Registering VM {} for {} backup", vm_resource_id, workload_type_str);
+        tracing::info!("Registering VM {} for {} backup with management type {}", 
+                      vm_resource_id, workload_type_str, backup_management_type);
         
-        let result = client.register_vm(vm_resource_id, workload_type).await?;
+        // For standard VM backup
+        if workload_type == WorkloadType::VM && backup_management_type == "AzureIaasVM" {
+            // Extract VM name and resource group from resource ID
+            let parts: Vec<&str> = vm_resource_id.split('/').collect();
+            if parts.len() < 9 {
+                return Err(CodexErr::Other("Invalid VM resource ID format".to_string()));
+            }
+            
+            let vm_resource_group = parts[4];
+            let vm_name = parts[8];
+            
+            // Generate container name for the response
+            let container_name = client.generate_vm_container_name(vm_resource_group, vm_name);
+            
+            // Use the register_vm method for VM registration
+            let result = client.register_vm(vm_resource_id, workload_type).await?;
+            
+            return Ok(json!({
+                "success": true,
+                "message": format!("Successfully registered VM {} for standard Azure VM backup", vm_name),
+                "vm_resource_id": vm_resource_id,
+                "vm_name": vm_name,
+                "vm_resource_group": vm_resource_group,
+                "workload_type": "VM",
+                "backup_management_type": "AzureIaasVM",
+                "container_name": container_name,
+                "result": result
+            }));
+        }
+        
+        // For workload-specific backup (SQL, SAP HANA, etc.)
+        let result = client.register_vm_for_workload(vm_resource_id, workload_type_str).await?;
         
         Ok(json!({
             "success": true,
             "message": format!("Successfully registered VM {} for {} backup", vm_resource_id, workload_type_str),
             "vm_resource_id": vm_resource_id,
             "workload_type": workload_type_str,
+            "backup_management_type": backup_management_type,
             "result": result
         }))
     }
@@ -265,41 +437,90 @@ impl RecoveryServicesTools {
 
     /// List protected items
     pub async fn list_protected_items(&self, args: Value) -> Result<Value> {
-        let workload_type = if let Some(wl_str) = args["workload_type"].as_str() {
-            match wl_str {
-                "SAPHANA" => Some(WorkloadType::SapHanaDatabase),
-                "SQLDataBase" => Some(WorkloadType::SqlDatabase),
-                _ => return Err(CodexErr::Other("workload_type must be 'SAPHANA' or 'SQLDataBase'".to_string())),
+        // Get vault name
+        let vault_name = args["vault_name"].as_str();
+        let client = self.get_client(vault_name)?;
+        
+        // Get backup management type (AzureIaasVM, AzureWorkload, AzureStorage, etc.)
+        let backup_management_type = args["backup_management_type"].as_str().unwrap_or("AzureIaasVM");
+        
+        // Get workload type with enhanced support for all types
+        let workload_type_str = args["workload_type"].as_str();
+        let workload_type = if let Some(wl_str) = workload_type_str {
+            match wl_str.to_uppercase().as_str() {
+                "VM" => Some(WorkloadType::VM),
+                "FILEFOLDER" => Some(WorkloadType::FileFolder),
+                "AZURESQLDB" => Some(WorkloadType::AzureSqlDb),
+                "SQLDB" => Some(WorkloadType::SqlDb),
+                "EXCHANGE" => Some(WorkloadType::Exchange),
+                "SHAREPOINT" => Some(WorkloadType::Sharepoint),
+                "VMWAREVM" => Some(WorkloadType::VMwareVM),
+                "SYSTEMSTATE" => Some(WorkloadType::SystemState),
+                "CLIENT" => Some(WorkloadType::Client),
+                "GENERICDATASOURCE" => Some(WorkloadType::GenericDataSource),
+                "SQLDATABASE" | "SQL" => Some(WorkloadType::SqlDatabase),
+                "AZUREFILESHARE" => Some(WorkloadType::AzureFileShare),
+                "SAPHANADATABASE" | "SAPHANA" => Some(WorkloadType::SapHanaDatabase),
+                "SAPASEDATABASE" | "SAPASE" => Some(WorkloadType::SapAseDatabase),
+                "SAPHANADBINSTANCE" => Some(WorkloadType::SapHanaDbInstance),
+                _ => return Err(CodexErr::Other(format!(
+                    "Unsupported workload type: {}. Supported types are: VM, FileFolder, AzureSqlDb, SqlDb, Exchange, Sharepoint, VMwareVM, SystemState, Client, GenericDataSource, SqlDatabase, AzureFileShare, SapHanaDatabase, SapAseDatabase, SapHanaDbInstance", 
+                    wl_str
+                ))),
             }
         } else {
             None
         };
         
+        // Get server name for filtering
         let server_name = args["server_name"].as_str();
-        let vault_name = args["vault_name"].as_str();
-        let client = self.get_client(vault_name)?;
         
-        tracing::info!("Listing protected items for workload: {:?}, server: {:?}", workload_type, server_name);
+        // Get container name for direct filtering if provided
+        let container_name = args["container_name"].as_str();
         
-        let items = client.list_protected_items(workload_type.clone()).await?;
+        tracing::info!("Listing protected items for backup management type: {}, workload: {:?}, server: {:?}", 
+                      backup_management_type, workload_type_str, server_name);
+        
+        // Build direct API query with filters for more reliable results
+        let mut endpoint = "/backupProtectedItems?".to_string();
+        let mut filters = Vec::new();
+        
+        // Add backup management type filter
+        filters.push(format!("backupManagementType eq '{}'", backup_management_type));
+        
+        // Add workload type filter if specified
+        if let Some(wl_str) = workload_type_str {
+            filters.push(format!("workloadType eq '{}'", wl_str));
+        }
+        
+        // Add filters to endpoint
+        endpoint.push_str(&format!("$filter={}", filters.join(" and ")));
+        
+        // Use the list_protected_items method with workload filter
+        let items = client.list_protected_items(workload_type).await?;
         
         // Filter by server name if provided
         let filtered_items: Vec<_> = if let Some(server) = server_name {
             items.into_iter()
-                .filter(|item| item.properties.server_name == server)
+                .filter(|item| item.properties.server_name.contains(server))
                 .collect()
         } else {
             items
         };
         
-        Ok(json!({
+        // Build response
+        let response = json!({
             "protected_items": filtered_items,
             "total_count": filtered_items.len(),
             "filter": {
-                "workload_type": workload_type,
-                "server_name": server_name
+                "backup_management_type": backup_management_type,
+                "workload_type": workload_type_str,
+                "server_name": server_name,
+                "container_name": container_name
             }
-        }))
+        });
+        
+        Ok(response)
     }
 
     /// List backup jobs
@@ -392,56 +613,486 @@ impl RecoveryServicesTools {
             CodexErr::Other("vm_name parameter is required".to_string())
         })?;
         
+        // Get resource group if provided, otherwise use the default from config
+        let vm_resource_group = args["vm_resource_group"].as_str();
+        
         let vault_name = args["vault_name"].as_str();
         let client = self.get_client(vault_name)?;
         
         tracing::info!("Checking registration status for VM: {}", vm_name);
         
-        // List all backup containers to find the VM
-        let containers = client.list_backup_containers().await?;
+        // Use a more reliable approach with filtered query instead of listing all containers
+        let mut is_registered = false;
+        let mut container_details = json!({});
         
-        // Look for the VM in the containers
-        let vm_container = containers.iter().find(|container| {
-            container.properties.friendly_name.contains(vm_name) ||
-            container.name.contains(vm_name)
-        });
+        // Try to find the VM using protected items
+        match client.list_protected_items(Some(WorkloadType::VM)).await {
+            Ok(items) => {
+                for item in &items {
+                    // Check if this protected item matches our VM name
+                    if item.properties.friendly_name.contains(vm_name) {
+                        is_registered = true;
+                        container_details = json!(item);
+                        break;
+                    }
+                }
+            },
+            Err(e) => {
+                tracing::warn!("Failed to query protected items: {}", e);
+                // Continue with alternative approach
+            }
+        }
         
-        if let Some(container) = vm_container {
-            Ok(json!({
+        // If we found the VM as a protected item
+        if is_registered {
+            return Ok(json!({
                 "vm_name": vm_name,
                 "registration_status": "Registered",
-                "container_name": container.name,
-                "friendly_name": container.properties.friendly_name,
-                "backup_management_type": container.properties.backup_management_type,
-                "health_status": container.properties.health_status,
-                "container_type": container.properties.container_type,
-                "registration_details": {
-                    "status": container.properties.registration_status,
-                    "container_id": container.id
-                }
-            }))
-        } else {
-            Ok(json!({
-                "vm_name": vm_name,
-                "registration_status": "Not Registered",
-                "message": format!("VM '{}' is not registered for backup in this vault", vm_name),
-                "suggestion": "Use 'recovery_services_register_vm' to register this VM for backup"
-            }))
+                "protection_status": "Protected",
+                "details": container_details,
+                "message": format!("VM '{}' is registered and protected in this vault", vm_name)
+            }));
         }
+        
+        // If we have resource group, try to check backup containers
+        if let Some(rg) = vm_resource_group {
+            // Generate container name
+            let container_name = client.generate_vm_container_name(rg, vm_name);
+            
+            // Try to find the container in the list of backup containers
+            match client.list_backup_containers().await {
+                Ok(containers) => {
+                    for container in &containers {
+                        if container.name == container_name || container.properties.friendly_name.contains(vm_name) {
+                            return Ok(json!({
+                                "vm_name": vm_name,
+                                "vm_resource_group": rg,
+                                "registration_status": "Registered",
+                                "container_name": container_name,
+                                "container_details": container,
+                                "message": format!("VM '{}' is registered in this vault", vm_name)
+                            }));
+                        }
+                    }
+                },
+                Err(_) => {
+                    // Failed to list containers, continue
+                }
+            }
+        }
+        
+        // If we get here, the VM is not registered
+        let mut response = json!({
+            "vm_name": vm_name,
+            "registration_status": "Not Registered",
+            "message": format!("VM '{}' is not registered for backup in this vault", vm_name),
+            "suggestion": "Use 'recovery_services_register_vm' to register this VM for backup"
+        });
+        
+        // Add resource group if provided
+        if let Some(rg) = vm_resource_group {
+            response["vm_resource_group"] = json!(rg);
+        }
+        
+        Ok(response)
     }
 
-    // TODO: Implement remaining methods:
-    // - reregister_vm
-    // - unregister_vm
-    // - create_policy
-    // - get_policy_details
-    // - enable_protection
-    // - disable_protection
-    // - trigger_backup
-    // - get_job_status
-    // - get_backup_summary
-    // - list_recovery_points
-    // - restore_original_location
-    // - restore_alternate_location
-    // - restore_as_files
+    /// Re-register VM for backup
+    pub async fn reregister_vm(&self, vault_name: &str, vm_name: &str, vm_resource_group: &str) -> Result<Value> {
+        let client = self.get_client(Some(vault_name))?;
+        
+        // Generate VM resource ID
+        let vm_resource_id = client.generate_vm_resource_id(vm_resource_group, vm_name);
+        
+        // Re-register using the workload registration method
+        let result = client.register_vm_for_workload(&vm_resource_id, "VM").await?;
+        
+        Ok(json!({
+            "vm_name": vm_name,
+            "vm_resource_group": vm_resource_group,
+            "vault_name": vault_name,
+            "operation": "reregister",
+            "status": "initiated",
+            "result": result
+        }))
+    }
+
+    /// Unregister VM from backup
+    pub async fn unregister_vm(&self, vault_name: &str, vm_name: &str, vm_resource_group: &str) -> Result<Value> {
+        let client = self.get_client(Some(vault_name))?;
+        
+        // Generate container name for the VM
+        let container_name = client.generate_vm_container_name(vm_resource_group, vm_name);
+        
+        // Unregister the container
+        let result = client.unregister_container(&container_name).await?;
+        
+        Ok(json!({
+            "vm_name": vm_name,
+            "vm_resource_group": vm_resource_group,
+            "vault_name": vault_name,
+            "container_name": container_name,
+            "operation": "unregister",
+            "status": "initiated",
+            "result": result
+        }))
+    }
+
+    /// Create backup policy
+    pub async fn create_policy(&self, vault_name: &str, policy_name: &str, schedule_type: &str, retention_days: u32) -> Result<Value> {
+        let client = self.get_client(Some(vault_name))?;
+        
+        let result = client.create_backup_policy(policy_name, schedule_type, retention_days).await?;
+        
+        Ok(json!({
+            "vault_name": vault_name,
+            "policy_name": policy_name,
+            "schedule_type": schedule_type,
+            "retention_days": retention_days,
+            "operation": "create_policy",
+            "status": "created",
+            "result": result
+        }))
+    }
+
+    /// Get backup policy details
+    pub async fn get_policy_details(&self, vault_name: &str, policy_name: &str) -> Result<Value> {
+        let client = self.get_client(Some(vault_name))?;
+        
+        let policy = client.get_backup_policy(policy_name).await?;
+        
+        Ok(json!({
+            "vault_name": vault_name,
+            "policy_name": policy_name,
+            "policy_details": policy
+        }))
+    }
+
+    /// Enable protection for a VM
+    pub async fn enable_protection(&self, vault_name: &str, vm_name: &str, vm_resource_group: &str, policy_name: &str) -> Result<Value> {
+        let client = self.get_client(Some(vault_name))?;
+        
+        // Generate names for the VM
+        let container_name = client.generate_vm_container_name(vm_resource_group, vm_name);
+        let protected_item_name = client.generate_vm_protected_item_name(vm_resource_group, vm_name);
+        let vm_resource_id = client.generate_vm_resource_id(vm_resource_group, vm_name);
+        
+        let result = client.enable_protection(&container_name, &protected_item_name, policy_name, &vm_resource_id).await?;
+        
+        Ok(json!({
+            "vm_name": vm_name,
+            "vm_resource_group": vm_resource_group,
+            "vault_name": vault_name,
+            "policy_name": policy_name,
+            "container_name": container_name,
+            "protected_item_name": protected_item_name,
+            "operation": "enable_protection",
+            "status": "initiated",
+            "result": result
+        }))
+    }
+
+    /// Disable protection for a VM
+    pub async fn disable_protection(&self, vault_name: &str, vm_name: &str, vm_resource_group: &str, delete_backup_data: Option<bool>) -> Result<Value> {
+        let client = self.get_client(Some(vault_name))?;
+        
+        // Generate names for the VM
+        let container_name = client.generate_vm_container_name(vm_resource_group, vm_name);
+        let protected_item_name = client.generate_vm_protected_item_name(vm_resource_group, vm_name);
+        
+        let delete_data = delete_backup_data.unwrap_or(false);
+        let result = client.disable_protection(&container_name, &protected_item_name, delete_data).await?;
+        
+        Ok(json!({
+            "vm_name": vm_name,
+            "vm_resource_group": vm_resource_group,
+            "vault_name": vault_name,
+            "container_name": container_name,
+            "protected_item_name": protected_item_name,
+            "delete_backup_data": delete_data,
+            "operation": "disable_protection",
+            "status": "initiated",
+            "result": result
+        }))
+    }
+
+    /// Trigger backup for a VM
+    pub async fn trigger_backup(&self, vault_name: &str, vm_name: &str, vm_resource_group: &str, retention_days: Option<u32>) -> Result<Value> {
+        let client = self.get_client(Some(vault_name))?;
+        
+        // Generate names for the VM
+        let container_name = client.generate_vm_container_name(vm_resource_group, vm_name);
+        let protected_item_name = client.generate_vm_protected_item_name(vm_resource_group, vm_name);
+        
+        let result = client.trigger_backup(&container_name, &protected_item_name, retention_days).await?;
+        
+        Ok(json!({
+            "vm_name": vm_name,
+            "vm_resource_group": vm_resource_group,
+            "vault_name": vault_name,
+            "container_name": container_name,
+            "protected_item_name": protected_item_name,
+            "retention_days": retention_days.unwrap_or(30),
+            "operation": "trigger_backup",
+            "status": "initiated",
+            "result": result
+        }))
+    }
+
+    /// Get backup job status
+    pub async fn get_job_status(&self, vault_name: &str, job_id: &str) -> Result<Value> {
+        let client = self.get_client(Some(vault_name))?;
+        
+        let job = client.get_backup_job(job_id).await?;
+        
+        Ok(json!({
+            "vault_name": vault_name,
+            "job_id": job_id,
+            "job_details": job
+        }))
+    }
+
+    /// Get backup summary for the vault
+    pub async fn get_backup_summary(&self, vault_name: &str, workload_type: Option<&str>) -> Result<Value> {
+        let client = self.get_client(Some(vault_name))?;
+        
+        // Get protected items
+        let workload_filter = workload_type.and_then(|wt| match wt {
+            "VM" => Some(WorkloadType::VM),
+            "SqlDb" => Some(WorkloadType::SqlDb),
+            "SqlDatabase" => Some(WorkloadType::SqlDatabase),
+            "SapHanaDatabase" => Some(WorkloadType::SapHanaDatabase),
+            _ => None,
+        });
+        
+        let protected_items = client.list_protected_items(workload_filter).await?;
+        
+        // Get recent backup jobs
+        let recent_jobs = client.list_backup_jobs(Some("startTime ge datetime'2024-01-01T00:00:00Z'")).await?;
+        
+        // Calculate summary statistics
+        let total_protected_items = protected_items.len();
+        let successful_jobs = recent_jobs.iter().filter(|job| job.properties.status == "Completed").count();
+        let failed_jobs = recent_jobs.iter().filter(|job| job.properties.status == "Failed").count();
+        let in_progress_jobs = recent_jobs.iter().filter(|job| job.properties.status == "InProgress").count();
+        
+        Ok(json!({
+            "vault_name": vault_name,
+            "workload_type": workload_type.unwrap_or("All"),
+            "summary": {
+                "total_protected_items": total_protected_items,
+                "recent_jobs": {
+                    "total": recent_jobs.len(),
+                    "successful": successful_jobs,
+                    "failed": failed_jobs,
+                    "in_progress": in_progress_jobs
+                }
+            },
+            "protected_items": protected_items,
+            "recent_jobs": recent_jobs
+        }))
+    }
+
+    /// List recovery points for a VM
+    pub async fn list_recovery_points(&self, vault_name: &str, vm_name: &str, vm_resource_group: &str, filter: Option<&str>) -> Result<Value> {
+        let client = self.get_client(Some(vault_name))?;
+        
+        // Generate names for the VM
+        let container_name = client.generate_vm_container_name(vm_resource_group, vm_name);
+        let protected_item_name = client.generate_vm_protected_item_name(vm_resource_group, vm_name);
+        
+        let recovery_points = client.list_recovery_points(&container_name, &protected_item_name, filter).await?;
+        
+        Ok(json!({
+            "vm_name": vm_name,
+            "vm_resource_group": vm_resource_group,
+            "vault_name": vault_name,
+            "container_name": container_name,
+            "protected_item_name": protected_item_name,
+            "filter": filter.unwrap_or("none"),
+            "recovery_points": recovery_points
+        }))
+    }
+
+    /// Restore VM to original location
+    pub async fn restore_original_location(&self, vault_name: &str, vm_name: &str, vm_resource_group: &str, recovery_point_id: &str) -> Result<Value> {
+        let client = self.get_client(Some(vault_name))?;
+        
+        // Generate names for the VM
+        let container_name = client.generate_vm_container_name(vm_resource_group, vm_name);
+        let protected_item_name = client.generate_vm_protected_item_name(vm_resource_group, vm_name);
+        
+        let result = client.restore_vm(&container_name, &protected_item_name, recovery_point_id, "OriginalLocation", None, None).await?;
+        
+        Ok(json!({
+            "vm_name": vm_name,
+            "vm_resource_group": vm_resource_group,
+            "vault_name": vault_name,
+            "recovery_point_id": recovery_point_id,
+            "restore_type": "OriginalLocation",
+            "container_name": container_name,
+            "protected_item_name": protected_item_name,
+            "operation": "restore_original_location",
+            "status": "initiated",
+            "result": result
+        }))
+    }
+
+    /// Restore VM to alternate location
+    pub async fn restore_alternate_location(&self, vault_name: &str, vm_name: &str, vm_resource_group: &str, 
+                                          recovery_point_id: &str, target_vm_name: &str, target_resource_group: &str) -> Result<Value> {
+        let client = self.get_client(Some(vault_name))?;
+        
+        // Generate names for the VM
+        let container_name = client.generate_vm_container_name(vm_resource_group, vm_name);
+        let protected_item_name = client.generate_vm_protected_item_name(vm_resource_group, vm_name);
+        
+        let result = client.restore_vm(&container_name, &protected_item_name, recovery_point_id, 
+                                     "AlternateLocation", Some(target_vm_name), Some(target_resource_group)).await?;
+        
+        Ok(json!({
+            "vm_name": vm_name,
+            "vm_resource_group": vm_resource_group,
+            "vault_name": vault_name,
+            "recovery_point_id": recovery_point_id,
+            "restore_type": "AlternateLocation",
+            "target_vm_name": target_vm_name,
+            "target_resource_group": target_resource_group,
+            "container_name": container_name,
+            "protected_item_name": protected_item_name,
+            "operation": "restore_alternate_location",
+            "status": "initiated",
+            "result": result
+        }))
+    }
+
+    /// Restore VM as files
+    pub async fn restore_as_files(&self, vault_name: &str, vm_name: &str, vm_resource_group: &str, 
+                                 recovery_point_id: &str, target_storage_account: &str, target_container: &str) -> Result<Value> {
+        let client = self.get_client(Some(vault_name))?;
+        
+        // Generate names for the VM
+        let container_name = client.generate_vm_container_name(vm_resource_group, vm_name);
+        let protected_item_name = client.generate_vm_protected_item_name(vm_resource_group, vm_name);
+        
+        // Use the existing restore_vm method with RestoreDisks type
+        let result = client.restore_vm(&container_name, &protected_item_name, recovery_point_id, "RestoreDisks", None, None).await?;
+        
+        Ok(json!({
+            "vm_name": vm_name,
+            "vm_resource_group": vm_resource_group,
+            "vault_name": vault_name,
+            "recovery_point_id": recovery_point_id,
+            "restore_type": "RestoreAsFiles",
+            "target_storage_account": target_storage_account,
+            "target_container": target_container,
+            "container_name": container_name,
+            "protected_item_name": protected_item_name,
+            "operation": "restore_as_files",
+            "status": "initiated",
+            "result": result
+        }))
+    }
+    
+    /// Bridge method for MCP server: Get job details (maps to get_job_status)
+    pub async fn get_job_details(&self, vault_name: &str, job_id: &str) -> Result<Value> {
+        // Reuse the existing get_job_status implementation
+        self.get_job_status(vault_name, job_id).await
+    }
+    
+    /// Bridge method for MCP server: Restore files (maps to restore_as_files)
+    pub async fn restore_files(&self, vault_name: &str, vm_name: &str, vm_resource_group: &str, 
+                             recovery_point_id: &str, file_paths: Vec<String>, target_storage_account: &str) -> Result<Value> {
+        // Create a default container name
+        let target_container = "restored-files";
+        
+        // Call the existing restore_as_files implementation
+        let mut result = self.restore_as_files(vault_name, vm_name, vm_resource_group, 
+                                             recovery_point_id, target_storage_account, target_container).await?;
+        
+        // Add file paths to the result
+        if let Some(obj) = result.as_object_mut() {
+            obj.insert("file_paths".to_string(), json!(file_paths));
+        }
+        
+        Ok(result)
+    }
+    
+    /// Bridge method for MCP server: Consolidated restore_vm with type parameter
+    pub async fn restore_vm(&self, vault_name: &str, vm_name: &str, vm_resource_group: &str,
+                          recovery_point_id: &str, restore_type: &str, 
+                          target_vm_name: Option<&str>, target_resource_group: Option<&str>) -> Result<Value> {
+        match restore_type {
+            "OriginalLocation" => {
+                self.restore_original_location(vault_name, vm_name, vm_resource_group, recovery_point_id).await
+            },
+            "AlternateLocation" => {
+                if let (Some(target_vm), Some(target_rg)) = (target_vm_name, target_resource_group) {
+                    self.restore_alternate_location(vault_name, vm_name, vm_resource_group, 
+                                                  recovery_point_id, target_vm, target_rg).await
+                } else {
+                    Err(CodexErr::Other("Target VM name and resource group are required for alternate location restore".to_string()))
+                }
+            },
+            "RestoreDisks" => {
+                // For disk restore, we'll use a default storage account name based on the VM name
+                let target_storage_account = format!("{}storage", vm_name.to_lowercase().replace('-', ""));
+                let target_container = "restored-disks";
+                
+                self.restore_as_files(vault_name, vm_name, vm_resource_group, 
+                                     recovery_point_id, &target_storage_account, target_container).await
+            },
+            _ => {
+                Err(CodexErr::Other(format!("Unsupported restore type: {}", restore_type)))
+            }
+        }
+    }
+    
+    /// Get backup summary for a specific VM
+    pub async fn get_vm_backup_summary(&self, vault_name: &str, vm_name: &str, vm_resource_group: &str) -> Result<Value> {
+        let client = self.get_client(Some(vault_name))?;
+        
+        // Generate names for the VM
+        let container_name = client.generate_vm_container_name(vm_resource_group, vm_name);
+        let protected_item_name = client.generate_vm_protected_item_name(vm_resource_group, vm_name);
+        
+        // Get recovery points for this VM
+        let recovery_points = client.list_recovery_points(&container_name, &protected_item_name, None).await?;
+        
+        // Get recent backup jobs for this VM
+        let filter = format!("backupManagementType eq 'AzureIaasVM' and entityFriendlyName eq '{}'", vm_name);
+        let recent_jobs = client.list_backup_jobs(Some(&filter)).await?;
+        
+        // Calculate summary statistics
+        let successful_jobs = recent_jobs.iter().filter(|job| job.properties.status == "Completed").count();
+        let failed_jobs = recent_jobs.iter().filter(|job| job.properties.status == "Failed").count();
+        let in_progress_jobs = recent_jobs.iter().filter(|job| job.properties.status == "InProgress").count();
+        
+        // Get the latest recovery point
+        let latest_recovery_point = recovery_points.first().map(|rp| {
+            json!({
+                "recovery_point_id": rp.name,
+                "recovery_point_type": rp.properties.recovery_point_type
+            })
+        });
+        
+        Ok(json!({
+            "vm_name": vm_name,
+            "vm_resource_group": vm_resource_group,
+            "vault_name": vault_name,
+            "protection_status": "Protected",
+            "summary": {
+                "total_recovery_points": recovery_points.len(),
+                "latest_recovery_point": latest_recovery_point,
+                "recent_jobs": {
+                    "total": recent_jobs.len(),
+                    "successful": successful_jobs,
+                    "failed": failed_jobs,
+                    "in_progress": in_progress_jobs
+                }
+            },
+            "recovery_points": recovery_points,
+            "recent_jobs": recent_jobs
+        }))
+    }
 }
