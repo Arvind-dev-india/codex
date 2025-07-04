@@ -88,15 +88,17 @@ fn create_test_connection_tool() -> OpenAiTool {
 /// Create a tool for registering VM for backup
 fn create_register_vm_tool() -> OpenAiTool {
     let mut parameters = BTreeMap::new();
-    parameters.insert("vm_resource_id".to_string(), JsonSchema::String);
+    parameters.insert("vm_name".to_string(), JsonSchema::String);
+    parameters.insert("vm_resource_group".to_string(), JsonSchema::String);
     parameters.insert("workload_type".to_string(), JsonSchema::String);
+    parameters.insert("backup_management_type".to_string(), JsonSchema::String);
     parameters.insert("vault_name".to_string(), JsonSchema::String);
     
     create_function_tool(
         "recovery_services_register_vm",
-        "Register a VM for backup protection. Parameters: vm_resource_id (required): Full Azure resource ID format /subscriptions/{subscription}/resourceGroups/{rg}/providers/Microsoft.Compute/virtualMachines/{vm_name}. workload_type (required): 'VM' (standard Azure VM backup), 'SAPHANA'/'SapHanaDatabase' (SAP HANA workload), 'SQLDataBase'/'SqlDatabase' (SQL Server workload), 'AnyDatabase' (generic database workload). vault_name (optional): Target Recovery Services vault. This registers the VM container for the specified workload type. For database workloads, additional configuration may be needed after registration.",
+        "Register a VM for backup protection. Automatically constructs VM resource ID from vm_name and vm_resource_group. Parameters: vm_name (required): Name of the virtual machine, vm_resource_group (required): Resource group containing the VM, workload_type (required): 'VM' (standard Azure VM backup), 'AnyDatabase' (generic database workload), 'SAPHanaDatabase' (SAP HANA), 'SQLDataBase' (SQL Server), 'SAPAseDatabase' (SAP ASE). backup_management_type (optional): 'AzureIaasVM' (standard VM), 'AzureWorkload' (databases), auto-detected if not specified. vault_name (optional): Target vault. API creates container with format 'VMAppContainer;Compute;{resourceGroup};{vmName}' for workloads or 'iaasvmcontainer;iaasvmcontainerv2;{resourceGroup};{vmName}' for VMs.",
         parameters,
-        &["vm_resource_id", "workload_type"],
+        &["vm_name", "vm_resource_group", "workload_type"],
     )
 }
 

@@ -94,7 +94,7 @@ impl RecoveryServicesClient {
             .put(&url)
             .header("Authorization", format!("Bearer {}", self.access_token))
             .header("Content-Type", "application/json")
-            .query(&[("api-version", "2021-12-01")])
+            .query(&[("api-version", "2016-06-01")])
             .json(&body)
             .send()
             .await
@@ -644,18 +644,32 @@ impl RecoveryServicesClient {
 
     /// Register VM for workload backup
     pub async fn register_vm_for_workload(&self, vm_resource_id: &str, workload_type: &str) -> Result<Value> {
-        let endpoint = "/backupFabrics/Azure/protectionContainers";
+        // Extract VM name and resource group from resource ID for container name
+        let parts: Vec<&str> = vm_resource_id.split('/').collect();
+        if parts.len() < 9 {
+            return Err(CodexErr::Other("Invalid VM resource ID format".to_string()));
+        }
+        
+        let vm_resource_group = parts[4];
+        let vm_name = parts[8];
+        
+        // Generate container name for workload backup
+        let container_name = format!("VMAppContainer;Compute;{};{}", vm_resource_group, vm_name);
+        let endpoint = format!("/backupFabrics/Azure/protectionContainers/{}", container_name);
         
         let body = json!({
             "properties": {
-                "containerType": "VMAppContainer",
                 "sourceResourceId": vm_resource_id,
                 "workloadType": workload_type,
-                "backupManagementType": "AzureWorkload"
+                "backupManagementType": "AzureWorkload",
+                "containerType": "VMAppContainer"
             }
         });
         
-        self.post_request(endpoint, body).await
+        tracing::info!("Registering VM for workload backup: PUT {}", endpoint);
+        tracing::info!("Request body: {}", serde_json::to_string_pretty(&body).unwrap_or_default());
+        
+        self.put_request(&endpoint, body).await
     }
 
     /// Re-register container for workload

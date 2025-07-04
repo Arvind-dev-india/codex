@@ -306,93 +306,149 @@ impl RecoveryServicesTools {
 
     /// Register VM for backup
     pub async fn register_vm(&self, args: Value) -> Result<Value> {
-        let vm_resource_id = args["vm_resource_id"].as_str().ok_or_else(|| {
-            CodexErr::Other("vm_resource_id parameter is required".to_string())
+        // Get required parameters
+        let vm_name = args["vm_name"].as_str().ok_or_else(|| {
+            CodexErr::Other("vm_name parameter is required".to_string())
         })?;
         
-        // Default to VM workload type if not specified
-        let workload_type_str = args["workload_type"].as_str().unwrap_or("VM");
+        let vm_resource_group = args["vm_resource_group"].as_str().ok_or_else(|| {
+            CodexErr::Other("vm_resource_group parameter is required".to_string())
+        })?;
+        
+        let workload_type_str = args["workload_type"].as_str().ok_or_else(|| {
+            CodexErr::Other("workload_type parameter is required".to_string())
+        })?;
+        
+        let vault_name = args["vault_name"].as_str();
+        let client = self.get_client(vault_name)?;
+        
+        // Automatically construct VM resource ID from name and resource group
+        let vm_resource_id = format!(
+            "/subscriptions/{}/resourceGroups/{}/providers/Microsoft.Compute/virtualMachines/{}",
+            self.config.subscription_id, vm_resource_group, vm_name
+        );
         
         // Map the workload type string to the enum
         let workload_type = match workload_type_str.to_uppercase().as_str() {
             "VM" => WorkloadType::VM,
+            "ANYDATABASE" => WorkloadType::AnyDatabase,
+            "SAPHANADATABASE" | "SAPHANA" => WorkloadType::SapHanaDatabase,
+            "SQLDATABASE" | "SQL" => WorkloadType::SqlDatabase,
+            "SAPASEDATABASE" | "SAPASE" => WorkloadType::SapAseDatabase,
+            "AZUREFILESHARE" => WorkloadType::AzureFileShare,
             "FILEFOLDER" => WorkloadType::FileFolder,
             "AZURESQLDB" => WorkloadType::AzureSqlDb,
-            "SQLDB" => WorkloadType::SqlDb,
             "EXCHANGE" => WorkloadType::Exchange,
             "SHAREPOINT" => WorkloadType::Sharepoint,
             "VMWAREVM" => WorkloadType::VMwareVM,
             "SYSTEMSTATE" => WorkloadType::SystemState,
             "CLIENT" => WorkloadType::Client,
             "GENERICDATASOURCE" => WorkloadType::GenericDataSource,
-            "SQLDATABASE" => WorkloadType::SqlDatabase,
-            "AZUREFILESHARE" => WorkloadType::AzureFileShare,
-            "SAPHANADATABASE" | "SAPHANA" => WorkloadType::SapHanaDatabase,
-            "SAPASEDATABASE" | "SAPASE" => WorkloadType::SapAseDatabase,
-            "SAPHANADBINSTANCE" => WorkloadType::SapHanaDbInstance,
-            "ANYDATABASE" => WorkloadType::AnyDatabase,
             _ => return Err(CodexErr::Other(format!(
-                "Unsupported workload type: {}. Supported types are: VM, FileFolder, AzureSqlDb, SqlDb, Exchange, Sharepoint, VMwareVM, SystemState, Client, GenericDataSource, SqlDatabase, AzureFileShare, SapHanaDatabase, SapAseDatabase, SapHanaDbInstance, AnyDatabase", 
+                "Unsupported workload type: {}. Supported types are: VM, AnyDatabase, SAPHanaDatabase, SQLDataBase, SAPAseDatabase, AzureFileShare, FileFolder, AzureSqlDb, Exchange, Sharepoint, VMwareVM, SystemState, Client, GenericDataSource", 
                 workload_type_str
             ))),
         };
         
-        // Get backup management type from args or default to appropriate value based on workload
+        // Get backup management type from args or auto-detect based on workload type
         let backup_management_type = match args["backup_management_type"].as_str() {
-            Some(bmt) => bmt,
+            Some(bmt) => bmt.to_string(),
             None => match workload_type {
-                WorkloadType::VM => "AzureIaasVM",
-                WorkloadType::AzureFileShare => "AzureStorage",
-                WorkloadType::AzureSqlDb => "AzureSql",
-                _ => "AzureWorkload", // Default for most workload types
+                WorkloadType::VM => "AzureIaasVM".to_string(),
+                WorkloadType::AzureFileShare => "AzureStorage".to_string(),
+                WorkloadType::AzureSqlDb => "AzureSql".to_string(),
+                _ => "AzureWorkload".to_string(), // Default for database workloads
             }
         };
         
-        let vault_name = args["vault_name"].as_str();
-        let client = self.get_client(vault_name)?;
+        tracing::info!("Registering VM {}/{} for {} backup with management type {}", 
+                      vm_resource_group, vm_name, workload_type_str, backup_management_type);
         
-        tracing::info!("Registering VM {} for {} backup with management type {}", 
-                      vm_resource_id, workload_type_str, backup_management_type);
+        // Generate container name based on workload type
+        let container_name = if backup_management_type == "AzureWorkload" {
+            format!("VMAppContainer;Compute;{};{}", vm_resource_group, vm_name)
+        } else {
+            format!("iaasvmcontainer;iaasvmcontainerv2;{};{}", vm_resource_group, vm_name)
+        };
         
         // For standard VM backup
         if workload_type == WorkloadType::VM && backup_management_type == "AzureIaasVM" {
-            // Extract VM name and resource group from resource ID
-            let parts: Vec<&str> = vm_resource_id.split('/').collect();
-            if parts.len() < 9 {
-                return Err(CodexErr::Other("Invalid VM resource ID format".to_string()));
-            }
-            
-            let vm_resource_group = parts[4];
-            let vm_name = parts[8];
-            
-            // Generate container name for the response
-            let container_name = client.generate_vm_container_name(vm_resource_group, vm_name);
-            
             // Use the register_vm method for VM registration
-            let result = client.register_vm(vm_resource_id, workload_type).await?;
+            let api_endpoint = format!("/backupFabrics/Azure/protectionContainers/{}", container_name);
+            let result = client.register_vm(&vm_resource_id, workload_type).await?;
             
             return Ok(json!({
                 "success": true,
-                "message": format!("Successfully registered VM {} for standard Azure VM backup", vm_name),
+                "message": format!("Successfully registered VM {}/{} for standard Azure VM backup", vm_resource_group, vm_name),
                 "vm_resource_id": vm_resource_id,
                 "vm_name": vm_name,
                 "vm_resource_group": vm_resource_group,
-                "workload_type": "VM",
-                "backup_management_type": "AzureIaasVM",
+                "workload_type": workload_type_str,
+                "backup_management_type": backup_management_type,
                 "container_name": container_name,
+                "container_type": "Microsoft.ClassicCompute/virtualMachines",
+                "api_reference": {
+                    "method": "PUT",
+                    "endpoint": format!("/subscriptions/{}/resourceGroups/{}/providers/Microsoft.RecoveryServices/vaults/{}/backupFabrics/Azure/protectionContainers/{}", 
+                                      self.config.subscription_id, self.config.resource_group, 
+                                      vault_name.unwrap_or(&self.config.vault_name), container_name),
+                    "request_body_sent": {
+                        "properties": {
+                            "sourceResourceId": vm_resource_id,
+                            "workloadType": workload_type_str,
+                            "backupManagementType": backup_management_type,
+                            "containerType": "Microsoft.ClassicCompute/virtualMachines"
+                        }
+                    },
+                    "api_version": "2016-06-01"
+                },
+                "debug_info": {
+                    "vm_resource_id_generated": vm_resource_id,
+                    "container_name_generated": container_name,
+                    "api_endpoint_called": api_endpoint,
+                    "subscription_id_used": self.config.subscription_id,
+                    "vault_name_used": vault_name.unwrap_or(&self.config.vault_name)
+                },
                 "result": result
             }));
         }
         
         // For workload-specific backup (SQL, SAP HANA, etc.)
-        let result = client.register_vm_for_workload(vm_resource_id, workload_type_str).await?;
+        let api_endpoint = format!("/backupFabrics/Azure/protectionContainers/{}", container_name);
+        let result = client.register_vm_for_workload(&vm_resource_id, workload_type_str).await?;
         
         Ok(json!({
             "success": true,
-            "message": format!("Successfully registered VM {} for {} backup", vm_resource_id, workload_type_str),
+            "message": format!("Successfully registered VM {}/{} for {} backup", vm_resource_group, vm_name, workload_type_str),
             "vm_resource_id": vm_resource_id,
+            "vm_name": vm_name,
+            "vm_resource_group": vm_resource_group,
             "workload_type": workload_type_str,
             "backup_management_type": backup_management_type,
+            "container_name": container_name,
+            "container_type": "VMAppContainer",
+            "api_reference": {
+                "method": "PUT",
+                "endpoint": format!("/subscriptions/{}/resourceGroups/{}/providers/Microsoft.RecoveryServices/vaults/{}/backupFabrics/Azure/protectionContainers/{}", 
+                                  self.config.subscription_id, self.config.resource_group, 
+                                  vault_name.unwrap_or(&self.config.vault_name), container_name),
+                "request_body_sent": {
+                    "properties": {
+                        "sourceResourceId": vm_resource_id,
+                        "workloadType": workload_type_str,
+                        "backupManagementType": backup_management_type,
+                        "containerType": "VMAppContainer"
+                    }
+                },
+                "api_version": "2016-06-01"
+            },
+            "debug_info": {
+                "vm_resource_id_generated": vm_resource_id,
+                "container_name_generated": container_name,
+                "api_endpoint_called": api_endpoint,
+                "subscription_id_used": self.config.subscription_id,
+                "vault_name_used": vault_name.unwrap_or(&self.config.vault_name)
+            },
             "result": result
         }))
     }

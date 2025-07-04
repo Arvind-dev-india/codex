@@ -84,7 +84,7 @@ fn create_test_connection_tool() -> Tool {
 fn create_register_vm_tool() -> Tool {
     Tool {
         name: "recovery_services_register_vm".to_string(),
-        description: Some("Register a virtual machine for backup with a Recovery Services vault for different workload types".to_string()),
+        description: Some("Register a virtual machine for backup with a Recovery Services vault. Automatically constructs VM resource ID from name and resource group. Supports different workload types including standard VM backup and database workloads (SAP HANA, SQL Server, etc.). API Reference: PUT /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.RecoveryServices/vaults/{vaultName}/backupFabrics/Azure/protectionContainers/{containerName}".to_string()),
         annotations: None,
         input_schema: ToolInputSchema {
             r#type: "object".to_string(),
@@ -93,23 +93,27 @@ fn create_register_vm_tool() -> Tool {
                     "type": "string",
                     "description": "Name of the Recovery Services vault (optional, uses default from config if not specified)"
                 },
-                "vm_resource_id": {
+                "vm_name": {
                     "type": "string",
-                    "description": "Full Azure resource ID of the virtual machine to register"
+                    "description": "Name of the virtual machine to register for backup"
+                },
+                "vm_resource_group": {
+                    "type": "string",
+                    "description": "Resource group containing the virtual machine"
                 },
                 "workload_type": {
                     "type": "string",
-                    "description": "Type of workload to backup",
-                    "enum": ["VM", "FileFolder", "AzureSqlDb", "SqlDb", "Exchange", "Sharepoint", "VMwareVM", "SystemState", "Client", "GenericDataSource", "SqlDatabase", "AzureFileShare", "SapHanaDatabase", "SapAseDatabase", "SapHanaDbInstance"],
-                    "default": "VM"
+                    "description": "Type of workload to backup. 'VM' for standard Azure VM backup, 'AnyDatabase' for generic database workload, 'SAPHanaDatabase' for SAP HANA, 'SQLDataBase' for SQL Server, 'SAPAseDatabase' for SAP ASE, 'AzureFileShare' for file shares, 'FileFolder' for file/folder backup, 'AzureSqlDb' for Azure SQL databases, 'Exchange' for Exchange Server, 'Sharepoint' for SharePoint, 'VMwareVM' for VMware VMs, 'SystemState' for system state backup, 'Client' for client backup, 'GenericDataSource' for generic data sources. This determines the containerType and backup capabilities.",
+                    "enum": ["VM", "AnyDatabase", "SAPHanaDatabase", "SQLDataBase", "SAPAseDatabase", "AzureFileShare", "FileFolder", "AzureSqlDb", "Exchange", "Sharepoint", "VMwareVM", "SystemState", "Client", "GenericDataSource"],
+                    "default": "AnyDatabase"
                 },
                 "backup_management_type": {
                     "type": "string",
-                    "description": "Backup management type (optional, auto-detected based on workload type)",
+                    "description": "Backup management type. 'AzureIaasVM' for standard VM backups, 'AzureWorkload' for database workloads (SAP HANA, SQL Server, etc.), 'AzureStorage' for file shares. If not specified, auto-detected based on workload_type.",
                     "enum": ["AzureIaasVM", "AzureWorkload", "AzureStorage", "AzureSql"]
                 }
             })),
-            required: Some(vec!["vm_resource_id".to_string()]),
+            required: Some(vec!["vm_name".to_string(), "vm_resource_group".to_string(), "workload_type".to_string()]),
         },
     }
 }
