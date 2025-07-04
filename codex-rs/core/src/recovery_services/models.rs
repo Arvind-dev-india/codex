@@ -38,6 +38,8 @@ pub enum WorkloadType {
     SapAseDatabase,
     #[serde(rename = "SAPHanaDBInstance")]
     SapHanaDbInstance,
+    #[serde(rename = "AnyDatabase")]
+    AnyDatabase,
 }
 
 impl std::fmt::Display for WorkloadType {
@@ -59,6 +61,7 @@ impl std::fmt::Display for WorkloadType {
             WorkloadType::SapHanaDatabase => write!(f, "SAPHanaDatabase"),
             WorkloadType::SapAseDatabase => write!(f, "SAPAseDatabase"),
             WorkloadType::SapHanaDbInstance => write!(f, "SAPHanaDBInstance"),
+            WorkloadType::AnyDatabase => write!(f, "AnyDatabase"),
         }
     }
 }

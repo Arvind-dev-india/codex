@@ -46,7 +46,7 @@ impl RecoveryServicesClient {
     }
 
     /// Execute a GET request to the Recovery Services API
-    async fn get_request(&self, endpoint: &str) -> Result<Value> {
+    pub async fn get_request(&self, endpoint: &str) -> Result<Value> {
         let url = format!("{}{}", self.get_base_url(), endpoint);
         tracing::debug!("GET request to: {}", url);
 

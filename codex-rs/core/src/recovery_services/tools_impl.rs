@@ -330,8 +330,9 @@ impl RecoveryServicesTools {
             "SAPHANADATABASE" | "SAPHANA" => WorkloadType::SapHanaDatabase,
             "SAPASEDATABASE" | "SAPASE" => WorkloadType::SapAseDatabase,
             "SAPHANADBINSTANCE" => WorkloadType::SapHanaDbInstance,
+            "ANYDATABASE" => WorkloadType::AnyDatabase,
             _ => return Err(CodexErr::Other(format!(
-                "Unsupported workload type: {}. Supported types are: VM, FileFolder, AzureSqlDb, SqlDb, Exchange, Sharepoint, VMwareVM, SystemState, Client, GenericDataSource, SqlDatabase, AzureFileShare, SapHanaDatabase, SapAseDatabase, SapHanaDbInstance", 
+                "Unsupported workload type: {}. Supported types are: VM, FileFolder, AzureSqlDb, SqlDb, Exchange, Sharepoint, VMwareVM, SystemState, Client, GenericDataSource, SqlDatabase, AzureFileShare, SapHanaDatabase, SapAseDatabase, SapHanaDbInstance, AnyDatabase", 
                 workload_type_str
             ))),
         };
@@ -463,8 +464,9 @@ impl RecoveryServicesTools {
                 "SAPHANADATABASE" | "SAPHANA" => Some(WorkloadType::SapHanaDatabase),
                 "SAPASEDATABASE" | "SAPASE" => Some(WorkloadType::SapAseDatabase),
                 "SAPHANADBINSTANCE" => Some(WorkloadType::SapHanaDbInstance),
+                "ANYDATABASE" => Some(WorkloadType::AnyDatabase),
                 _ => return Err(CodexErr::Other(format!(
-                    "Unsupported workload type: {}. Supported types are: VM, FileFolder, AzureSqlDb, SqlDb, Exchange, Sharepoint, VMwareVM, SystemState, Client, GenericDataSource, SqlDatabase, AzureFileShare, SapHanaDatabase, SapAseDatabase, SapHanaDbInstance", 
+                    "Unsupported workload type: {}. Supported types are: VM, FileFolder, AzureSqlDb, SqlDb, Exchange, Sharepoint, VMwareVM, SystemState, Client, GenericDataSource, SqlDatabase, AzureFileShare, SapHanaDatabase, SapAseDatabase, SapHanaDbInstance, AnyDatabase", 
                     wl_str
                 ))),
             }
@@ -619,64 +621,179 @@ impl RecoveryServicesTools {
         let vault_name = args["vault_name"].as_str();
         let client = self.get_client(vault_name)?;
         
-        tracing::info!("Checking registration status for VM: {}", vm_name);
+        tracing::info!("Checking registration status for VM: {} in resource group: {:?}", vm_name, vm_resource_group);
         
-        // Use a more reliable approach with filtered query instead of listing all containers
-        let mut is_registered = false;
-        let mut container_details = json!({});
-        
-        // Try to find the VM using protected items
-        match client.list_protected_items(Some(WorkloadType::VM)).await {
-            Ok(items) => {
-                for item in &items {
-                    // Check if this protected item matches our VM name
-                    if item.properties.friendly_name.contains(vm_name) {
-                        is_registered = true;
-                        container_details = json!(item);
-                        break;
-                    }
-                }
-            },
-            Err(e) => {
-                tracing::warn!("Failed to query protected items: {}", e);
-                // Continue with alternative approach
-            }
-        }
-        
-        // If we found the VM as a protected item
-        if is_registered {
-            return Ok(json!({
-                "vm_name": vm_name,
-                "registration_status": "Registered",
-                "protection_status": "Protected",
-                "details": container_details,
-                "message": format!("VM '{}' is registered and protected in this vault", vm_name)
-            }));
-        }
-        
-        // If we have resource group, try to check backup containers
+        // Approach 1: If we have resource group, try direct VM container check
         if let Some(rg) = vm_resource_group {
-            // Generate container name
-            let container_name = client.generate_vm_container_name(rg, vm_name);
+            tracing::info!("Attempting direct VM container check for {}/{}", rg, vm_name);
             
-            // Try to find the container in the list of backup containers
-            match client.list_backup_containers().await {
-                Ok(containers) => {
-                    for container in &containers {
-                        if container.name == container_name || container.properties.friendly_name.contains(vm_name) {
+            // Generate possible container names for this VM
+            let possible_containers = vec![
+                // Standard VM container format
+                format!("iaasvmcontainer;iaasvmcontainerv2;{};{}", rg, vm_name),
+                // Workload container format  
+                format!("VMAppContainer;Compute;{};{}", rg, vm_name),
+                // Alternative formats
+                format!("vmappcontainer;compute;{};{}", rg, vm_name),
+            ];
+            
+            for container_name in &possible_containers {
+                tracing::debug!("Checking for container: {}", container_name);
+                let endpoint = format!("/backupFabrics/Azure/protectionContainers/{}", container_name);
+                
+                match client.get_request(&endpoint).await {
+                    Ok(container_response) => {
+                        tracing::info!("Found container: {}", container_name);
+                        if let Some(properties) = container_response.get("properties") {
+                            let registration_status = properties.get("registrationStatus")
+                                .and_then(|s| s.as_str()).unwrap_or("Unknown");
+                            let health_status = properties.get("healthStatus")
+                                .and_then(|s| s.as_str()).unwrap_or("Unknown");
+                            let container_type = properties.get("containerType")
+                                .and_then(|s| s.as_str()).unwrap_or("Unknown");
+                            
+                            let is_registered = registration_status.eq_ignore_ascii_case("Registered");
+                            let is_workload = container_type.eq_ignore_ascii_case("VMAppContainer");
+                            
                             return Ok(json!({
                                 "vm_name": vm_name,
                                 "vm_resource_group": rg,
-                                "registration_status": "Registered",
+                                "registration_status": if is_registered { "Registered" } else { "Not Registered" },
+                                "health_status": health_status,
+                                "container_type": container_type,
                                 "container_name": container_name,
-                                "container_details": container,
-                                "message": format!("VM '{}' is registered in this vault", vm_name)
+                                "backup_management_type": if is_workload { "AzureWorkload" } else { "AzureIaasVM" },
+                                "workload_backup": is_workload,
+                                "container_details": container_response,
+                                "message": format!("VM '{}' is {} in this vault", vm_name, 
+                                                 if is_registered { "registered" } else { "not registered" }),
+                                "detection_method": "direct_container_check"
+                            }));
+                        }
+                    },
+                    Err(_) => {
+                        tracing::debug!("Container {} not found", container_name);
+                        // Continue to next container name
+                    }
+                }
+            }
+        }
+        
+        // Approach 2: List all registered VMs across all workload types and find our VM
+        tracing::info!("Direct check failed, listing all registered VMs to find: {}", vm_name);
+        
+        let all_containers_endpoints = vec![
+            "/backupProtectionContainers?$filter=backupManagementType eq 'AzureWorkload'",
+            "/backupProtectionContainers?$filter=backupManagementType eq 'AzureIaasVM'", 
+            "/backupProtectionContainers", // All containers
+        ];
+        
+        for endpoint in &all_containers_endpoints {
+            tracing::debug!("Querying endpoint: {}", endpoint);
+            match client.get_request(endpoint).await {
+                Ok(response) => {
+                    if let Some(containers_array) = response.get("value").and_then(|v| v.as_array()) {
+                        tracing::info!("Found {} containers via {}", containers_array.len(), endpoint);
+                        
+                        for container_json in containers_array {
+                            if let Some(name) = container_json.get("name").and_then(|n| n.as_str()) {
+                                if let Some(properties) = container_json.get("properties") {
+                                    if let Some(friendly_name) = properties.get("friendlyName").and_then(|f| f.as_str()) {
+                                        
+                                        // Check if this container matches our VM
+                                        let vm_matches = friendly_name.eq_ignore_ascii_case(vm_name) ||
+                                                       name.to_lowercase().contains(&vm_name.to_lowercase());
+                                        
+                                        // If we have resource group, also check if it matches
+                                        let rg_matches = if let Some(rg) = vm_resource_group {
+                                            name.to_lowercase().contains(&rg.to_lowercase())
+                                        } else {
+                                            true // If no RG specified, don't filter by RG
+                                        };
+                                        
+                                        if vm_matches && rg_matches {
+                                            tracing::info!("Found matching VM container: name='{}', friendly_name='{}'", name, friendly_name);
+                                            
+                                            let registration_status = properties.get("registrationStatus")
+                                                .and_then(|s| s.as_str()).unwrap_or("Unknown");
+                                            let health_status = properties.get("healthStatus")
+                                                .and_then(|s| s.as_str()).unwrap_or("Unknown");
+                                            let container_type = properties.get("containerType")
+                                                .and_then(|s| s.as_str()).unwrap_or("Unknown");
+                                            
+                                            let is_registered = registration_status.eq_ignore_ascii_case("Registered");
+                                            let is_workload = container_type.eq_ignore_ascii_case("VMAppContainer");
+                                            
+                                            let mut response = json!({
+                                                "vm_name": vm_name,
+                                                "registration_status": if is_registered { "Registered" } else { "Not Registered" },
+                                                "health_status": health_status,
+                                                "container_type": container_type,
+                                                "container_name": name,
+                                                "backup_management_type": if is_workload { "AzureWorkload" } else { "AzureIaasVM" },
+                                                "workload_backup": is_workload,
+                                                "container_details": container_json,
+                                                "message": format!("VM '{}' is {} in this vault", vm_name, 
+                                                                 if is_registered { "registered" } else { "not registered" }),
+                                                "detection_method": "comprehensive_search"
+                                            });
+                                            
+                                            if let Some(rg) = vm_resource_group {
+                                                response["vm_resource_group"] = json!(rg);
+                                            }
+                                            
+                                            return Ok(response);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                Err(e) => {
+                    tracing::warn!("Failed to query {}: {}", endpoint, e);
+                }
+            }
+        }
+        
+        // Approach 3: Final fallback - check protected items
+        tracing::info!("Container search failed, checking protected items as final fallback...");
+        let workload_types = vec![
+            Some(WorkloadType::VM),
+            Some(WorkloadType::SapHanaDatabase),
+            Some(WorkloadType::SqlDatabase),
+            Some(WorkloadType::AnyDatabase),
+            None // Check all types
+        ];
+        
+        for workload_type in workload_types {
+            tracing::debug!("Checking protected items for workload type: {:?}", workload_type);
+            match client.list_protected_items(workload_type.clone()).await {
+                Ok(items) => {
+                    tracing::debug!("Found {} protected items for workload type {:?}", items.len(), workload_type);
+                    for item in &items {
+                        tracing::debug!("Checking protected item: friendly_name='{}'", item.properties.friendly_name);
+                        
+                        // Check if this protected item matches our VM name
+                        let vm_matches = item.properties.friendly_name.eq_ignore_ascii_case(vm_name) ||
+                                       item.properties.friendly_name.contains(vm_name);
+                        
+                        if vm_matches {
+                            tracing::info!("Found VM in protected items: {}", item.properties.friendly_name);
+                            return Ok(json!({
+                                "vm_name": vm_name,
+                                "registration_status": "Registered",
+                                "protection_status": "Protected",
+                                "workload_type": workload_type,
+                                "protected_item_details": item,
+                                "message": format!("VM '{}' is registered and protected in this vault", vm_name),
+                                "detection_method": "protected_items_search"
                             }));
                         }
                     }
                 },
-                Err(_) => {
-                    // Failed to list containers, continue
+                Err(e) => {
+                    tracing::warn!("Failed to query protected items for workload type {:?}: {}", workload_type, e);
                 }
             }
         }
