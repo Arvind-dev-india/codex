@@ -194,6 +194,9 @@ pub async fn handle_recovery_services_tool_call(
         "recovery_services_clear_auth_cache" => {
             tools.clear_auth_cache(args).await
         },
+        "recovery_services_track_async_operation" => {
+            tools.track_async_operation(args).await
+        },
         
         _ => {
             Err(CodexErr::Other(format!("Unknown Recovery Services tool: {}", name)))

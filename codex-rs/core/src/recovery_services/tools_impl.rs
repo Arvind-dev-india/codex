@@ -16,6 +16,61 @@ pub struct RecoveryServicesTools {
 }
 
 impl RecoveryServicesTools {
+    /// Helper function to handle async operations consistently
+    async fn handle_async_operation(&self, result: Value, operation_name: &str, client: &RecoveryServicesClient) -> Value {
+        let mut response = result.clone();
+        
+        // Check if this is an async operation
+        if let Some(async_op) = result.get("async_operation") {
+            response["status"] = json!("async_operation_initiated");
+            response["async_operation"] = async_op.clone();
+            
+            // If we have a location header, we can track the operation
+            if let Some(location) = async_op.get("location_header").and_then(|l| l.as_str()) {
+                tracing::info!("Async {} operation initiated, location: {}", operation_name, location);
+                response["tracking_info"] = json!({
+                    "message": format!("{} operation is running asynchronously. Use recovery_services_track_async_operation to check status.", operation_name),
+                    "location_url": location,
+                    "recommended_action": format!("Call recovery_services_track_async_operation with location_url: {}", location)
+                });
+                
+                // Optionally wait a short time to see if operation completes quickly
+                tracing::info!("Checking initial status of async {} operation...", operation_name);
+                match client.track_async_operation(location).await {
+                    Ok(status) => {
+                        response["initial_status_check"] = status.clone();
+                        if let Some(op_status) = status.get("status").and_then(|s| s.as_str()) {
+                            match op_status {
+                                "Succeeded" => {
+                                    response["status"] = json!("completed");
+                                    response["message"] = json!(format!("{} completed successfully", operation_name));
+                                },
+                                "Failed" => {
+                                    response["status"] = json!("failed");
+                                    response["message"] = json!(format!("{} failed", operation_name));
+                                },
+                                _ => {
+                                    response["status"] = json!("in_progress");
+                                    response["message"] = json!(format!("{} is in progress", operation_name));
+                                }
+                            }
+                        }
+                    },
+                    Err(e) => {
+                        tracing::warn!("Failed to check initial async operation status: {}", e);
+                        response["initial_status_check_error"] = json!(format!("Could not check initial status: {}", e));
+                    }
+                }
+            }
+        } else {
+            // Synchronous operation completed
+            response["status"] = json!("completed");
+            response["message"] = json!(format!("{} completed successfully", operation_name));
+        }
+        
+        response
+    }
+
     /// Create a new instance of Recovery Services tools
     pub async fn new(config: &RecoveryServicesConfig) -> Result<Self> {
         use crate::recovery_services::auth::RecoveryServicesAuthHandler;
@@ -377,9 +432,8 @@ impl RecoveryServicesTools {
             let api_endpoint = format!("/backupFabrics/Azure/protectionContainers/{}", container_name);
             let result = client.register_vm(&vm_resource_id, workload_type).await?;
             
-            return Ok(json!({
+            let base_response = json!({
                 "success": true,
-                "message": format!("Successfully registered VM {}/{} for standard Azure VM backup", vm_resource_group, vm_name),
                 "vm_resource_id": vm_resource_id,
                 "vm_name": vm_name,
                 "vm_resource_group": vm_resource_group,
@@ -387,6 +441,7 @@ impl RecoveryServicesTools {
                 "backup_management_type": backup_management_type,
                 "container_name": container_name,
                 "container_type": "Microsoft.ClassicCompute/virtualMachines",
+                "operation": "register_vm",
                 "api_reference": {
                     "method": "PUT",
                     "endpoint": format!("/subscriptions/{}/resourceGroups/{}/providers/Microsoft.RecoveryServices/vaults/{}/backupFabrics/Azure/protectionContainers/{}", 
@@ -410,16 +465,19 @@ impl RecoveryServicesTools {
                     "vault_name_used": vault_name.unwrap_or(&self.config.vault_name)
                 },
                 "result": result
-            }));
+            });
+            
+            // Handle async operation
+            let async_response = self.handle_async_operation(base_response, "VM registration", &client).await;
+            return Ok(async_response);
         }
         
         // For workload-specific backup (SQL, SAP HANA, etc.)
         let api_endpoint = format!("/backupFabrics/Azure/protectionContainers/{}", container_name);
         let result = client.register_vm_for_workload(&vm_resource_id, workload_type_str).await?;
         
-        Ok(json!({
+        let base_response = json!({
             "success": true,
-            "message": format!("Successfully registered VM {}/{} for {} backup", vm_resource_group, vm_name, workload_type_str),
             "vm_resource_id": vm_resource_id,
             "vm_name": vm_name,
             "vm_resource_group": vm_resource_group,
@@ -427,6 +485,7 @@ impl RecoveryServicesTools {
             "backup_management_type": backup_management_type,
             "container_name": container_name,
             "container_type": "VMAppContainer",
+            "operation": "register_vm",
             "api_reference": {
                 "method": "PUT",
                 "endpoint": format!("/subscriptions/{}/resourceGroups/{}/providers/Microsoft.RecoveryServices/vaults/{}/backupFabrics/Azure/protectionContainers/{}", 
@@ -450,7 +509,11 @@ impl RecoveryServicesTools {
                 "vault_name_used": vault_name.unwrap_or(&self.config.vault_name)
             },
             "result": result
-        }))
+        });
+        
+        // Handle async operation
+        let async_response = self.handle_async_operation(base_response, "VM registration", &client).await;
+        Ok(async_response)
     }
 
     /// List protectable items
@@ -1050,17 +1113,65 @@ impl RecoveryServicesTools {
         // Generate VM resource ID
         let vm_resource_id = client.generate_vm_resource_id(vm_resource_group, vm_name);
         
+        tracing::info!("Re-registering VM {}/{} for backup in vault {}", vm_resource_group, vm_name, vault_name);
+        
         // Re-register using the workload registration method
         let result = client.register_vm_for_workload(&vm_resource_id, "VM").await?;
         
-        Ok(json!({
+        let mut response = json!({
             "vm_name": vm_name,
             "vm_resource_group": vm_resource_group,
             "vault_name": vault_name,
             "operation": "reregister",
-            "status": "initiated",
+            "vm_resource_id": vm_resource_id,
             "result": result
-        }))
+        });
+
+        // Check if this is an async operation
+        if let Some(async_op) = result.get("async_operation") {
+            response["status"] = json!("async_operation_initiated");
+            response["async_operation"] = async_op.clone();
+            
+            // If we have a location header, we can track the operation
+            if let Some(location) = async_op.get("location_header").and_then(|l| l.as_str()) {
+                tracing::info!("Async operation initiated, location: {}", location);
+                response["tracking_info"] = json!({
+                    "message": "Re-registration operation is running asynchronously. Use recovery_services_track_async_operation to check status.",
+                    "location_url": location,
+                    "recommended_action": format!("Call recovery_services_track_async_operation with location_url: {}", location)
+                });
+                
+                // Optionally wait a short time to see if operation completes quickly
+                tracing::info!("Checking initial status of async operation...");
+                match client.track_async_operation(location).await {
+                    Ok(status) => {
+                        response["initial_status_check"] = status.clone();
+                        if let Some(op_status) = status.get("status").and_then(|s| s.as_str()) {
+                            if op_status == "Succeeded" {
+                                response["status"] = json!("completed");
+                                response["message"] = json!("Re-registration completed successfully");
+                            } else if op_status == "Failed" {
+                                response["status"] = json!("failed");
+                                response["message"] = json!("Re-registration failed");
+                            } else {
+                                response["status"] = json!("in_progress");
+                                response["message"] = json!("Re-registration is in progress");
+                            }
+                        }
+                    },
+                    Err(e) => {
+                        tracing::warn!("Failed to check initial async operation status: {}", e);
+                        response["initial_status_check_error"] = json!(format!("Could not check initial status: {}", e));
+                    }
+                }
+            }
+        } else {
+            // Synchronous operation completed
+            response["status"] = json!("completed");
+            response["message"] = json!("Re-registration completed successfully");
+        }
+        
+        Ok(response)
     }
 
     /// Unregister VM from backup
@@ -1073,15 +1184,18 @@ impl RecoveryServicesTools {
         // Unregister the container
         let result = client.unregister_container(&container_name).await?;
         
-        Ok(json!({
+        let base_response = json!({
             "vm_name": vm_name,
             "vm_resource_group": vm_resource_group,
             "vault_name": vault_name,
             "container_name": container_name,
             "operation": "unregister",
-            "status": "initiated",
             "result": result
-        }))
+        });
+        
+        // Handle async operation
+        let async_response = self.handle_async_operation(base_response, "Unregister VM", &client).await;
+        Ok(async_response)
     }
 
     /// Create backup policy
@@ -1090,15 +1204,18 @@ impl RecoveryServicesTools {
         
         let result = client.create_backup_policy(policy_name, schedule_type, retention_days).await?;
         
-        Ok(json!({
+        let base_response = json!({
             "vault_name": vault_name,
             "policy_name": policy_name,
             "schedule_type": schedule_type,
             "retention_days": retention_days,
             "operation": "create_policy",
-            "status": "created",
             "result": result
-        }))
+        });
+        
+        // Handle async operation
+        let async_response = self.handle_async_operation(base_response, "Create backup policy", &client).await;
+        Ok(async_response)
     }
 
     /// Get backup policy details
@@ -1125,7 +1242,7 @@ impl RecoveryServicesTools {
         
         let result = client.enable_protection(&container_name, &protected_item_name, policy_name, &vm_resource_id).await?;
         
-        Ok(json!({
+        let base_response = json!({
             "vm_name": vm_name,
             "vm_resource_group": vm_resource_group,
             "vault_name": vault_name,
@@ -1133,9 +1250,12 @@ impl RecoveryServicesTools {
             "container_name": container_name,
             "protected_item_name": protected_item_name,
             "operation": "enable_protection",
-            "status": "initiated",
             "result": result
-        }))
+        });
+        
+        // Handle async operation
+        let async_response = self.handle_async_operation(base_response, "Enable protection", &client).await;
+        Ok(async_response)
     }
 
     /// Disable protection for a VM
@@ -1149,7 +1269,7 @@ impl RecoveryServicesTools {
         let delete_data = delete_backup_data.unwrap_or(false);
         let result = client.disable_protection(&container_name, &protected_item_name, delete_data).await?;
         
-        Ok(json!({
+        let base_response = json!({
             "vm_name": vm_name,
             "vm_resource_group": vm_resource_group,
             "vault_name": vault_name,
@@ -1157,9 +1277,12 @@ impl RecoveryServicesTools {
             "protected_item_name": protected_item_name,
             "delete_backup_data": delete_data,
             "operation": "disable_protection",
-            "status": "initiated",
             "result": result
-        }))
+        });
+        
+        // Handle async operation
+        let async_response = self.handle_async_operation(base_response, "Disable protection", &client).await;
+        Ok(async_response)
     }
 
     /// Trigger backup for a VM
@@ -1172,7 +1295,7 @@ impl RecoveryServicesTools {
         
         let result = client.trigger_backup(&container_name, &protected_item_name, retention_days).await?;
         
-        Ok(json!({
+        let base_response = json!({
             "vm_name": vm_name,
             "vm_resource_group": vm_resource_group,
             "vault_name": vault_name,
@@ -1180,9 +1303,12 @@ impl RecoveryServicesTools {
             "protected_item_name": protected_item_name,
             "retention_days": retention_days.unwrap_or(30),
             "operation": "trigger_backup",
-            "status": "initiated",
             "result": result
-        }))
+        });
+        
+        // Handle async operation
+        let async_response = self.handle_async_operation(base_response, "Trigger backup", &client).await;
+        Ok(async_response)
     }
 
     /// Get backup job status
@@ -1270,7 +1396,7 @@ impl RecoveryServicesTools {
         
         let result = client.restore_vm(&container_name, &protected_item_name, recovery_point_id, "OriginalLocation", None, None).await?;
         
-        Ok(json!({
+        let base_response = json!({
             "vm_name": vm_name,
             "vm_resource_group": vm_resource_group,
             "vault_name": vault_name,
@@ -1279,9 +1405,12 @@ impl RecoveryServicesTools {
             "container_name": container_name,
             "protected_item_name": protected_item_name,
             "operation": "restore_original_location",
-            "status": "initiated",
             "result": result
-        }))
+        });
+        
+        // Handle async operation
+        let async_response = self.handle_async_operation(base_response, "Restore to original location", &client).await;
+        Ok(async_response)
     }
 
     /// Restore VM to alternate location
@@ -1296,7 +1425,7 @@ impl RecoveryServicesTools {
         let result = client.restore_vm(&container_name, &protected_item_name, recovery_point_id, 
                                      "AlternateLocation", Some(target_vm_name), Some(target_resource_group)).await?;
         
-        Ok(json!({
+        let base_response = json!({
             "vm_name": vm_name,
             "vm_resource_group": vm_resource_group,
             "vault_name": vault_name,
@@ -1307,9 +1436,12 @@ impl RecoveryServicesTools {
             "container_name": container_name,
             "protected_item_name": protected_item_name,
             "operation": "restore_alternate_location",
-            "status": "initiated",
             "result": result
-        }))
+        });
+        
+        // Handle async operation
+        let async_response = self.handle_async_operation(base_response, "Restore to alternate location", &client).await;
+        Ok(async_response)
     }
 
     /// Restore VM as files
@@ -1324,7 +1456,7 @@ impl RecoveryServicesTools {
         // Use the existing restore_vm method with RestoreDisks type
         let result = client.restore_vm(&container_name, &protected_item_name, recovery_point_id, "RestoreDisks", None, None).await?;
         
-        Ok(json!({
+        let base_response = json!({
             "vm_name": vm_name,
             "vm_resource_group": vm_resource_group,
             "vault_name": vault_name,
@@ -1335,9 +1467,12 @@ impl RecoveryServicesTools {
             "container_name": container_name,
             "protected_item_name": protected_item_name,
             "operation": "restore_as_files",
-            "status": "initiated",
             "result": result
-        }))
+        });
+        
+        // Handle async operation
+        let async_response = self.handle_async_operation(base_response, "Restore as files", &client).await;
+        Ok(async_response)
     }
     
     /// Bridge method for MCP server: Get job details (maps to get_job_status)
@@ -1440,5 +1575,80 @@ impl RecoveryServicesTools {
             "recovery_points": recovery_points,
             "recent_jobs": recent_jobs
         }))
+    }
+
+    /// Track async operation status
+    pub async fn track_async_operation(&self, args: Value) -> Result<Value> {
+        let location_url = args["location_url"].as_str().ok_or_else(|| {
+            CodexErr::Other("location_url parameter is required".to_string())
+        })?;
+        
+        let wait_for_completion = args["wait_for_completion"].as_bool().unwrap_or(false);
+        let max_wait_seconds = args["max_wait_seconds"].as_u64().unwrap_or(300);
+        
+        tracing::info!("Tracking async operation: {}", location_url);
+        
+        // Extract vault info from location URL to get the right client
+        // Location URL format: https://management.azure.com/subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.RecoveryServices/vaults/{vault}/...
+        let vault_name = if let Some(vault_start) = location_url.find("/vaults/") {
+            let vault_part = &location_url[vault_start + 8..]; // Skip "/vaults/"
+            vault_part.split('/').next().map(|s| s.to_string())
+        } else {
+            None
+        };
+        
+        let client = self.get_client(vault_name.as_deref())?;
+        
+        if wait_for_completion {
+            tracing::info!("Waiting for async operation to complete (max {} seconds)", max_wait_seconds);
+            let result = client.wait_for_async_operation(location_url, max_wait_seconds).await?;
+            
+            Ok(json!({
+                "operation": "track_async_operation",
+                "location_url": location_url,
+                "wait_for_completion": true,
+                "max_wait_seconds": max_wait_seconds,
+                "result": result,
+                "message": "Async operation tracking completed"
+            }))
+        } else {
+            tracing::info!("Checking current status of async operation");
+            let result = client.track_async_operation(location_url).await?;
+            
+            let mut response = json!({
+                "operation": "track_async_operation",
+                "location_url": location_url,
+                "wait_for_completion": false,
+                "result": result
+            });
+            
+            // Add helpful status interpretation
+            if let Some(status) = result.get("status").and_then(|s| s.as_str()) {
+                match status {
+                    "Succeeded" => {
+                        response["message"] = json!("Operation completed successfully");
+                        response["completed"] = json!(true);
+                    },
+                    "Failed" => {
+                        response["message"] = json!("Operation failed");
+                        response["completed"] = json!(true);
+                        response["success"] = json!(false);
+                    },
+                    "InProgress" | "Running" => {
+                        response["message"] = json!("Operation is still in progress");
+                        response["completed"] = json!(false);
+                        response["recommendation"] = json!("Check again later or use wait_for_completion=true");
+                    },
+                    _ => {
+                        response["message"] = json!(format!("Operation status: {}", status));
+                        response["completed"] = json!(false);
+                    }
+                }
+            } else {
+                response["message"] = json!("Could not determine operation status");
+            }
+            
+            Ok(response)
+        }
     }
 }

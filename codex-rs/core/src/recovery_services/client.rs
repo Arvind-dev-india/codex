@@ -121,10 +121,41 @@ impl RecoveryServicesClient {
         self.handle_response(response).await
     }
 
-    /// Handle HTTP response and parse JSON
+    /// Handle HTTP response and parse JSON, including async operations
     async fn handle_response(&self, response: reqwest::Response) -> Result<Value> {
         let status = response.status();
         tracing::debug!("Response status: {}", status);
+
+        // Check for async operation (202 Accepted)
+        if status == 202 {
+            let location_header = response.headers().get("location")
+                .and_then(|h| h.to_str().ok())
+                .map(|s| s.to_string());
+            
+            let azure_async_operation = response.headers().get("azure-asyncoperation")
+                .and_then(|h| h.to_str().ok())
+                .map(|s| s.to_string());
+
+            let response_text = response.text().await.map_err(|e| {
+                CodexErr::Other(format!("Failed to read response text: {}", e))
+            })?;
+
+            let mut result = if response_text.is_empty() {
+                json!({})
+            } else {
+                serde_json::from_str(&response_text).unwrap_or_else(|_| json!({}))
+            };
+
+            // Add async operation tracking information
+            result["async_operation"] = json!({
+                "status": "accepted",
+                "location_header": location_header,
+                "azure_async_operation": azure_async_operation,
+                "message": "Operation accepted and is running asynchronously. Use the location header to track progress."
+            });
+
+            return Ok(result);
+        }
 
         if status.is_success() {
             let response_text = response.text().await.map_err(|e| {
@@ -870,5 +901,65 @@ impl RecoveryServicesClient {
         });
         
         self.post_request(&endpoint, body).await
+    }
+
+    /// Track async operation status using location header
+    pub async fn track_async_operation(&self, location_url: &str) -> Result<Value> {
+        tracing::info!("Tracking async operation: {}", location_url);
+        
+        let response = self
+            .client
+            .get(location_url)
+            .header("Authorization", format!("Bearer {}", self.access_token))
+            .header("Content-Type", "application/json")
+            .send()
+            .await
+            .map_err(|e| CodexErr::Other(format!("Failed to track async operation: {}", e)))?;
+
+        self.handle_response(response).await
+    }
+
+    /// Check if an async operation is complete and get final result
+    pub async fn wait_for_async_operation(&self, location_url: &str, max_wait_seconds: u64) -> Result<Value> {
+        let start_time = std::time::Instant::now();
+        let max_duration = std::time::Duration::from_secs(max_wait_seconds);
+        
+        loop {
+            let status_result = self.track_async_operation(location_url).await?;
+            
+            // Check if operation is complete
+            if let Some(status) = status_result.get("status").and_then(|s| s.as_str()) {
+                match status {
+                    "Succeeded" => {
+                        tracing::info!("Async operation completed successfully");
+                        return Ok(status_result);
+                    },
+                    "Failed" => {
+                        tracing::error!("Async operation failed: {:?}", status_result);
+                        return Err(CodexErr::Other(format!("Async operation failed: {:?}", status_result)));
+                    },
+                    "InProgress" | "Running" => {
+                        tracing::debug!("Async operation still in progress...");
+                        // Continue waiting
+                    },
+                    _ => {
+                        tracing::warn!("Unknown async operation status: {}", status);
+                    }
+                }
+            }
+            
+            // Check timeout
+            if start_time.elapsed() > max_duration {
+                tracing::warn!("Async operation tracking timed out after {} seconds", max_wait_seconds);
+                return Ok(json!({
+                    "status": "timeout",
+                    "message": format!("Operation tracking timed out after {} seconds. Operation may still be running.", max_wait_seconds),
+                    "last_known_status": status_result
+                }));
+            }
+            
+            // Wait before next check
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        }
     }
 }

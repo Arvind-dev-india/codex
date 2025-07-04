@@ -49,6 +49,9 @@ pub fn create_recovery_services_tools() -> Vec<OpenAiTool> {
         create_disable_database_protection_tool(),
         create_trigger_database_backup_tool(),
         create_restore_database_original_tool(),
+        
+        // Async operation tracking
+        create_track_async_operation_tool(),
         create_restore_database_alternate_tool(),
         create_restore_database_as_files_tool(),
         create_generate_recovery_config_tool(),
@@ -596,5 +599,20 @@ fn create_clear_auth_cache_tool() -> OpenAiTool {
         "Clear Recovery Services authentication cache to force re-authentication",
         parameters,
         &[],
+    )
+}
+
+/// Create a tool for tracking async operations
+fn create_track_async_operation_tool() -> OpenAiTool {
+    let mut parameters = BTreeMap::new();
+    parameters.insert("location_url".to_string(), JsonSchema::String);
+    parameters.insert("wait_for_completion".to_string(), JsonSchema::Boolean);
+    parameters.insert("max_wait_seconds".to_string(), JsonSchema::Number);
+    
+    create_function_tool(
+        "recovery_services_track_async_operation",
+        "Track the status of an asynchronous Recovery Services operation using the location URL",
+        parameters,
+        &["location_url"],
     )
 }
