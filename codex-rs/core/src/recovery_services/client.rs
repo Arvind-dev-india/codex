@@ -27,7 +27,10 @@ impl RecoveryServicesClient {
         vault_name: String,
         access_token: String,
     ) -> Self {
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))  // 30 second timeout per request
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
         Self {
             subscription_id,
             resource_group,
@@ -1024,6 +1027,85 @@ impl RecoveryServicesClient {
             
             // Wait before next check
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        }
+    }
+
+    /// Refresh containers (discovery operation) - triggers discovery of eligible containers
+    pub async fn refresh_containers(&self, fabric_name: Option<&str>) -> Result<Value> {
+        let fabric = fabric_name.unwrap_or("Azure");
+        let endpoint = format!("/backupFabrics/{}/refreshContainers", fabric);
+        
+        tracing::info!("Triggering container discovery for fabric: {}", fabric);
+        
+        // This is a POST request with empty body to trigger the discovery operation
+        let body = json!({});
+        self.post_request(&endpoint, body).await
+    }
+
+    /// List protectable containers - containers that can be registered but aren't yet
+    pub async fn list_protectable_containers(&self, fabric_name: Option<&str>, backup_management_type: Option<&str>) -> Result<Vec<Value>> {
+        let fabric = fabric_name.unwrap_or("Azure");
+        let mut endpoint = format!("/backupFabrics/{}/protectableContainers", fabric);
+        
+        // Add filter for backup management type if specified
+        if let Some(backup_type) = backup_management_type {
+            endpoint.push_str(&format!("?$filter=backupManagementType eq '{}'", backup_type));
+        }
+        
+        tracing::info!("Listing protectable containers for fabric: {}, backup type: {:?}", fabric, backup_management_type);
+        
+        let response = self.get_request(&endpoint).await?;
+        
+        if let Some(containers_array) = response.get("value").and_then(|v| v.as_array()) {
+            tracing::info!("Found {} protectable containers", containers_array.len());
+            Ok(containers_array.clone())
+        } else {
+            tracing::warn!("No 'value' array found in protectable containers response: {:?}", response);
+            Ok(Vec::new())
+        }
+    }
+
+    /// List protectable items (workloads/databases that can be protected) - new version
+    pub async fn list_protectable_items_new(&self, workload_type: Option<&str>) -> Result<Vec<Value>> {
+        let mut endpoint = "/backupProtectableItems".to_string();
+        
+        // Add filter for workload type if specified
+        if let Some(workload) = workload_type {
+            endpoint.push_str(&format!("?$filter=workloadType eq '{}'", workload));
+        }
+        
+        tracing::info!("Listing protectable items, workload type: {:?}", workload_type);
+        
+        let response = self.get_request(&endpoint).await?;
+        
+        if let Some(items_array) = response.get("value").and_then(|v| v.as_array()) {
+            tracing::info!("Found {} protectable items", items_array.len());
+            Ok(items_array.clone())
+        } else {
+            tracing::warn!("No 'value' array found in protectable items response: {:?}", response);
+            Ok(Vec::new())
+        }
+    }
+
+    /// List workload items (registered/protected workloads)
+    pub async fn list_workload_items(&self, workload_type: Option<&str>) -> Result<Vec<Value>> {
+        let mut endpoint = "/backupWorkloadItems".to_string();
+        
+        // Add filter for workload type if specified
+        if let Some(workload) = workload_type {
+            endpoint.push_str(&format!("?$filter=workloadType eq '{}'", workload));
+        }
+        
+        tracing::info!("Listing workload items, workload type: {:?}", workload_type);
+        
+        let response = self.get_request(&endpoint).await?;
+        
+        if let Some(items_array) = response.get("value").and_then(|v| v.as_array()) {
+            tracing::info!("Found {} workload items", items_array.len());
+            Ok(items_array.clone())
+        } else {
+            tracing::warn!("No 'value' array found in workload items response: {:?}", response);
+            Ok(Vec::new())
         }
     }
 }

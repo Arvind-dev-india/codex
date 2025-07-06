@@ -10,6 +10,12 @@ pub fn create_recovery_services_tools() -> Vec<OpenAiTool> {
         create_list_vaults_tool(),
         create_test_connection_tool(),
         
+        // Discovery tools
+        create_refresh_containers_tool(),
+        create_list_protectable_containers_tool(),
+        create_list_protectable_items_new_tool(),
+        create_list_workload_items_tool(),
+        
         // VM registration
         create_register_vm_tool(),
         create_reregister_vm_tool(),
@@ -22,7 +28,6 @@ pub fn create_recovery_services_tools() -> Vec<OpenAiTool> {
         create_get_policy_details_tool(),
         
         // Protection management
-        create_list_protectable_items_tool(),
         create_enable_protection_tool(),
         create_disable_protection_tool(),
         create_list_protected_items_tool(),
@@ -85,6 +90,64 @@ fn create_test_connection_tool() -> OpenAiTool {
         "Test connectivity to Recovery Services vault and validate permissions",
         parameters,
         &[],
+    )
+}
+
+/// Create a tool for refreshing containers (discovery operation)
+fn create_refresh_containers_tool() -> OpenAiTool {
+    let mut parameters = BTreeMap::new();
+    parameters.insert("vault_name".to_string(), JsonSchema::String);
+    parameters.insert("fabric_name".to_string(), JsonSchema::String);
+    
+    create_function_tool(
+        "recovery_services_refresh_containers",
+        "Trigger a discovery operation to refresh the list of containers that can be registered to the Recovery Services vault. This is required before listing protectable containers to ensure the vault has the latest list of eligible resources.",
+        parameters,
+        &["fabric_name"],
+    )
+}
+
+/// Create a tool for listing protectable containers
+fn create_list_protectable_containers_tool() -> OpenAiTool {
+    let mut parameters = BTreeMap::new();
+    parameters.insert("vault_name".to_string(), JsonSchema::String);
+    parameters.insert("fabric_name".to_string(), JsonSchema::String);
+    parameters.insert("backup_management_type".to_string(), JsonSchema::String);
+    
+    create_function_tool(
+        "recovery_services_list_protectable_containers",
+        "List containers that can be registered to the Recovery Services vault but are not yet registered. Use this after running refresh_containers to discover VMs, storage accounts, and other resources eligible for backup. Backup management types: AzureIaasVM (VMs), AzureWorkload (SQL/SAP), AzureStorage (File Shares), MAB (MARS Agent), AzureSqlDb, Exchange, Sharepoint, VMwareVM, SystemState, Client, GenericDataSource, AzureFileShare.",
+        parameters,
+        &["fabric_name"],
+    )
+}
+
+
+/// Create a tool for listing protectable items (workloads/databases) - new version
+fn create_list_protectable_items_new_tool() -> OpenAiTool {
+    let mut parameters = BTreeMap::new();
+    parameters.insert("vault_name".to_string(), JsonSchema::String);
+    parameters.insert("workload_type".to_string(), JsonSchema::String);
+    
+    create_function_tool(
+        "recovery_services_list_protectable_items",
+        "List protectable items (databases, workloads) that can be protected but are not yet registered for backup. This discovers SQL Server, SAP HANA, SAP ASE databases and other workloads inside Azure VMs.",
+        parameters,
+        &["workload_type"],
+    )
+}
+
+/// Create a tool for listing workload items (registered/protected)
+fn create_list_workload_items_tool() -> OpenAiTool {
+    let mut parameters = BTreeMap::new();
+    parameters.insert("vault_name".to_string(), JsonSchema::String);
+    parameters.insert("workload_type".to_string(), JsonSchema::String);
+    
+    create_function_tool(
+        "recovery_services_list_workload_items",
+        "List workload items (databases, applications) that are already registered or protected. Shows SQL Server, SAP HANA, SAP ASE databases and other workloads currently managed by the vault.",
+        parameters,
+        &["workload_type"],
     )
 }
 

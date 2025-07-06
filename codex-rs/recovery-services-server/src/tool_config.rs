@@ -10,6 +10,12 @@ pub fn create_recovery_services_tools() -> Vec<Tool> {
         create_list_vaults_tool(),
         create_test_connection_tool(),
         
+        // Discovery tools
+        create_refresh_containers_tool(),
+        create_list_protectable_containers_tool(),
+        create_list_protectable_items_tool(),
+        create_list_workload_items_tool(),
+        
         // VM registration
         create_register_vm_tool(),
         create_reregister_vm_tool(),
@@ -75,6 +81,101 @@ fn create_test_connection_tool() -> Tool {
         input_schema: ToolInputSchema {
             r#type: "object".to_string(),
             properties: Some(json!({})),
+            required: Some(vec![]),
+        },
+    }
+}
+
+/// Create the refresh_containers tool definition
+fn create_refresh_containers_tool() -> Tool {
+    Tool {
+        name: "recovery_services_refresh_containers".to_string(),
+        description: Some("Trigger a discovery operation to refresh the list of containers that can be registered to the Recovery Services vault. This is required before listing protectable containers to ensure the vault has the latest list of eligible resources.".to_string()),
+        annotations: None,
+        input_schema: ToolInputSchema {
+            r#type: "object".to_string(),
+            properties: Some(json!({
+                "vault_name": {
+                    "type": "string",
+                    "description": "Name of the vault (optional, defaults to 'default')"
+                },
+                "fabric_name": {
+                    "type": "string", 
+                    "description": "Name of the backup fabric (optional, defaults to 'Azure')"
+                }
+            })),
+            required: Some(vec![]),
+        },
+    }
+}
+
+/// Create the list_protectable_containers tool definition
+fn create_list_protectable_containers_tool() -> Tool {
+    Tool {
+        name: "recovery_services_list_protectable_containers".to_string(),
+        description: Some("List containers that can be registered to the Recovery Services vault but are not yet registered. Use this after running refresh_containers to discover VMs, storage accounts, and other resources eligible for backup. Supports filtering by backup management type (AzureIaasVM, AzureWorkload, AzureStorage, MAB).".to_string()),
+        annotations: None,
+        input_schema: ToolInputSchema {
+            r#type: "object".to_string(),
+            properties: Some(json!({
+                "vault_name": {
+                    "type": "string",
+                    "description": "Name of the vault (optional, defaults to 'default')"
+                },
+                "fabric_name": {
+                    "type": "string",
+                    "description": "Name of the backup fabric (optional, defaults to 'Azure')"
+                },
+                "backup_management_type": {
+                    "type": "string",
+                    "description": "Filter by backup management type - select the type of resources to discover",
+                    "enum": [
+                        "AzureIaasVM",
+                        "AzureWorkload",
+                        "AzureStorage", 
+                        "MAB",
+                        "AzureSqlDb",
+                        "Exchange",
+                        "Sharepoint",
+                        "VMwareVM",
+                        "SystemState",
+                        "Client",
+                        "GenericDataSource",
+                        "AzureFileShare"
+                    ]
+                }
+            })),
+            required: Some(vec![]),
+        },
+    }
+}
+
+
+/// Create the list_workload_items tool definition  
+fn create_list_workload_items_tool() -> Tool {
+    Tool {
+        name: "recovery_services_list_workload_items".to_string(),
+        description: Some("List workload items (databases, applications) that are already registered or protected. Shows SQL Server, SAP HANA, SAP ASE databases and other workloads currently managed by the vault.".to_string()),
+        annotations: None,
+        input_schema: ToolInputSchema {
+            r#type: "object".to_string(),
+            properties: Some(json!({
+                "vault_name": {
+                    "type": "string",
+                    "description": "Name of the vault (optional, defaults to 'default')"
+                },
+                "workload_type": {
+                    "type": "string", 
+                    "description": "Filter by workload type",
+                    "enum": [
+                        "SQL",
+                        "SAPHana",
+                        "SAPAse", 
+                        "Exchange",
+                        "Sharepoint"
+                    ]
+                }
+            })),
             required: Some(vec![]),
         },
     }

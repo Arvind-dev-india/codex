@@ -263,37 +263,51 @@ impl RecoveryServicesTools {
         };
         tests.push(basic_connectivity_test);
         
-        // Test 2: List protected items
+        // Test 2: List protected items (with timeout protection)
         tracing::info!("Testing protected items listing...");
-        let protected_items_test = match client.list_protected_items(None).await {
-            Ok(items) => {
-                json!({
+        let protected_items_test = {
+            let timeout_duration = std::time::Duration::from_secs(15);
+            match tokio::time::timeout(timeout_duration, client.list_protected_items(None)).await {
+                Ok(Ok(items)) => json!({
                     "test": "list_protected_items",
                     "status": "success",
                     "message": format!("Successfully listed {} protected items", items.len())
+                }),
+                Ok(Err(e)) => json!({
+                    "test": "list_protected_items",
+                    "status": "failed", 
+                    "error": format!("Failed to list protected items: {}", e)
+                }),
+                Err(_) => json!({
+                    "test": "list_protected_items",
+                    "status": "failed", 
+                    "error": "Protected items listing timed out after 15 seconds"
                 })
-            },
-            Err(e) => json!({
-                "test": "list_protected_items",
-                "status": "failed", 
-                "error": format!("Failed to list protected items: {}", e)
-            })
+            }
         };
         tests.push(protected_items_test);
         
-        // Test 3: List backup containers
+        // Test 3: List backup containers (with timeout protection)
         tracing::info!("Testing container listing permissions...");
-        let containers_test = match client.list_backup_containers().await {
-            Ok(containers) => json!({
-                "test": "list_containers",
-                "status": "success",
-                "message": format!("Successfully listed {} backup containers", containers.len())
-            }),
-            Err(e) => json!({
-                "test": "list_containers",
-                "status": "failed", 
-                "error": format!("Failed to list containers: {}", e)
-            })
+        let containers_test = {
+            let timeout_duration = std::time::Duration::from_secs(15);
+            match tokio::time::timeout(timeout_duration, client.list_backup_containers()).await {
+                Ok(Ok(containers)) => json!({
+                    "test": "list_containers",
+                    "status": "success",
+                    "message": format!("Successfully listed {} backup containers", containers.len())
+                }),
+                Ok(Err(e)) => json!({
+                    "test": "list_containers",
+                    "status": "failed", 
+                    "error": format!("Failed to list containers: {}", e)
+                }),
+                Err(_) => json!({
+                    "test": "list_containers",
+                    "status": "failed", 
+                    "error": "Container listing timed out after 15 seconds"
+                })
+            }
         };
         tests.push(containers_test);
         
@@ -1650,5 +1664,224 @@ impl RecoveryServicesTools {
             
             Ok(response)
         }
+    }
+
+    /// Refresh containers (trigger discovery operation)
+    pub async fn refresh_containers(&self, args: Value) -> Result<Value> {
+        let vault_name = args["vault_name"].as_str();
+        let fabric_name = args["fabric_name"].as_str();
+        let client = self.get_client(vault_name)?;
+        
+        let vault_key = vault_name.unwrap_or("default");
+        let fabric = fabric_name.unwrap_or("Azure");
+        
+        tracing::info!("Refreshing containers for vault: {}, fabric: {}", vault_key, fabric);
+        
+        let result = client.refresh_containers(Some(fabric)).await?;
+        
+        let mut response = json!({
+            "vault": vault_key,
+            "fabric": fabric,
+            "operation": "refresh_containers",
+            "result": result
+        });
+        
+        // Handle async operation if needed
+        if let Some(async_op) = result.get("async_operation") {
+            response["status"] = json!("async_operation_initiated");
+            response["async_operation"] = async_op.clone();
+            response["message"] = json!("Container discovery operation initiated. This may take a few moments to complete.");
+            
+            if let Some(location) = async_op.get("location_header").and_then(|l| l.as_str()) {
+                response["tracking_info"] = json!({
+                    "message": "Discovery operation is running asynchronously. Use recovery_services_track_async_operation to check status.",
+                    "location_url": location,
+                    "recommended_action": format!("Call recovery_services_track_async_operation with location_url: {}", location)
+                });
+            }
+        } else {
+            response["status"] = json!("completed");
+            response["message"] = json!("Container discovery completed successfully");
+        }
+            
+        Ok(response)
+    }
+
+    /// List protectable containers (containers that can be registered but aren't yet)
+    pub async fn list_protectable_containers(&self, args: Value) -> Result<Value> {
+        let vault_name = args["vault_name"].as_str();
+        let fabric_name = args["fabric_name"].as_str();
+        let backup_management_type = args["backup_management_type"].as_str();
+        let client = self.get_client(vault_name)?;
+        
+        let vault_key = vault_name.unwrap_or("default");
+        let fabric = fabric_name.unwrap_or("Azure");
+        
+        tracing::info!("Listing protectable containers for vault: {}, fabric: {}, backup type: {:?}", 
+                      vault_key, fabric, backup_management_type);
+        
+        let containers = client.list_protectable_containers(Some(fabric), backup_management_type).await?;
+        
+        // Group containers by backup management type for better organization
+        let mut containers_by_type: std::collections::HashMap<String, Vec<&Value>> = std::collections::HashMap::new();
+        for container in &containers {
+            if let Some(backup_type) = container.get("properties")
+                .and_then(|p| p.get("backupManagementType"))
+                .and_then(|t| t.as_str()) {
+                containers_by_type.entry(backup_type.to_string()).or_insert_with(Vec::new).push(container);
+            }
+        }
+        
+        Ok(json!({
+            "vault": vault_key,
+            "fabric": fabric,
+            "filter": {
+                "backup_management_type": backup_management_type
+            },
+            "protectable_containers": containers,
+            "containers_by_type": containers_by_type,
+            "total_count": containers.len(),
+            "message": if containers.is_empty() {
+                "No protectable containers found. You may need to run refresh_containers first to discover eligible resources.".to_string()
+            } else {
+                format!("Found {} containers that can be registered for backup", containers.len())
+            },
+            "next_steps": if containers.is_empty() {
+                vec![
+                    "Run recovery_services_refresh_containers to trigger discovery",
+                    "Wait a few moments for discovery to complete",
+                    "Run this command again to see discovered containers"
+                ]
+            } else {
+                vec![
+                    "Use recovery_services_register_vm to register VMs for backup",
+                    "Check container properties to understand backup eligibility"
+                ]
+            }
+        }))
+    }
+
+    /// List protectable items (workloads/databases that can be protected)
+    pub async fn list_protectable_items_new(&self, args: Value) -> Result<Value> {
+        let vault_name = args["vault_name"].as_str();
+        let workload_type = args["workload_type"].as_str();
+        let client = self.get_client(vault_name)?;
+        
+        let vault_key = vault_name.unwrap_or("default");
+        
+        tracing::info!("Listing protectable items for vault: {}, workload type: {:?}", 
+                      vault_key, workload_type);
+        
+        let items = client.list_protectable_items_new(workload_type).await?;
+        
+        // Group items by workload type for better organization
+        let mut items_by_type: std::collections::HashMap<String, Vec<&Value>> = std::collections::HashMap::new();
+        for item in &items {
+            if let Some(workload) = item.get("properties")
+                .and_then(|p| p.get("workloadType"))
+                .and_then(|t| t.as_str()) {
+                items_by_type.entry(workload.to_string()).or_insert_with(Vec::new).push(item);
+            }
+        }
+        
+        Ok(json!({
+            "vault": vault_key,
+            "filter": {
+                "workload_type": workload_type
+            },
+            "protectable_items": items,
+            "items_by_workload_type": items_by_type,
+            "total_count": items.len(),
+            "message": if items.is_empty() {
+                "No protectable items found. Ensure VMs are registered and workloads are installed.".to_string()
+            } else {
+                format!("Found {} protectable items (databases/workloads) that can be protected", items.len())
+            },
+            "workload_types_found": items_by_type.keys().collect::<Vec<_>>(),
+            "next_steps": if items.is_empty() {
+                vec![
+                    "Ensure VMs are registered with the vault",
+                    "Install and configure workloads (SQL Server, SAP HANA, etc.) on VMs",
+                    "Run discovery again to find newly installed workloads"
+                ]
+            } else {
+                vec![
+                    "Use recovery_services_enable_database_protection to protect specific databases",
+                    "Review workload properties to understand protection requirements"
+                ]
+            }
+        }))
+    }
+
+    /// List workload items (registered/protected workloads)
+    pub async fn list_workload_items(&self, args: Value) -> Result<Value> {
+        let vault_name = args["vault_name"].as_str();
+        let workload_type = args["workload_type"].as_str();
+        let client = self.get_client(vault_name)?;
+        
+        let vault_key = vault_name.unwrap_or("default");
+        
+        tracing::info!("Listing workload items for vault: {}, workload type: {:?}", 
+                      vault_key, workload_type);
+        
+        let items = client.list_workload_items(workload_type).await?;
+        
+        // Group items by workload type and protection status
+        let mut items_by_type: std::collections::HashMap<String, Vec<&Value>> = std::collections::HashMap::new();
+        let mut protected_count = 0;
+        let mut unprotected_count = 0;
+        
+        for item in &items {
+            if let Some(workload) = item.get("properties")
+                .and_then(|p| p.get("workloadType"))
+                .and_then(|t| t.as_str()) {
+                items_by_type.entry(workload.to_string()).or_insert_with(Vec::new).push(item);
+            }
+            
+            // Count protection status
+            if let Some(protection_state) = item.get("properties")
+                .and_then(|p| p.get("protectionState"))
+                .and_then(|s| s.as_str()) {
+                if protection_state == "Protected" {
+                    protected_count += 1;
+                } else {
+                    unprotected_count += 1;
+                }
+            }
+        }
+        
+        Ok(json!({
+            "vault": vault_key,
+            "filter": {
+                "workload_type": workload_type
+            },
+            "workload_items": items,
+            "items_by_workload_type": items_by_type,
+            "total_count": items.len(),
+            "protection_summary": {
+                "protected": protected_count,
+                "unprotected": unprotected_count
+            },
+            "message": if items.is_empty() {
+                "No workload items found. Register VMs and discover workloads first.".to_string()
+            } else {
+                format!("Found {} workload items ({} protected, {} unprotected)", 
+                       items.len(), protected_count, unprotected_count)
+            },
+            "workload_types_found": items_by_type.keys().collect::<Vec<_>>(),
+            "next_steps": if items.is_empty() {
+                vec![
+                    "Use recovery_services_register_vm_for_workload to register VMs",
+                    "Use recovery_services_discover_databases to find workloads",
+                    "Run this command again after registration"
+                ]
+            } else {
+                vec![
+                    "Review protection status of workload items",
+                    "Enable protection for unprotected items if needed",
+                    "Configure backup policies for protected items"
+                ]
+            }
+        }))
     }
 }

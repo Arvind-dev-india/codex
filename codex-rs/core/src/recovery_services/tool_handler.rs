@@ -30,6 +30,20 @@ pub async fn handle_recovery_services_tool_call(
             tools.test_connection(args).await
         },
         
+        // Discovery tools
+        "recovery_services_refresh_containers" => {
+            tools.refresh_containers(args).await
+        },
+        "recovery_services_list_protectable_containers" => {
+            tools.list_protectable_containers(args).await
+        },
+        "recovery_services_list_protectable_items" => {
+            tools.list_protectable_items_new(args).await
+        },
+        "recovery_services_list_workload_items" => {
+            tools.list_workload_items(args).await
+        },
+        
         // VM registration
         "recovery_services_register_vm" => {
             tools.register_vm(args).await
