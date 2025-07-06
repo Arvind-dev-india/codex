@@ -252,7 +252,45 @@ impl RecoveryServicesClient {
 
     /// Get vault properties
     pub async fn get_vault_properties(&self) -> Result<VaultInfo> {
-        let response = self.get_request("").await?;
+        let mut response = self.get_request("").await?;
+        
+        // Extract resource group and subscription ID from the vault ID if not already present
+        let id_string = response.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
+        
+        if let Some(id) = id_string {
+            // Parse subscription ID from ID: /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.RecoveryServices/vaults/{name}
+            if response.get("subscription_id").is_none() {
+                if let Some(sub_start) = id.find("/subscriptions/") {
+                    let sub_part = &id[sub_start + 14..]; // Skip "/subscriptions/"
+                    if let Some(sub_end) = sub_part.find('/') {
+                        let subscription_id = &sub_part[..sub_end];
+                        response["subscription_id"] = serde_json::Value::String(subscription_id.to_string());
+                    }
+                }
+            }
+            
+            // Parse resource group from ID if not already present
+            if response.get("resource_group").is_none() {
+                if let Some(rg_start) = id.find("/resourceGroups/") {
+                    let rg_part = &id[rg_start + 16..]; // Skip "/resourceGroups/"
+                    if let Some(rg_end) = rg_part.find('/') {
+                        let resource_group = &rg_part[..rg_end];
+                        response["resource_group"] = serde_json::Value::String(resource_group.to_string());
+                    }
+                }
+            }
+        }
+        
+        // If we still don't have resource_group, use the client's known resource group
+        if response.get("resource_group").is_none() {
+            response["resource_group"] = serde_json::Value::String(self.resource_group.clone());
+        }
+        
+        // If we still don't have subscription_id, use the client's known subscription ID
+        if response.get("subscription_id").is_none() {
+            response["subscription_id"] = serde_json::Value::String(self.subscription_id.clone());
+        }
+        
         serde_json::from_value(response).map_err(|e| {
             CodexErr::Other(format!("Failed to parse vault properties: {}", e))
         })
@@ -260,28 +298,38 @@ impl RecoveryServicesClient {
 
     /// List backup containers (registered VMs)
     pub async fn list_backup_containers(&self) -> Result<Vec<BackupContainer>> {
-        let endpoint = "/backupFabrics/Azure/protectionContainers";
+        // Try multiple backup management types since the endpoint requires this parameter
+        let backup_management_types = vec!["AzureIaasVM", "AzureWorkload", "AzureStorage", "MAB"];
+        let mut all_containers = Vec::new();
         
-        tracing::debug!("Listing backup containers with endpoint: {}", endpoint);
-        
-        let response = self.get_request(endpoint).await?;
-        
-        if let Some(containers_array) = response.get("value").and_then(|v| v.as_array()) {
-            let mut containers = Vec::new();
-            for container_json in containers_array {
-                match serde_json::from_value::<BackupContainer>(container_json.clone()) {
-                    Ok(container) => containers.push(container),
-                    Err(e) => {
-                        tracing::warn!("Failed to parse container info: {:?}, error: {}", container_json, e);
+        for backup_type in &backup_management_types {
+            let endpoint = format!("/backupProtectionContainers?$filter=backupManagementType eq '{}'", backup_type);
+            
+            tracing::debug!("Listing backup containers with endpoint: {} for type: {}", endpoint, backup_type);
+            
+            match self.get_request(&endpoint).await {
+                Ok(response) => {
+                    if let Some(containers_array) = response.get("value").and_then(|v| v.as_array()) {
+                        for container_json in containers_array {
+                            match serde_json::from_value::<BackupContainer>(container_json.clone()) {
+                                Ok(container) => all_containers.push(container),
+                                Err(e) => {
+                                    tracing::warn!("Failed to parse container info: {:?}, error: {}", container_json, e);
+                                }
+                            }
+                        }
+                        tracing::info!("Found {} backup containers for type {}", containers_array.len(), backup_type);
                     }
+                },
+                Err(e) => {
+                    tracing::debug!("Failed to list containers for backup type {}: {}", backup_type, e);
+                    // Continue with next backup type instead of failing completely
                 }
             }
-            tracing::info!("Found {} backup containers", containers.len());
-            Ok(containers)
-        } else {
-            tracing::warn!("No 'value' array found in containers response: {:?}", response);
-            Ok(Vec::new())
         }
+        
+        tracing::info!("Found total {} backup containers across all types", all_containers.len());
+        Ok(all_containers)
     }
 
     /// Register VM for backup
@@ -447,8 +495,24 @@ impl RecoveryServicesClient {
 
     /// Get vault configuration
     pub async fn get_vault_config(&self) -> Result<Value> {
-        let endpoint = "/backupconfig";
-        self.get_request(endpoint).await
+        // Use the correct endpoint for vault configuration with preview API version
+        let endpoint = "/backupconfig/vaultconfig";
+        
+        // Override API version for this specific endpoint that requires preview version
+        let url = format!("{}{}", self.get_base_url(), endpoint);
+        tracing::debug!("GET request to vault config: {}", url);
+
+        let response = self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", self.access_token))
+            .header("Content-Type", "application/json")
+            .query(&[("api-version", "2025-02-28-preview")])  // Use preview API version
+            .send()
+            .await
+            .map_err(|e| CodexErr::Other(format!("Failed to send GET request: {}", e)))?;
+
+        self.handle_response(response).await
     }
 
     /// Update vault configuration
