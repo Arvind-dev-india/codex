@@ -247,14 +247,15 @@ fn create_get_policy_details_tool() -> OpenAiTool {
 fn create_list_protectable_items_tool() -> OpenAiTool {
     let mut parameters = BTreeMap::new();
     parameters.insert("workload_type".to_string(), JsonSchema::String);
+    parameters.insert("backup_management_type".to_string(), JsonSchema::String);
     parameters.insert("server_name".to_string(), JsonSchema::String);
     parameters.insert("vault_name".to_string(), JsonSchema::String);
     
     create_function_tool(
         "recovery_services_list_protectable_items",
-        "List protectable items (databases, VMs, etc.) that can be backed up. Optional workload_type parameter supports: 'SAPAseDatabase' (SAP ASE databases), 'SAPHanaDatabase' (SAP HANA databases), 'SQLDataBase' (SQL Server databases), 'AnyDatabase' (generic databases), 'VM' (virtual machines), 'AzureFileShare' (file shares). You can also use simplified names like 'SAPASE', 'SAPHANA', 'SQL' which will be automatically mapped to the correct API format. If workload_type is not specified, lists all protectable items.",
+        "List protectable items (databases, VMs, etc.) that can be backed up. Required parameters: workload_type supports 'SAPAseDatabase', 'SAPHanaDatabase', 'SQLDataBase', 'VM', 'AzureFileShare', etc. backup_management_type should be 'AzureWorkload' for databases, 'AzureIaasVM' for VMs, 'AzureStorage' for file shares. Example: workload_type='SAPAseDatabase' and backup_management_type='AzureWorkload'. You can also use simplified names like 'SAPASE', 'SAPHANA', 'SQL' for workload_type.",
         parameters,
-        &[],
+        &["workload_type", "backup_management_type"],
     )
 }
 

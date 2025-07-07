@@ -428,17 +428,29 @@ fn create_get_policy_details_tool() -> Tool {
 fn create_list_protectable_items_tool() -> Tool {
     Tool {
         name: "recovery_services_list_protectable_items".to_string(),
-        description: Some("List protectable items (databases, VMs, etc.) that can be backed up. Supported workload types: 'SAPAseDatabase' (SAP ASE databases), 'SAPHanaDatabase' (SAP HANA databases), 'SQLDataBase' (SQL Server databases), 'AnyDatabase' (generic databases), 'VM' (virtual machines), 'AzureFileShare' (file shares). You can also use simplified names like 'SAPASE', 'SAPHANA', 'SQL' which will be automatically mapped to the correct API format.".to_string()),
+        description: Some("List protectable items (databases, VMs, etc.) that can be backed up. Required parameters: workload_type supports 'SAPAseDatabase', 'SAPHanaDatabase', 'SQLDataBase', 'VM', 'AzureFileShare', etc. backup_management_type should be 'AzureWorkload' for databases, 'AzureIaasVM' for VMs, 'AzureStorage' for file shares. Example: workload_type='SAPAseDatabase' and backup_management_type='AzureWorkload'. You can also use simplified names like 'SAPASE', 'SAPHANA', 'SQL' for workload_type.".to_string()),
         annotations: None,
         input_schema: ToolInputSchema {
             r#type: "object".to_string(),
             properties: Some(json!({
+                "workload_type": {
+                    "type": "string",
+                    "description": "Type of workload to list protectable items for. Supports: 'SAPAseDatabase', 'SAPHanaDatabase', 'SQLDataBase', 'VM', 'AzureFileShare', etc. You can also use simplified names like 'SAPASE', 'SAPHANA', 'SQL'."
+                },
+                "backup_management_type": {
+                    "type": "string", 
+                    "description": "Backup management type. Use 'AzureWorkload' for databases (SAP, SQL), 'AzureIaasVM' for virtual machines, 'AzureStorage' for file shares."
+                },
+                "server_name": {
+                    "type": "string",
+                    "description": "Optional server name to filter results"
+                },
                 "vault_name": {
                     "type": "string",
                     "description": "Name of the Recovery Services vault"
                 }
             })),
-            required: Some(vec!["vault_name".to_string()]),
+            required: Some(vec!["workload_type".to_string(), "backup_management_type".to_string()]),
         },
     }
 }

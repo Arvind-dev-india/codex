@@ -1099,15 +1099,30 @@ impl RecoveryServicesClient {
     }
 
     /// List protectable items (workloads/databases that can be protected) - new version
-    pub async fn list_protectable_items_new(&self, workload_type: Option<&str>) -> Result<Vec<Value>> {
+    pub async fn list_protectable_items_new(&self, workload_type: Option<&str>, backup_management_type: Option<&str>) -> Result<Vec<Value>> {
         let mut endpoint = "/backupProtectableItems".to_string();
         
-        // Add filter for workload type if specified
-        if let Some(workload) = workload_type {
-            endpoint.push_str(&format!("?$filter=workloadType eq '{}'", workload));
+        // Build filter - Azure API requires backupManagementType filter
+        let mut filters = Vec::new();
+        
+        // Add backup management type filter (required)
+        if let Some(backup_type) = backup_management_type {
+            filters.push(format!("backupManagementType eq '{}'", backup_type));
+        } else {
+            // Default to AzureWorkload if not specified
+            filters.push("backupManagementType eq 'AzureWorkload'".to_string());
         }
         
-        tracing::info!("Listing protectable items, workload type: {:?}", workload_type);
+        // Add workload type filter if specified
+        if let Some(workload) = workload_type {
+            filters.push(format!("workloadType eq '{}'", workload));
+        }
+        
+        if !filters.is_empty() {
+            endpoint.push_str(&format!("?$filter={}", filters.join(" and ")));
+        }
+        
+        tracing::info!("Listing protectable items, workload type: {:?}, backup management type: {:?}", workload_type, backup_management_type);
         tracing::info!("Using endpoint: {}", endpoint);
         
         // Use a custom request with the correct API version for this endpoint
@@ -1119,7 +1134,7 @@ impl RecoveryServicesClient {
             .get(&url)
             .header("Authorization", format!("Bearer {}", self.access_token))
             .header("Content-Type", "application/json")
-            .query(&[("api-version", "2025-02-01")])
+            .query(&[("api-version", "2018-01-10")])  // Use the API version from the example
             .send()
             .await
             .map_err(|e| CodexErr::Other(format!("Failed to send GET request: {}", e)))?;

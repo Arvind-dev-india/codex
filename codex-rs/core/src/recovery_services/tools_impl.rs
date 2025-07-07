@@ -537,14 +537,15 @@ impl RecoveryServicesTools {
         
         // Get workload type - support more types and use the exact API format
         let workload_type_str = args["workload_type"].as_str();
+        let backup_management_type_str = args["backup_management_type"].as_str();
         let server_name = args["server_name"].as_str();
         
-        tracing::info!("Listing protectable items for workload: {:?}, server: {:?}", workload_type_str, server_name);
+        tracing::info!("Listing protectable items for workload: {:?}, backup management type: {:?}, server: {:?}", 
+                      workload_type_str, backup_management_type_str, server_name);
         
-        // Use the new client method that supports optional workload type
-        let result = if let Some(workload) = workload_type_str {
-            // Map common workload type names to API format
-            let api_workload_type = match workload.to_uppercase().as_str() {
+        // Map common workload type names to API format
+        let api_workload_type = if let Some(workload) = workload_type_str {
+            match workload.to_uppercase().as_str() {
                 "SAPASE" | "SAPASEDATABASE" => "SAPAseDatabase",
                 "SAPHANA" | "SAPHANADATABASE" => "SAPHanaDatabase", 
                 "SQL" | "SQLDATABASE" => "SQLDataBase",
@@ -552,14 +553,22 @@ impl RecoveryServicesTools {
                 "VM" => "VM",
                 "AZUREFILESHARE" => "AzureFileShare",
                 _ => workload, // Use as-is if not in our mapping
-            };
-            
-            tracing::info!("Using workload type: {}", api_workload_type);
-            client.list_protectable_items_new(Some(api_workload_type)).await?
+            }
         } else {
-            tracing::info!("No workload type specified, listing all protectable items");
-            client.list_protectable_items_new(None).await?
+            return Err(crate::error::CodexErr::Other("workload_type parameter is required".to_string()));
         };
+        
+        // Map or validate backup management type
+        let api_backup_management_type = if let Some(backup_type) = backup_management_type_str {
+            backup_type
+        } else {
+            return Err(crate::error::CodexErr::Other("backup_management_type parameter is required".to_string()));
+        };
+        
+        tracing::info!("Using workload type: {}, backup management type: {}", api_workload_type, api_backup_management_type);
+        
+        // Use the new client method with both parameters
+        let result = client.list_protectable_items_new(Some(api_workload_type), Some(api_backup_management_type)).await?;
         
         // The result is already a Vec<Value> from the client method
         let items = result;
@@ -571,36 +580,25 @@ impl RecoveryServicesTools {
             "total_count": items.len(),
             "filter": {
                 "workload_type": workload_type_str,
+                "backup_management_type": backup_management_type_str,
                 "server_name": server_name
             },
             "api_details": {
-                "endpoint_used": if workload_type_str.is_some() { 
-                    format!("/backupProtectableItems?$filter=workloadType eq '{}'", workload_type_str.unwrap()) 
-                } else { 
-                    "/backupProtectableItems".to_string() 
-                },
-                "api_version": "2025-02-01",
-                "filters_applied": if workload_type_str.is_some() { 
-                    vec![format!("workloadType eq '{}'", workload_type_str.unwrap())] 
-                } else { 
-                    vec![] 
-                },
-                "curl_equivalent": if workload_type_str.is_some() {
-                    format!(
-                        "curl --location 'https://management.azure.com/subscriptions/{}/resourceGroups/{}/providers/Microsoft.RecoveryServices/vaults/{}/backupProtectableItems?api-version=2025-02-01&$filter=workloadType%20eq%20%27{}%27' --header 'authorization: Bearer {{token}}' --header 'accept: application/json'",
-                        self.config.subscription_id,
-                        self.config.resource_group,
-                        vault_name.unwrap_or(&self.config.vault_name),
-                        workload_type_str.unwrap()
-                    )
-                } else {
-                    format!(
-                        "curl --location 'https://management.azure.com/subscriptions/{}/resourceGroups/{}/providers/Microsoft.RecoveryServices/vaults/{}/backupProtectableItems?api-version=2025-02-01' --header 'authorization: Bearer {{token}}' --header 'accept: application/json'",
-                        self.config.subscription_id,
-                        self.config.resource_group,
-                        vault_name.unwrap_or(&self.config.vault_name)
-                    )
-                }
+                "endpoint_used": format!("/backupProtectableItems?$filter=backupManagementType eq '{}' and workloadType eq '{}'", 
+                                       api_backup_management_type, api_workload_type),
+                "api_version": "2018-01-10",
+                "filters_applied": vec![
+                    format!("backupManagementType eq '{}'", api_backup_management_type),
+                    format!("workloadType eq '{}'", api_workload_type)
+                ],
+                "curl_equivalent": format!(
+                    "curl --location 'https://management.azure.com/subscriptions/{}/resourceGroups/{}/providers/Microsoft.RecoveryServices/vaults/{}/backupProtectableItems?api-version=2018-01-10&$filter=backupManagementType%20eq%20%27{}%27%20and%20workloadType%20eq%20%27{}%27' --header 'authorization: Bearer {{token}}' --header 'accept: application/json'",
+                    self.config.subscription_id,
+                    self.config.resource_group,
+                    vault_name.unwrap_or(&self.config.vault_name),
+                    api_backup_management_type,
+                    api_workload_type
+                )
             },
             "message": if items.is_empty() {
                 "No protectable items found. Make sure VMs are registered and databases have been discovered using the inquire endpoint.".to_string()
