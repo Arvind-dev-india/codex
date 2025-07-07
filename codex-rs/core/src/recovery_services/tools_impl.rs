@@ -1637,18 +1637,24 @@ impl RecoveryServicesTools {
             });
             
             // Add helpful status interpretation
-            if let Some(status) = result.get("status").and_then(|s| s.as_str()) {
+            // Azure async operation responses can have status in different locations
+            let status = result.get("status").and_then(|s| s.as_str())
+                .or_else(|| result.get("properties").and_then(|p| p.get("status")).and_then(|s| s.as_str()))
+                .or_else(|| result.get("properties").and_then(|p| p.get("provisioningState")).and_then(|s| s.as_str()));
+            
+            if let Some(status) = status {
                 match status {
-                    "Succeeded" => {
+                    "Succeeded" | "Success" => {
                         response["message"] = json!("Operation completed successfully");
                         response["completed"] = json!(true);
+                        response["success"] = json!(true);
                     },
-                    "Failed" => {
+                    "Failed" | "Error" => {
                         response["message"] = json!("Operation failed");
                         response["completed"] = json!(true);
                         response["success"] = json!(false);
                     },
-                    "InProgress" | "Running" => {
+                    "InProgress" | "Running" | "Accepted" => {
                         response["message"] = json!("Operation is still in progress");
                         response["completed"] = json!(false);
                         response["recommendation"] = json!("Check again later or use wait_for_completion=true");
@@ -1659,7 +1665,20 @@ impl RecoveryServicesTools {
                     }
                 }
             } else {
-                response["message"] = json!("Could not determine operation status");
+                // If no status found, check if we have any error information
+                if let Some(error) = result.get("error") {
+                    response["message"] = json!(format!("Operation error: {}", error));
+                    response["completed"] = json!(true);
+                    response["success"] = json!(false);
+                } else {
+                    // Log the full response for debugging
+                    tracing::debug!("Could not determine operation status from response: {}", serde_json::to_string_pretty(&result).unwrap_or_default());
+                    response["message"] = json!("Could not determine operation status - check result for details");
+                    response["debug_info"] = json!({
+                        "note": "Status not found in expected locations (status, properties.status, properties.provisioningState)",
+                        "response_keys": result.as_object().map(|obj| obj.keys().collect::<Vec<_>>()).unwrap_or_default()
+                    });
+                }
             }
             
             Ok(response)

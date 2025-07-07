@@ -983,7 +983,34 @@ impl RecoveryServicesClient {
             .await
             .map_err(|e| CodexErr::Other(format!("Failed to track async operation: {}", e)))?;
 
-        self.handle_response(response).await
+        let mut result = self.handle_response(response).await?;
+        
+        // Azure async operations can return different response formats
+        // Sometimes the status is in the root, sometimes in properties
+        // Let's normalize the response to make it easier to parse
+        if result.get("status").is_none() {
+            // Check if status is in properties
+            if let Some(properties) = result.get("properties") {
+                if let Some(status) = properties.get("status") {
+                    result["status"] = status.clone();
+                } else if let Some(provisioning_state) = properties.get("provisioningState") {
+                    result["status"] = provisioning_state.clone();
+                }
+            }
+        }
+        
+        // Add additional debugging information
+        result["_debug"] = json!({
+            "location_url": location_url,
+            "response_structure": {
+                "has_status": result.get("status").is_some(),
+                "has_properties": result.get("properties").is_some(),
+                "has_error": result.get("error").is_some(),
+                "top_level_keys": result.as_object().map(|obj| obj.keys().collect::<Vec<_>>()).unwrap_or_default()
+            }
+        });
+        
+        Ok(result)
     }
 
     /// Check if an async operation is complete and get final result
@@ -994,18 +1021,22 @@ impl RecoveryServicesClient {
         loop {
             let status_result = self.track_async_operation(location_url).await?;
             
-            // Check if operation is complete
-            if let Some(status) = status_result.get("status").and_then(|s| s.as_str()) {
+            // Check if operation is complete - use the same logic as track_async_operation
+            let status = status_result.get("status").and_then(|s| s.as_str())
+                .or_else(|| status_result.get("properties").and_then(|p| p.get("status")).and_then(|s| s.as_str()))
+                .or_else(|| status_result.get("properties").and_then(|p| p.get("provisioningState")).and_then(|s| s.as_str()));
+            
+            if let Some(status) = status {
                 match status {
-                    "Succeeded" => {
+                    "Succeeded" | "Success" => {
                         tracing::info!("Async operation completed successfully");
                         return Ok(status_result);
                     },
-                    "Failed" => {
+                    "Failed" | "Error" => {
                         tracing::error!("Async operation failed: {:?}", status_result);
                         return Err(CodexErr::Other(format!("Async operation failed: {:?}", status_result)));
                     },
-                    "InProgress" | "Running" => {
+                    "InProgress" | "Running" | "Accepted" => {
                         tracing::debug!("Async operation still in progress...");
                         // Continue waiting
                     },
@@ -1013,6 +1044,8 @@ impl RecoveryServicesClient {
                         tracing::warn!("Unknown async operation status: {}", status);
                     }
                 }
+            } else {
+                tracing::debug!("No status found in async operation response: {:?}", status_result);
             }
             
             // Check timeout
