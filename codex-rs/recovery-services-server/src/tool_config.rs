@@ -15,6 +15,7 @@ pub fn create_recovery_services_tools() -> Vec<Tool> {
         create_list_protectable_containers_tool(),
         create_list_protectable_items_tool(),
         create_list_workload_items_tool(),
+        create_inquire_workload_databases_tool(),
         
         // VM registration
         create_register_vm_tool(),
@@ -49,6 +50,51 @@ pub fn create_recovery_services_tools() -> Vec<Tool> {
         // Utility tools
         create_clear_auth_cache_tool(),
     ]
+}
+
+/// Create the inquire_workload_databases tool definition
+fn create_inquire_workload_databases_tool() -> Tool {
+    Tool {
+        name: "recovery_services_inquire_workload_databases".to_string(),
+        description: Some("Discover databases for a specific workload type using the Azure Recovery Services inquire endpoint. You can either provide vm_name and vm_resource_group (recommended) to auto-generate the container name, OR provide the container_name directly. The tool will automatically format the container name as 'VMAppContainer;compute;RESOURCE_GROUP;VM_NAME'. Supported workload types: 'SAPAseDatabase' (SAP ASE databases), 'SAPHanaDatabase' (SAP HANA databases), 'SQLDataBase' (SQL Server databases), 'AnyDatabase' (generic databases), 'VM' (virtual machines), 'AzureFileShare' (file shares), 'Exchange' (Exchange servers), 'Sharepoint' (SharePoint servers). This implements the POST /inquire endpoint with workload type filtering to discover databases.".to_string()),
+        annotations: None,
+        input_schema: ToolInputSchema {
+            r#type: "object".to_string(),
+            properties: Some(json!({
+                "vm_name": {
+                    "type": "string",
+                    "description": "VM name (e.g., 'aseecyvm1') - used to auto-generate container name. Either provide this with vm_resource_group, OR provide container_name directly."
+                },
+                "vm_resource_group": {
+                    "type": "string", 
+                    "description": "VM resource group (e.g., 'ASERG') - used to auto-generate container name. Required when using vm_name."
+                },
+                "workload_type": {
+                    "type": "string",
+                    "description": "The workload type to discover databases for",
+                    "enum": [
+                        "SAPAseDatabase",
+                        "SAPHanaDatabase", 
+                        "SQLDataBase",
+                        "AnyDatabase",
+                        "VM",
+                        "AzureFileShare",
+                        "Exchange",
+                        "Sharepoint"
+                    ]
+                },
+                "vault_name": {
+                    "type": "string",
+                    "description": "Name of the Recovery Services vault (optional, uses default from config if not specified)"
+                },
+                "container_name": {
+                    "type": "string",
+                    "description": "Protection container name in format 'VMAppContainer;compute;RESOURCE_GROUP;VM_NAME' (optional, auto-generated from vm_name and vm_resource_group if not provided)"
+                }
+            })),
+            required: Some(vec!["workload_type".to_string()]),
+        },
+    }
 }
 
 /// Create the list_vaults tool definition
@@ -382,7 +428,7 @@ fn create_get_policy_details_tool() -> Tool {
 fn create_list_protectable_items_tool() -> Tool {
     Tool {
         name: "recovery_services_list_protectable_items".to_string(),
-        description: Some("List items that can be protected (backed up) in a vault".to_string()),
+        description: Some("List protectable items (databases, VMs, etc.) that can be backed up. Supported workload types: 'SAPAseDatabase' (SAP ASE databases), 'SAPHanaDatabase' (SAP HANA databases), 'SQLDataBase' (SQL Server databases), 'AnyDatabase' (generic databases), 'VM' (virtual machines), 'AzureFileShare' (file shares). You can also use simplified names like 'SAPASE', 'SAPHANA', 'SQL' which will be automatically mapped to the correct API format.".to_string()),
         annotations: None,
         input_schema: ToolInputSchema {
             r#type: "object".to_string(),

@@ -1108,14 +1108,29 @@ impl RecoveryServicesClient {
         }
         
         tracing::info!("Listing protectable items, workload type: {:?}", workload_type);
+        tracing::info!("Using endpoint: {}", endpoint);
         
-        let response = self.get_request(&endpoint).await?;
+        // Use a custom request with the correct API version for this endpoint
+        let url = format!("{}{}", self.get_base_url(), endpoint);
+        tracing::debug!("GET request to: {}", url);
+
+        let response = self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", self.access_token))
+            .header("Content-Type", "application/json")
+            .query(&[("api-version", "2025-02-01")])
+            .send()
+            .await
+            .map_err(|e| CodexErr::Other(format!("Failed to send GET request: {}", e)))?;
+
+        let json_response = self.handle_response(response).await?;
         
-        if let Some(items_array) = response.get("value").and_then(|v| v.as_array()) {
+        if let Some(items_array) = json_response.get("value").and_then(|v| v.as_array()) {
             tracing::info!("Found {} protectable items", items_array.len());
             Ok(items_array.clone())
         } else {
-            tracing::warn!("No 'value' array found in protectable items response: {:?}", response);
+            tracing::warn!("No 'value' array found in protectable items response: {:?}", json_response);
             Ok(Vec::new())
         }
     }
@@ -1141,4 +1156,36 @@ impl RecoveryServicesClient {
             Ok(Vec::new())
         }
     }
+
+    /// Discover databases for a specific workload type using the inquire endpoint
+    /// This matches the curl example: POST .../inquire?$filter=workloadType eq 'SAPAseDatabase'
+    pub async fn inquire_workload_databases(&self, container_name: &str, workload_type: &str) -> Result<Value> {
+        let endpoint = format!("/backupFabrics/Azure/protectionContainers/{}/inquire", container_name);
+        
+        tracing::info!("Inquiring workload databases for container: {}, workload type: {}", container_name, workload_type);
+        
+        // Build the URL with query parameters
+        let url = format!("{}{}", self.get_base_url(), endpoint);
+        
+        // Create an empty JSON body for the POST request
+        let body = json!({});
+        
+        let response = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.access_token))
+            .header("Content-Type", "application/json")
+            .header("Content-Length", "2") // Empty JSON object "{}" has length 2
+            .query(&[
+                ("api-version", "2018-01-10"),
+                ("$filter", &format!("workloadType eq '{}'", workload_type))
+            ])
+            .json(&body) // This will automatically set Content-Length
+            .send()
+            .await
+            .map_err(|e| CodexErr::Other(format!("Failed to send inquire request: {}", e)))?;
+
+        self.handle_response(response).await
+    }
+
 }

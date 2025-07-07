@@ -201,6 +201,15 @@ pub async fn handle_recovery_services_tool_call(
             tools.restore_files(vault_name, vm_name, vm_resource_group, recovery_point_id, file_paths, target_storage_account).await
         },
         
+        // Database workload tools
+        "recovery_services_discover_databases" => {
+            // This is a placeholder - the actual implementation may need to be added to tools_impl.rs
+            Err(CodexErr::Other("discover_databases method not yet implemented in tools_impl.rs".to_string()))
+        },
+        "recovery_services_inquire_workload_databases" => {
+            tools.inquire_workload_databases(args).await
+        },
+        
         // Utility tools
         "recovery_services_clear_auth_cache" => {
             tools.clear_auth_cache(args).await

@@ -532,39 +532,80 @@ impl RecoveryServicesTools {
 
     /// List protectable items
     pub async fn list_protectable_items(&self, args: Value) -> Result<Value> {
-        let workload_type = if let Some(wl_str) = args["workload_type"].as_str() {
-            match wl_str {
-                "SAPHANA" => Some(WorkloadType::SapHanaDatabase),
-                "SQLDataBase" => Some(WorkloadType::SqlDatabase),
-                _ => return Err(CodexErr::Other("workload_type must be 'SAPHANA' or 'SQLDataBase'".to_string())),
-            }
-        } else {
-            None
-        };
-        
-        let server_name = args["server_name"].as_str();
         let vault_name = args["vault_name"].as_str();
         let client = self.get_client(vault_name)?;
         
-        tracing::info!("Listing protectable items for workload: {:?}, server: {:?}", workload_type, server_name);
+        // Get workload type - support more types and use the exact API format
+        let workload_type_str = args["workload_type"].as_str();
+        let server_name = args["server_name"].as_str();
         
-        let items = client.list_protectable_items(workload_type.clone()).await?;
+        tracing::info!("Listing protectable items for workload: {:?}, server: {:?}", workload_type_str, server_name);
         
-        // Filter by server name if provided
-        let filtered_items: Vec<_> = if let Some(server) = server_name {
-            items.into_iter()
-                .filter(|item| item.properties.server_name == server)
-                .collect()
+        // Use the new client method that supports optional workload type
+        let result = if let Some(workload) = workload_type_str {
+            // Map common workload type names to API format
+            let api_workload_type = match workload.to_uppercase().as_str() {
+                "SAPASE" | "SAPASEDATABASE" => "SAPAseDatabase",
+                "SAPHANA" | "SAPHANADATABASE" => "SAPHanaDatabase", 
+                "SQL" | "SQLDATABASE" => "SQLDataBase",
+                "ANYDATABASE" => "AnyDatabase",
+                "VM" => "VM",
+                "AZUREFILESHARE" => "AzureFileShare",
+                _ => workload, // Use as-is if not in our mapping
+            };
+            
+            tracing::info!("Using workload type: {}", api_workload_type);
+            client.list_protectable_items_new(Some(api_workload_type)).await?
         } else {
-            items
+            tracing::info!("No workload type specified, listing all protectable items");
+            client.list_protectable_items_new(None).await?
         };
         
+        // The result is already a Vec<Value> from the client method
+        let items = result;
+        
+        tracing::info!("Found {} protectable items", items.len());
+        
         Ok(json!({
-            "protectable_items": filtered_items,
-            "total_count": filtered_items.len(),
+            "protectable_items": items,
+            "total_count": items.len(),
             "filter": {
-                "workload_type": workload_type,
+                "workload_type": workload_type_str,
                 "server_name": server_name
+            },
+            "api_details": {
+                "endpoint_used": if workload_type_str.is_some() { 
+                    format!("/backupProtectableItems?$filter=workloadType eq '{}'", workload_type_str.unwrap()) 
+                } else { 
+                    "/backupProtectableItems".to_string() 
+                },
+                "api_version": "2025-02-01",
+                "filters_applied": if workload_type_str.is_some() { 
+                    vec![format!("workloadType eq '{}'", workload_type_str.unwrap())] 
+                } else { 
+                    vec![] 
+                },
+                "curl_equivalent": if workload_type_str.is_some() {
+                    format!(
+                        "curl --location 'https://management.azure.com/subscriptions/{}/resourceGroups/{}/providers/Microsoft.RecoveryServices/vaults/{}/backupProtectableItems?api-version=2025-02-01&$filter=workloadType%20eq%20%27{}%27' --header 'authorization: Bearer {{token}}' --header 'accept: application/json'",
+                        self.config.subscription_id,
+                        self.config.resource_group,
+                        vault_name.unwrap_or(&self.config.vault_name),
+                        workload_type_str.unwrap()
+                    )
+                } else {
+                    format!(
+                        "curl --location 'https://management.azure.com/subscriptions/{}/resourceGroups/{}/providers/Microsoft.RecoveryServices/vaults/{}/backupProtectableItems?api-version=2025-02-01' --header 'authorization: Bearer {{token}}' --header 'accept: application/json'",
+                        self.config.subscription_id,
+                        self.config.resource_group,
+                        vault_name.unwrap_or(&self.config.vault_name)
+                    )
+                }
+            },
+            "message": if items.is_empty() {
+                "No protectable items found. Make sure VMs are registered and databases have been discovered using the inquire endpoint.".to_string()
+            } else {
+                format!("Found {} protectable items", items.len())
             }
         }))
     }
@@ -1851,5 +1892,166 @@ impl RecoveryServicesTools {
                 ]
             }
         }))
+    }
+
+    /// Inquire workload databases using the /inquire endpoint
+    pub async fn inquire_workload_databases(&self, args: Value) -> Result<Value> {
+        let workload_type = args["workload_type"].as_str().ok_or_else(|| {
+            CodexErr::Other("workload_type parameter is required".to_string())
+        })?;
+        
+        // Generate container name from VM details or use provided container name
+        let container_name = if let Some(provided_container) = args["container_name"].as_str() {
+            // Use provided container name directly
+            provided_container.to_string()
+        } else {
+            // Generate container name from VM name and resource group
+            let vm_name = args["vm_name"].as_str().ok_or_else(|| {
+                CodexErr::Other("Either container_name OR (vm_name and vm_resource_group) parameters are required".to_string())
+            })?;
+            
+            let vm_resource_group = args["vm_resource_group"].as_str().ok_or_else(|| {
+                CodexErr::Other("vm_resource_group parameter is required when using vm_name".to_string())
+            })?;
+            
+            // Format: VMAppContainer;compute;RESOURCE_GROUP;VM_NAME
+            format!("VMAppContainer;compute;{};{}", vm_resource_group, vm_name)
+        };
+        
+        let vault_name = args["vault_name"].as_str();
+        let client = self.get_client(vault_name)?;
+        
+        let vault_key = vault_name.unwrap_or("default");
+        
+        tracing::info!("Inquiring workload databases for container: {}, workload type: {}, vault: {}", 
+                      container_name, workload_type, vault_key);
+        
+        // Log how the container name was determined
+        if args["container_name"].as_str().is_some() {
+            tracing::info!("Using provided container name: {}", container_name);
+        } else {
+            tracing::info!("Auto-generated container name from VM details: {}", container_name);
+        }
+        
+        // Validate workload type
+        let valid_workload_types = vec![
+            "SAPAseDatabase", "SAPHanaDatabase", "SQLDataBase", "AnyDatabase",
+            "VM", "AzureFileShare", "Exchange", "Sharepoint"
+        ];
+        
+        if !valid_workload_types.contains(&workload_type) {
+            return Err(CodexErr::Other(format!(
+                "Invalid workload type: {}. Valid types are: {}", 
+                workload_type, valid_workload_types.join(", ")
+            )));
+        }
+        
+        let result = client.inquire_workload_databases(&container_name, workload_type).await?;
+        
+        let mut response = json!({
+            "vault": vault_key,
+            "container_name": container_name,
+            "workload_type": workload_type,
+            "operation": "inquire_workload_databases",
+            "container_generation": {
+                "auto_generated": args["container_name"].as_str().is_none(),
+                "vm_name": args["vm_name"].as_str(),
+                "vm_resource_group": args["vm_resource_group"].as_str(),
+                "format": "VMAppContainer;compute;RESOURCE_GROUP;VM_NAME"
+            },
+            "result": result,
+            "api_reference": {
+                "method": "POST",
+                "endpoint": format!("/subscriptions/{}/resourceGroups/{}/providers/Microsoft.RecoveryServices/vaults/{}/backupFabrics/Azure/protectionContainers/{}/inquire", 
+                                  self.config.subscription_id, self.config.resource_group, 
+                                  vault_name.unwrap_or(&self.config.vault_name), container_name),
+                "query_parameters": {
+                    "api-version": "2018-01-10",
+                    "$filter": format!("workloadType eq '{}'", workload_type)
+                },
+                "description": "This endpoint discovers databases for the specified workload type within the container"
+            }
+        });
+        
+        // Handle async operation if needed
+        if let Some(async_op) = result.get("async_operation") {
+            response["status"] = json!("async_operation_initiated");
+            response["async_operation"] = async_op.clone();
+            response["message"] = json!(format!("Database discovery for {} workload type initiated. This may take a few moments to complete.", workload_type));
+            
+            if let Some(location) = async_op.get("location_header").and_then(|l| l.as_str()) {
+                response["tracking_info"] = json!({
+                    "message": "Database discovery operation is running asynchronously. Use recovery_services_track_async_operation to check status.",
+                    "location_url": location,
+                    "recommended_action": format!("Call recovery_services_track_async_operation with location_url: {}", location)
+                });
+                
+                // Try to get initial status
+                tracing::info!("Checking initial status of database discovery operation...");
+                match client.track_async_operation(location).await {
+                    Ok(status) => {
+                        response["initial_status_check"] = status.clone();
+                        if let Some(op_status) = status.get("status").and_then(|s| s.as_str()) {
+                            match op_status {
+                                "Succeeded" => {
+                                    response["status"] = json!("completed");
+                                    response["message"] = json!(format!("Database discovery for {} completed successfully", workload_type));
+                                },
+                                "Failed" => {
+                                    response["status"] = json!("failed");
+                                    response["message"] = json!(format!("Database discovery for {} failed", workload_type));
+                                },
+                                _ => {
+                                    response["status"] = json!("in_progress");
+                                    response["message"] = json!(format!("Database discovery for {} is in progress", workload_type));
+                                }
+                            }
+                        }
+                    },
+                    Err(e) => {
+                        tracing::warn!("Failed to check initial async operation status: {}", e);
+                        response["initial_status_check_error"] = json!(format!("Could not check initial status: {}", e));
+                    }
+                }
+            }
+        } else {
+            response["status"] = json!("completed");
+            response["message"] = json!(format!("Database discovery for {} completed successfully", workload_type));
+        }
+        
+        // Add helpful information about next steps
+        response["next_steps"] = json!([
+            "After discovery completes, use recovery_services_list_protectable_items to see discovered databases",
+            "Use recovery_services_enable_database_protection to protect discovered databases",
+            "Check the result for any discovered database instances"
+        ]);
+        
+        response["usage_example"] = json!({
+            "description": "This tool implements the Azure Recovery Services inquire endpoint for database discovery",
+            "curl_equivalent": format!(
+                "curl -X POST 'https://management.azure.com/subscriptions/{}/resourceGroups/{}/providers/Microsoft.RecoveryServices/vaults/{}/backupFabrics/Azure/protectionContainers/{}/inquire?api-version=2018-01-10&$filter=workloadType%20eq%20%27{}%27' -H 'Authorization: Bearer {{token}}' -H 'Content-Type: application/json'",
+                self.config.subscription_id, self.config.resource_group, 
+                vault_name.unwrap_or(&self.config.vault_name), container_name, workload_type
+            ),
+            "recommended_usage": {
+                "vm_name": "aseecyvm1",
+                "vm_resource_group": "ASERG", 
+                "workload_type": "SAPAseDatabase",
+                "vault_name": "aseecyvault-donotdelete"
+            },
+            "alternative_usage": {
+                "container_name": "VMAppContainer;compute;ASERG;aseecyvm1",
+                "workload_type": "SAPAseDatabase",
+                "vault_name": "aseecyvault-donotdelete"
+            },
+            "common_workload_types": {
+                "SAPAseDatabase": "SAP ASE databases",
+                "SAPHanaDatabase": "SAP HANA databases", 
+                "SQLDataBase": "SQL Server databases",
+                "AnyDatabase": "Generic database workloads"
+            }
+        });
+        
+        Ok(response)
     }
 }

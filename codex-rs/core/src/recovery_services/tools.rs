@@ -46,6 +46,7 @@ pub fn create_recovery_services_tools() -> Vec<OpenAiTool> {
         
         // Database workload tools
         create_discover_databases_tool(),
+        create_inquire_workload_databases_tool(),
         create_register_vm_for_workload_tool(),
         create_reregister_container_tool(),
         create_unregister_container_tool(),
@@ -251,7 +252,7 @@ fn create_list_protectable_items_tool() -> OpenAiTool {
     
     create_function_tool(
         "recovery_services_list_protectable_items",
-        "List databases available for backup protection, optionally filtered by workload type and server",
+        "List protectable items (databases, VMs, etc.) that can be backed up. Optional workload_type parameter supports: 'SAPAseDatabase' (SAP ASE databases), 'SAPHanaDatabase' (SAP HANA databases), 'SQLDataBase' (SQL Server databases), 'AnyDatabase' (generic databases), 'VM' (virtual machines), 'AzureFileShare' (file shares). You can also use simplified names like 'SAPASE', 'SAPHANA', 'SQL' which will be automatically mapped to the correct API format. If workload_type is not specified, lists all protectable items.",
         parameters,
         &[],
     )
@@ -451,6 +452,23 @@ fn create_discover_databases_tool() -> OpenAiTool {
         "Discover databases on a registered VM for backup protection",
         parameters,
         &["server_name", "workload_type"],
+    )
+}
+
+/// Create a tool for inquiring workload databases using the /inquire endpoint
+fn create_inquire_workload_databases_tool() -> OpenAiTool {
+    let mut parameters = BTreeMap::new();
+    parameters.insert("vm_name".to_string(), JsonSchema::String);
+    parameters.insert("vm_resource_group".to_string(), JsonSchema::String);
+    parameters.insert("workload_type".to_string(), JsonSchema::String);
+    parameters.insert("vault_name".to_string(), JsonSchema::String);
+    parameters.insert("container_name".to_string(), JsonSchema::String);
+    
+    create_function_tool(
+        "recovery_services_inquire_workload_databases",
+        "Discover databases for a specific workload type using the Azure Recovery Services inquire endpoint. You can either provide vm_name and vm_resource_group (recommended) to auto-generate the container name, OR provide the container_name directly. The tool will automatically format the container name as 'VMAppContainer;compute;RESOURCE_GROUP;VM_NAME'. Supported workload types: 'SAPAseDatabase' (SAP ASE databases), 'SAPHanaDatabase' (SAP HANA databases), 'SQLDataBase' (SQL Server databases), 'AnyDatabase' (generic databases), 'VM' (virtual machines), 'AzureFileShare' (file shares), 'Exchange' (Exchange servers), 'Sharepoint' (SharePoint servers). This implements the POST /inquire endpoint with workload type filtering to discover databases.",
+        parameters,
+        &["workload_type"],
     )
 }
 
