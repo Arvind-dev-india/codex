@@ -137,15 +137,7 @@ pub async fn handle_recovery_services_tool_call(
         
         // Recovery operations
         "recovery_services_list_recovery_points" => {
-            let vault_name = args["vault_name"].as_str().unwrap_or("default");
-            let vm_name = args["vm_name"].as_str().ok_or_else(|| {
-                CodexErr::Other("vm_name parameter is required".to_string())
-            })?;
-            let vm_resource_group = args["vm_resource_group"].as_str().ok_or_else(|| {
-                CodexErr::Other("vm_resource_group parameter is required".to_string())
-            })?;
-            let filter = args["filter"].as_str();
-            tools.list_recovery_points(vault_name, vm_name, vm_resource_group, filter).await
+            tools.list_recovery_points_new(args).await
         },
         "recovery_services_restore_vm" => {
             let vault_name = args["vault_name"].as_str().unwrap_or("default");

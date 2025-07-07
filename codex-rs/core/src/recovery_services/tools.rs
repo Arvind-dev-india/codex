@@ -384,16 +384,21 @@ fn create_get_backup_summary_tool() -> OpenAiTool {
 /// Create a tool for listing recovery points
 fn create_list_recovery_points_tool() -> OpenAiTool {
     let mut parameters = BTreeMap::new();
-    parameters.insert("item_name".to_string(), JsonSchema::String);
-    parameters.insert("server_name".to_string(), JsonSchema::String);
-    parameters.insert("time_range_days".to_string(), JsonSchema::Number);
     parameters.insert("vault_name".to_string(), JsonSchema::String);
+    parameters.insert("container_name".to_string(), JsonSchema::String);
+    parameters.insert("item_name".to_string(), JsonSchema::String);
+    parameters.insert("vm_name".to_string(), JsonSchema::String);
+    parameters.insert("vm_resource_group".to_string(), JsonSchema::String);
+    parameters.insert("backup_management_type".to_string(), JsonSchema::String);
+    parameters.insert("start_date".to_string(), JsonSchema::String);
+    parameters.insert("end_date".to_string(), JsonSchema::String);
+    parameters.insert("time_range_days".to_string(), JsonSchema::Number);
     
     create_function_tool(
         "recovery_services_list_recovery_points",
-        "List available recovery points for a protected database",
+        "List available recovery points for protected VMs or workloads (databases). For workload backups: provide container_name and item_name (e.g., container_name='VMAppContainer;compute;ASERG;aseecyvm1', item_name='SAPAseDatabase;azu;azu'). For VM backups: provide vm_name and vm_resource_group. Optional: backup_management_type ('AzureWorkload' for databases, 'AzureIaasVM' for VMs), start_date/end_date in format '2019-01-01 05:23:52 AM', or time_range_days for recent points.",
         parameters,
-        &["item_name", "server_name"],
+        &[],
     )
 }
 

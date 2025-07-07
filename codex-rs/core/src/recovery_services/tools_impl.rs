@@ -2284,4 +2284,127 @@ impl RecoveryServicesTools {
         let async_response = self.handle_async_operation(base_response, "Trigger backup", &client).await;
         Ok(async_response)
     }
+
+    /// List recovery points for workloads (databases) or VMs - new implementation
+    pub async fn list_recovery_points_new(&self, args: Value) -> Result<Value> {
+        let vault_name = args["vault_name"].as_str();
+        let client = self.get_client(vault_name)?;
+        
+        // Get parameters for both VM and workload scenarios
+        let container_name = args["container_name"].as_str();
+        let item_name = args["item_name"].as_str();
+        let vm_name = args["vm_name"].as_str();
+        let vm_resource_group = args["vm_resource_group"].as_str();
+        let backup_management_type = args["backup_management_type"].as_str();
+        let start_date = args["start_date"].as_str();
+        let end_date = args["end_date"].as_str();
+        let time_range_days = args["time_range_days"].as_u64().unwrap_or(30);
+        
+        tracing::info!("Listing recovery points - container: {:?}, item: {:?}, vm: {:?}/{:?}", 
+                      container_name, item_name, vm_name, vm_resource_group);
+        
+        // Determine the final container name and item name
+        let (final_container_name, final_item_name) = if let (Some(container), Some(item)) = (container_name, item_name) {
+            // Workload backup scenario - use provided container and item names
+            (container.to_string(), item.to_string())
+        } else if let (Some(vm), Some(rg)) = (vm_name, vm_resource_group) {
+            // VM backup scenario - generate container and item names
+            let backup_type = backup_management_type.unwrap_or("AzureIaasVM");
+            if backup_type == "AzureWorkload" {
+                // Workload backup on VM
+                (format!("VMAppContainer;compute;{};{}", rg, vm), 
+                 item_name.unwrap_or(&format!("Unknown;{};{}", rg, vm)).to_string())
+            } else {
+                // Standard VM backup
+                (format!("iaasvmcontainer;iaasvmcontainerv2;{};{}", rg, vm),
+                 format!("vm;iaasvmcontainerv2;{};{}", rg, vm))
+            }
+        } else {
+            return Err(CodexErr::Other("Either (container_name AND item_name) OR (vm_name AND vm_resource_group) must be provided".to_string()));
+        };
+        
+        // Build the API endpoint
+        let endpoint = format!("/backupFabrics/Azure/protectionContainers/{}/protectedItems/{}/recoveryPoints", 
+                              final_container_name, final_item_name);
+        
+        // Build filter for date range
+        let mut filters = Vec::new();
+        
+        if let (Some(start), Some(end)) = (start_date, end_date) {
+            // Use provided date range
+            filters.push(format!("startDate eq '{}'", start));
+            filters.push(format!("endDate eq '{}'", end));
+        } else {
+            // Use time_range_days to calculate date range
+            let end_time = chrono::Utc::now();
+            let start_time = end_time - chrono::Duration::days(time_range_days as i64);
+            
+            // Format dates as required by Azure API: '2019-01-01 05:23:52 AM'
+            let start_formatted = start_time.format("%Y-%m-%d %I:%M:%S %p").to_string();
+            let end_formatted = end_time.format("%Y-%m-%d %I:%M:%S %p").to_string();
+            
+            filters.push(format!("startDate eq '{}'", start_formatted));
+            filters.push(format!("endDate eq '{}'", end_formatted));
+        }
+        
+        // Build the full URL with query parameters
+        let mut full_endpoint = endpoint.clone();
+        if !filters.is_empty() {
+            full_endpoint.push_str(&format!("?$filter={}", filters.join(" and ")));
+        }
+        
+        tracing::info!("Making GET request to list recovery points");
+        tracing::info!("Endpoint: {}", full_endpoint);
+        
+        // Use the client's list_recovery_points method
+        let filter_string = if !filters.is_empty() { 
+            Some(filters.join(" and ")) 
+        } else { 
+            None 
+        };
+        let recovery_points_result = client.list_recovery_points(&final_container_name, &final_item_name, 
+            filter_string.as_deref()).await?;
+        
+        // Convert RecoveryPoint structs to JSON values for consistent response format
+        let recovery_points: Vec<Value> = recovery_points_result.into_iter()
+            .map(|rp| serde_json::to_value(rp).unwrap_or_else(|_| json!({})))
+            .collect();
+        
+        tracing::info!("Found {} recovery points", recovery_points.len());
+        
+        Ok(json!({
+            "recovery_points": recovery_points,
+            "total_count": recovery_points.len(),
+            "container_name": final_container_name,
+            "item_name": final_item_name,
+            "filter": {
+                "start_date": start_date,
+                "end_date": end_date,
+                "time_range_days": time_range_days,
+                "backup_management_type": backup_management_type
+            },
+            "api_reference": {
+                "method": "GET",
+                "endpoint": format!("/subscriptions/{}/resourceGroups/{}/providers/Microsoft.RecoveryServices/vaults/{}/backupFabrics/Azure/protectionContainers/{}/protectedItems/{}/recoveryPoints", 
+                                  self.config.subscription_id, self.config.resource_group, 
+                                  vault_name.unwrap_or(&self.config.vault_name), final_container_name, final_item_name),
+                "api_version": "2018-01-10",
+                "filters_applied": filters
+            },
+            "curl_equivalent": format!(
+                "curl --location 'https://management.azure.com/subscriptions/{}/resourceGroups/{}/providers/Microsoft.RecoveryServices/vaults/{}/backupFabrics/Azure/protectionContainers/{}/protectedItems/{}/recoveryPoints?api-version=2018-01-10&{}' --header 'authorization: Bearer {{token}}' --header 'accept: application/json'",
+                self.config.subscription_id,
+                self.config.resource_group,
+                vault_name.unwrap_or(&self.config.vault_name),
+                final_container_name,
+                final_item_name,
+                if !filters.is_empty() { format!("$filter={}", filters.join("%20and%20")) } else { String::new() }
+            ),
+            "message": if recovery_points.is_empty() {
+                "No recovery points found. Make sure the item is protected and has backup history.".to_string()
+            } else {
+                format!("Found {} recovery points", recovery_points.len())
+            }
+        }))
+    }
 }

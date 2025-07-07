@@ -719,7 +719,7 @@ fn create_cancel_job_tool() -> Tool {
 fn create_list_recovery_points_tool() -> Tool {
     Tool {
         name: "recovery_services_list_recovery_points".to_string(),
-        description: Some("List available recovery points for a protected virtual machine".to_string()),
+        description: Some("List available recovery points for protected VMs or workloads (databases). For workload backups: provide container_name and item_name (e.g., container_name='VMAppContainer;compute;ASERG;aseecyvm1', item_name='SAPAseDatabase;azu;azu'). For VM backups: provide vm_name and vm_resource_group. Optional: backup_management_type ('AzureWorkload' for databases, 'AzureIaasVM' for VMs), start_date/end_date in format '2019-01-01 05:23:52 AM', or time_range_days for recent points.".to_string()),
         annotations: None,
         input_schema: ToolInputSchema {
             r#type: "object".to_string(),
@@ -728,16 +728,44 @@ fn create_list_recovery_points_tool() -> Tool {
                     "type": "string",
                     "description": "Name of the Recovery Services vault"
                 },
+                "container_name": {
+                    "type": "string",
+                    "description": "Container name for workload backups (e.g., 'VMAppContainer;compute;ASERG;aseecyvm1'). Either provide this with item_name OR vm_name+vm_resource_group."
+                },
+                "item_name": {
+                    "type": "string",
+                    "description": "Protected item name for workload backups (e.g., 'SAPAseDatabase;azu;azu'). Required when using container_name."
+                },
                 "vm_name": {
                     "type": "string",
-                    "description": "Name of the virtual machine"
+                    "description": "VM name for VM backups (e.g., 'aseecyvm1'). Either provide this with vm_resource_group OR container_name+item_name."
                 },
                 "vm_resource_group": {
                     "type": "string",
-                    "description": "Resource group containing the VM"
+                    "description": "Resource group containing the VM for VM backups (e.g., 'ASERG'). Required when using vm_name."
+                },
+                "backup_management_type": {
+                    "type": "string",
+                    "description": "Backup management type: 'AzureWorkload' for databases, 'AzureIaasVM' for VMs. Auto-detected if not provided.",
+                    "enum": ["AzureWorkload", "AzureIaasVM", "AzureStorage"]
+                },
+                "start_date": {
+                    "type": "string",
+                    "description": "Start date for recovery points in format '2019-01-01 05:23:52 AM'. If not provided, calculated from time_range_days."
+                },
+                "end_date": {
+                    "type": "string",
+                    "description": "End date for recovery points in format '2019-02-07 05:23:52 AM'. If not provided, uses current time."
+                },
+                "time_range_days": {
+                    "type": "integer",
+                    "description": "Number of days to look back for recovery points (default: 30)",
+                    "minimum": 1,
+                    "maximum": 365,
+                    "default": 30
                 }
             })),
-            required: Some(vec!["vault_name".to_string(), "vm_name".to_string(), "vm_resource_group".to_string()]),
+            required: Some(vec![]),
         },
     }
 }
