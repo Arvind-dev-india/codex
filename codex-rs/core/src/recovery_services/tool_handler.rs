@@ -98,17 +98,7 @@ pub async fn handle_recovery_services_tool_call(
             tools.list_protected_items(args).await
         },
         "recovery_services_enable_protection" => {
-            let vault_name = args["vault_name"].as_str().unwrap_or("default");
-            let vm_name = args["vm_name"].as_str().ok_or_else(|| {
-                CodexErr::Other("vm_name parameter is required".to_string())
-            })?;
-            let vm_resource_group = args["vm_resource_group"].as_str().ok_or_else(|| {
-                CodexErr::Other("vm_resource_group parameter is required".to_string())
-            })?;
-            let policy_name = args["policy_name"].as_str().ok_or_else(|| {
-                CodexErr::Other("policy_name parameter is required".to_string())
-            })?;
-            tools.enable_protection(vault_name, vm_name, vm_resource_group, policy_name).await
+            tools.enable_protection_new(args).await
         },
         "recovery_services_disable_protection" => {
             let vault_name = args["vault_name"].as_str().unwrap_or("default");

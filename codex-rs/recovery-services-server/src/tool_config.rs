@@ -459,29 +459,53 @@ fn create_list_protectable_items_tool() -> Tool {
 fn create_enable_protection_tool() -> Tool {
     Tool {
         name: "recovery_services_enable_protection".to_string(),
-        description: Some("Enable backup protection for a virtual machine".to_string()),
+        description: Some("Enable backup protection for workloads (databases) or VMs. For workload backups like SAP ASE: provide item_name (e.g., 'SAPAseDatabase;azu;azu'), policy_name, workload_type ('SAPAse'), backup_management_type ('AzureWorkload'), protected_item_type ('SAPAseDatabase'), friendly_name ('azu'), and either container_name OR vm_name+vm_resource_group to auto-generate container. For VMs: provide vm_name, vm_resource_group, policy_name.".to_string()),
         annotations: None,
         input_schema: ToolInputSchema {
             r#type: "object".to_string(),
             properties: Some(json!({
-                "vault_name": {
+                "item_name": {
                     "type": "string",
-                    "description": "Name of the Recovery Services vault"
-                },
-                "vm_name": {
-                    "type": "string",
-                    "description": "Name of the virtual machine"
-                },
-                "vm_resource_group": {
-                    "type": "string",
-                    "description": "Resource group containing the VM"
+                    "description": "Protected item name (e.g., 'SAPAseDatabase;azu;azu' for workloads, or auto-generated for VMs)"
                 },
                 "policy_name": {
                     "type": "string",
-                    "description": "Name of the backup policy to use"
+                    "description": "Name of the backup policy to use (e.g., 'DailyFullHourlyLog')"
+                },
+                "container_name": {
+                    "type": "string",
+                    "description": "Container name (e.g., 'VMAppContainer;compute;ASERG;aseecyvm1'). Either provide this OR vm_name+vm_resource_group to auto-generate."
+                },
+                "vm_name": {
+                    "type": "string",
+                    "description": "VM name (e.g., 'aseecyvm1') - used to auto-generate container name if container_name not provided"
+                },
+                "vm_resource_group": {
+                    "type": "string",
+                    "description": "Resource group containing the VM (e.g., 'ASERG') - used with vm_name to auto-generate container"
+                },
+                "workload_type": {
+                    "type": "string",
+                    "description": "Workload type for workload backups: 'SAPAse', 'SAPHana', 'SQL', etc. For VMs, use 'VM'."
+                },
+                "backup_management_type": {
+                    "type": "string",
+                    "description": "Backup management type: 'AzureWorkload' for databases, 'AzureIaasVM' for VMs"
+                },
+                "protected_item_type": {
+                    "type": "string",
+                    "description": "Protected item type: 'SAPAseDatabase', 'SAPHanaDatabase', 'SQLDataBase', 'Microsoft.Compute/virtualMachines'"
+                },
+                "friendly_name": {
+                    "type": "string",
+                    "description": "Friendly name for the protected item (e.g., database name like 'azu')"
+                },
+                "vault_name": {
+                    "type": "string",
+                    "description": "Name of the Recovery Services vault"
                 }
             })),
-            required: Some(vec!["vault_name".to_string(), "vm_name".to_string(), "vm_resource_group".to_string(), "policy_name".to_string()]),
+            required: Some(vec!["item_name".to_string(), "policy_name".to_string()]),
         },
     }
 }

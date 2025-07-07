@@ -264,15 +264,20 @@ fn create_enable_protection_tool() -> OpenAiTool {
     let mut parameters = BTreeMap::new();
     parameters.insert("item_name".to_string(), JsonSchema::String);
     parameters.insert("policy_name".to_string(), JsonSchema::String);
-    parameters.insert("server_name".to_string(), JsonSchema::String);
+    parameters.insert("container_name".to_string(), JsonSchema::String);
+    parameters.insert("vm_name".to_string(), JsonSchema::String);
+    parameters.insert("vm_resource_group".to_string(), JsonSchema::String);
     parameters.insert("workload_type".to_string(), JsonSchema::String);
+    parameters.insert("backup_management_type".to_string(), JsonSchema::String);
+    parameters.insert("protected_item_type".to_string(), JsonSchema::String);
+    parameters.insert("friendly_name".to_string(), JsonSchema::String);
     parameters.insert("vault_name".to_string(), JsonSchema::String);
     
     create_function_tool(
         "recovery_services_enable_protection",
-        "Enable backup protection for a database using specified policy",
+        "Enable backup protection for workloads (databases) or VMs. For workload backups like SAP ASE: provide item_name (e.g., 'SAPAseDatabase;azu;azu'), policy_name, workload_type ('SAPAse'), backup_management_type ('AzureWorkload'), protected_item_type ('SAPAseDatabase'), friendly_name ('azu'), and either container_name OR vm_name+vm_resource_group to auto-generate container. For VMs: provide vm_name, vm_resource_group, policy_name. Example workload: item_name='SAPAseDatabase;azu;azu', workload_type='SAPAse', backup_management_type='AzureWorkload', protected_item_type='SAPAseDatabase'.",
         parameters,
-        &["item_name", "policy_name", "server_name", "workload_type"],
+        &["item_name", "policy_name"],
     )
 }
 

@@ -1203,4 +1203,29 @@ impl RecoveryServicesClient {
         self.handle_response(response).await
     }
 
+    /// Enable workload protection with custom body
+    pub async fn enable_workload_protection(&self, container_name: &str, protected_item_name: &str, _policy_name: &str, body: &Value) -> Result<Value> {
+        let endpoint = format!("/backupFabrics/Azure/protectionContainers/{}/protectedItems/{}", 
+                              container_name, protected_item_name);
+        
+        // Use a custom PUT request with the correct API version for workload protection
+        let url = format!("{}{}", self.get_base_url(), endpoint);
+        tracing::debug!("PUT request to: {}", url);
+        tracing::debug!("Request body: {}", serde_json::to_string_pretty(body).unwrap_or_default());
+
+        let response = self
+            .client
+            .put(&url)
+            .header("Authorization", format!("Bearer {}", self.access_token))
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json")
+            .query(&[("api-version", "2018-01-10")])  // Use the API version from the example
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| CodexErr::Other(format!("Failed to send PUT request: {}", e)))?;
+
+        self.handle_response(response).await
+    }
+
 }

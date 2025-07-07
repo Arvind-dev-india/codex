@@ -2052,4 +2052,112 @@ impl RecoveryServicesTools {
         
         Ok(response)
     }
+
+    /// Enable protection for workloads (databases) or VMs - new implementation
+    pub async fn enable_protection_new(&self, args: Value) -> Result<Value> {
+        let vault_name = args["vault_name"].as_str();
+        let client = self.get_client(vault_name)?;
+        
+        // Required parameters
+        let item_name = args["item_name"].as_str().ok_or_else(|| {
+            CodexErr::Other("item_name parameter is required".to_string())
+        })?;
+        let policy_name = args["policy_name"].as_str().ok_or_else(|| {
+            CodexErr::Other("policy_name parameter is required".to_string())
+        })?;
+        
+        // Optional parameters for workload protection
+        let container_name = args["container_name"].as_str();
+        let vm_name = args["vm_name"].as_str();
+        let vm_resource_group = args["vm_resource_group"].as_str();
+        let workload_type = args["workload_type"].as_str();
+        let backup_management_type = args["backup_management_type"].as_str();
+        let protected_item_type = args["protected_item_type"].as_str();
+        let friendly_name = args["friendly_name"].as_str();
+        
+        tracing::info!("Enabling protection for item: {}, policy: {}", item_name, policy_name);
+        
+        // Generate container name if not provided
+        let final_container_name = if let Some(container) = container_name {
+            container.to_string()
+        } else if let (Some(vm), Some(rg)) = (vm_name, vm_resource_group) {
+            format!("VMAppContainer;compute;{};{}", rg, vm)
+        } else {
+            return Err(CodexErr::Other("Either container_name OR vm_name+vm_resource_group must be provided".to_string()));
+        };
+        
+        // Build the API endpoint
+        let endpoint = format!("/backupFabrics/Azure/protectionContainers/{}/protectedItems/{}", 
+                              final_container_name, item_name);
+        
+        // Build the request body based on your example
+        let mut body = json!({
+            "id": format!("/subscriptions/{}/resourceGroups/{}/providers/Microsoft.RecoveryServices/vaults/{}/backupFabrics/azure/protectionContainers/{}/protectedItems/{}", 
+                         self.config.subscription_id, self.config.resource_group, 
+                         vault_name.unwrap_or(&self.config.vault_name), final_container_name, item_name),
+            "name": item_name,
+            "type": "Microsoft.RecoveryServices/vaults/protectedItems",
+            "location": "eastus2euap",  // You might want to make this configurable
+            "properties": {
+                "policyId": format!("/subscriptions/{}/resourceGroups/{}/providers/Microsoft.RecoveryServices/vaults/{}/backupPolicies/{}", 
+                           self.config.subscription_id, self.config.resource_group, 
+                           vault_name.unwrap_or(&self.config.vault_name), policy_name)
+            }
+        });
+        
+        // Add workload-specific properties if provided
+        if let Some(backup_mgmt_type) = backup_management_type {
+            body["properties"]["backupManagementType"] = json!(backup_mgmt_type);
+        }
+        if let Some(wl_type) = workload_type {
+            body["properties"]["workloadType"] = json!(wl_type);
+        }
+        if let Some(protected_type) = protected_item_type {
+            body["properties"]["protectedItemType"] = json!(protected_type);
+        }
+        if let Some(friendly) = friendly_name {
+            body["properties"]["friendlyName"] = json!(friendly);
+        }
+        
+        tracing::info!("Making PUT request to enable protection");
+        tracing::info!("Endpoint: {}", endpoint);
+        tracing::info!("Request body: {}", serde_json::to_string_pretty(&body).unwrap_or_default());
+        
+        // Use the client's enable_database_protection method or create a new one
+        let result = client.enable_workload_protection(&final_container_name, item_name, policy_name, &body).await?;
+        
+        let base_response = json!({
+            "success": true,
+            "item_name": item_name,
+            "policy_name": policy_name,
+            "container_name": final_container_name,
+            "workload_type": workload_type,
+            "backup_management_type": backup_management_type,
+            "protected_item_type": protected_item_type,
+            "friendly_name": friendly_name,
+            "operation": "enable_protection",
+            "api_reference": {
+                "method": "PUT",
+                "endpoint": format!("/subscriptions/{}/resourceGroups/{}/providers/Microsoft.RecoveryServices/vaults/{}/backupFabrics/Azure/protectionContainers/{}/protectedItems/{}", 
+                                  self.config.subscription_id, self.config.resource_group, 
+                                  vault_name.unwrap_or(&self.config.vault_name), final_container_name, item_name),
+                "request_body_sent": body,
+                "api_version": "2018-01-10"
+            },
+            "curl_equivalent": format!(
+                "curl --location --request PUT 'https://management.azure.com/subscriptions/{}/resourceGroups/{}/providers/Microsoft.RecoveryServices/vaults/{}/backupFabrics/Azure/protectionContainers/{}/protectedItems/{}?api-version=2018-01-10' --header 'authorization: Bearer {{token}}' --header 'accept: application/json' --header 'content-type: application/json' --data '{}'",
+                self.config.subscription_id,
+                self.config.resource_group,
+                vault_name.unwrap_or(&self.config.vault_name),
+                final_container_name,
+                item_name,
+                serde_json::to_string(&body).unwrap_or_default()
+            ),
+            "result": result
+        });
+        
+        // Handle async operation
+        let async_response = self.handle_async_operation(base_response, "Enable protection", &client).await;
+        Ok(async_response)
+    }
 }
