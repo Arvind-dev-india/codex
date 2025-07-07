@@ -38,7 +38,7 @@ pub async fn handle_recovery_services_tool_call(
             tools.list_protectable_containers(args).await
         },
         "recovery_services_list_protectable_items" => {
-            tools.list_protectable_items_new(args).await
+            tools.list_protectable_items(args).await
         },
         "recovery_services_list_workload_items" => {
             tools.list_workload_items(args).await
@@ -94,9 +94,6 @@ pub async fn handle_recovery_services_tool_call(
         },
         
         // Protection management
-        "recovery_services_list_protectable_items" => {
-            tools.list_protectable_items(args).await
-        },
         "recovery_services_list_protected_items" => {
             tools.list_protected_items(args).await
         },

@@ -13,7 +13,7 @@ pub fn create_recovery_services_tools() -> Vec<OpenAiTool> {
         // Discovery tools
         create_refresh_containers_tool(),
         create_list_protectable_containers_tool(),
-        create_list_protectable_items_new_tool(),
+        create_list_protectable_items_tool(),
         create_list_workload_items_tool(),
         
         // VM registration
@@ -123,19 +123,6 @@ fn create_list_protectable_containers_tool() -> OpenAiTool {
 }
 
 
-/// Create a tool for listing protectable items (workloads/databases) - new version
-fn create_list_protectable_items_new_tool() -> OpenAiTool {
-    let mut parameters = BTreeMap::new();
-    parameters.insert("vault_name".to_string(), JsonSchema::String);
-    parameters.insert("workload_type".to_string(), JsonSchema::String);
-    
-    create_function_tool(
-        "recovery_services_list_protectable_items",
-        "List protectable items (databases, workloads) that can be protected but are not yet registered for backup. This discovers SQL Server, SAP HANA, SAP ASE databases and other workloads inside Azure VMs.",
-        parameters,
-        &["workload_type"],
-    )
-}
 
 /// Create a tool for listing workload items (registered/protected)
 fn create_list_workload_items_tool() -> OpenAiTool {

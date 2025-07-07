@@ -28,7 +28,6 @@ pub fn create_recovery_services_tools() -> Vec<Tool> {
         create_get_policy_details_tool(),
         
         // Protection management
-        create_list_protectable_items_tool(),
         create_enable_protection_tool(),
         create_disable_protection_tool(),
         create_list_protected_items_tool(),
@@ -43,6 +42,9 @@ pub fn create_recovery_services_tools() -> Vec<Tool> {
         create_list_recovery_points_tool(),
         create_restore_vm_tool(),
         create_restore_files_tool(),
+        
+        // Async operation tracking
+        create_track_async_operation_tool(),
         
         // Utility tools
         create_clear_auth_cache_tool(),
@@ -713,6 +715,33 @@ fn create_restore_files_tool() -> Tool {
                 }
             })),
             required: Some(vec!["vault_name".to_string(), "vm_name".to_string(), "vm_resource_group".to_string(), "recovery_point_id".to_string(), "file_paths".to_string(), "target_storage_account".to_string()]),
+        },
+    }
+}
+
+/// Create the track_async_operation tool definition
+fn create_track_async_operation_tool() -> Tool {
+    Tool {
+        name: "recovery_services_track_async_operation".to_string(),
+        description: Some("Track the status of an asynchronous Recovery Services operation using the location URL returned from async operations".to_string()),
+        annotations: None,
+        input_schema: ToolInputSchema {
+            r#type: "object".to_string(),
+            properties: Some(json!({
+                "location_url": {
+                    "type": "string",
+                    "description": "The location URL from an async operation response header"
+                },
+                "wait_for_completion": {
+                    "type": "boolean",
+                    "description": "Whether to wait for the operation to complete (default: false)"
+                },
+                "max_wait_seconds": {
+                    "type": "number",
+                    "description": "Maximum time to wait for completion in seconds (default: 300)"
+                }
+            })),
+            required: Some(vec!["location_url".to_string()]),
         },
     }
 }

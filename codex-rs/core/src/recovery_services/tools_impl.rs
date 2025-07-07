@@ -1761,57 +1761,6 @@ impl RecoveryServicesTools {
         }))
     }
 
-    /// List protectable items (workloads/databases that can be protected)
-    pub async fn list_protectable_items_new(&self, args: Value) -> Result<Value> {
-        let vault_name = args["vault_name"].as_str();
-        let workload_type = args["workload_type"].as_str();
-        let client = self.get_client(vault_name)?;
-        
-        let vault_key = vault_name.unwrap_or("default");
-        
-        tracing::info!("Listing protectable items for vault: {}, workload type: {:?}", 
-                      vault_key, workload_type);
-        
-        let items = client.list_protectable_items_new(workload_type).await?;
-        
-        // Group items by workload type for better organization
-        let mut items_by_type: std::collections::HashMap<String, Vec<&Value>> = std::collections::HashMap::new();
-        for item in &items {
-            if let Some(workload) = item.get("properties")
-                .and_then(|p| p.get("workloadType"))
-                .and_then(|t| t.as_str()) {
-                items_by_type.entry(workload.to_string()).or_insert_with(Vec::new).push(item);
-            }
-        }
-        
-        Ok(json!({
-            "vault": vault_key,
-            "filter": {
-                "workload_type": workload_type
-            },
-            "protectable_items": items,
-            "items_by_workload_type": items_by_type,
-            "total_count": items.len(),
-            "message": if items.is_empty() {
-                "No protectable items found. Ensure VMs are registered and workloads are installed.".to_string()
-            } else {
-                format!("Found {} protectable items (databases/workloads) that can be protected", items.len())
-            },
-            "workload_types_found": items_by_type.keys().collect::<Vec<_>>(),
-            "next_steps": if items.is_empty() {
-                vec![
-                    "Ensure VMs are registered with the vault",
-                    "Install and configure workloads (SQL Server, SAP HANA, etc.) on VMs",
-                    "Run discovery again to find newly installed workloads"
-                ]
-            } else {
-                vec![
-                    "Use recovery_services_enable_database_protection to protect specific databases",
-                    "Review workload properties to understand protection requirements"
-                ]
-            }
-        }))
-    }
 
     /// List workload items (registered/protected workloads)
     pub async fn list_workload_items(&self, args: Value) -> Result<Value> {
