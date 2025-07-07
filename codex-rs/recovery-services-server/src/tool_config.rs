@@ -583,32 +583,59 @@ fn create_list_protected_items_tool() -> Tool {
 fn create_trigger_backup_tool() -> Tool {
     Tool {
         name: "recovery_services_trigger_backup".to_string(),
-        description: Some("Trigger an on-demand backup for a protected virtual machine".to_string()),
+        description: Some("Trigger an ad-hoc backup for protected workloads (databases) or VMs. For workload backups: provide item_name (e.g., 'SAPAseDatabase;azu;azu'), backup_type ('Full', 'Incremental', 'Log'), object_type ('AzureWorkloadBackupRequest'), and either container_name OR vm_name+vm_resource_group. For VMs: provide vm_name, vm_resource_group, object_type ('IaasVMBackupRequest').".to_string()),
         annotations: None,
         input_schema: ToolInputSchema {
             r#type: "object".to_string(),
             properties: Some(json!({
-                "vault_name": {
+                "item_name": {
                     "type": "string",
-                    "description": "Name of the Recovery Services vault"
+                    "description": "Protected item name (e.g., 'SAPAseDatabase;azu;azu' for workloads, or auto-generated for VMs)"
+                },
+                "container_name": {
+                    "type": "string",
+                    "description": "Container name (e.g., 'VMAppContainer;compute;ASERG;aseecyvm1'). Either provide this OR vm_name+vm_resource_group to auto-generate."
                 },
                 "vm_name": {
                     "type": "string",
-                    "description": "Name of the virtual machine"
+                    "description": "VM name (e.g., 'aseecyvm1') - used to auto-generate container name if container_name not provided"
                 },
                 "vm_resource_group": {
                     "type": "string",
-                    "description": "Resource group containing the VM"
+                    "description": "Resource group containing the VM (e.g., 'ASERG') - used with vm_name to auto-generate container"
+                },
+                "backup_type": {
+                    "type": "string",
+                    "description": "Type of backup: 'Full', 'Incremental', 'Log' for workloads; 'Full' for VMs",
+                    "enum": ["Full", "Incremental", "Log"]
+                },
+                "object_type": {
+                    "type": "string",
+                    "description": "Request object type: 'AzureWorkloadBackupRequest' for databases, 'IaasVMBackupRequest' for VMs",
+                    "enum": ["AzureWorkloadBackupRequest", "IaasVMBackupRequest"]
+                },
+                "enable_compression": {
+                    "type": "boolean",
+                    "description": "Enable compression for workload backups (optional, default: true)",
+                    "default": true
+                },
+                "recovery_point_expiry_time": {
+                    "type": "string",
+                    "description": "Expiry time in UTC format (e.g., '2019-02-28T18:29:59.000Z'). If not provided, calculated from retention_days."
                 },
                 "retention_days": {
                     "type": "integer",
-                    "description": "Number of days to retain this backup",
+                    "description": "Number of days to retain this backup (default: 30)",
                     "minimum": 1,
                     "maximum": 99,
                     "default": 30
+                },
+                "vault_name": {
+                    "type": "string",
+                    "description": "Name of the Recovery Services vault"
                 }
             })),
-            required: Some(vec!["vault_name".to_string(), "vm_name".to_string(), "vm_resource_group".to_string()]),
+            required: Some(vec!["item_name".to_string(), "backup_type".to_string()]),
         },
     }
 }

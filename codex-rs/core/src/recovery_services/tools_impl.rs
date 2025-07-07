@@ -2160,4 +2160,128 @@ impl RecoveryServicesTools {
         let async_response = self.handle_async_operation(base_response, "Enable protection", &client).await;
         Ok(async_response)
     }
+
+    /// Trigger backup for workloads (databases) or VMs - new implementation
+    pub async fn trigger_backup_new(&self, args: Value) -> Result<Value> {
+        let vault_name = args["vault_name"].as_str();
+        let client = self.get_client(vault_name)?;
+        
+        // Required parameters
+        let item_name = args["item_name"].as_str().ok_or_else(|| {
+            CodexErr::Other("item_name parameter is required".to_string())
+        })?;
+        let backup_type = args["backup_type"].as_str().ok_or_else(|| {
+            CodexErr::Other("backup_type parameter is required".to_string())
+        })?;
+        
+        // Optional parameters
+        let container_name = args["container_name"].as_str();
+        let vm_name = args["vm_name"].as_str();
+        let vm_resource_group = args["vm_resource_group"].as_str();
+        let object_type = args["object_type"].as_str().unwrap_or("AzureWorkloadBackupRequest");
+        let enable_compression = args["enable_compression"].as_bool().unwrap_or(true);
+        let recovery_point_expiry_time = args["recovery_point_expiry_time"].as_str();
+        let retention_days = args["retention_days"].as_u64().unwrap_or(30) as u32;
+        
+        tracing::info!("Triggering backup for item: {}, backup type: {}", item_name, backup_type);
+        
+        // Generate container name if not provided
+        let final_container_name = if let Some(container) = container_name {
+            container.to_string()
+        } else if let (Some(vm), Some(rg)) = (vm_name, vm_resource_group) {
+            format!("VMAppContainer;compute;{};{}", rg, vm)
+        } else {
+            return Err(CodexErr::Other("Either container_name OR vm_name+vm_resource_group must be provided".to_string()));
+        };
+        
+        // Calculate expiry time if not provided
+        // Azure requires retention to be between 45 days and 99 years for on-demand full backups
+        let validated_retention_days = if retention_days < 45 {
+            tracing::warn!("Retention days {} is less than minimum 45 days, using 45 days", retention_days);
+            45
+        } else if retention_days > 36135 { // 99 years * 365 days
+            tracing::warn!("Retention days {} exceeds maximum 99 years, using 36135 days (99 years)", retention_days);
+            36135
+        } else {
+            retention_days
+        };
+        
+        let expiry_time = if let Some(expiry) = recovery_point_expiry_time {
+            expiry.to_string()
+        } else {
+            let expiry = chrono::Utc::now() + chrono::Duration::days(validated_retention_days as i64);
+            // Format as required by Azure API: "2019-02-28T18:29:59.000Z"
+            expiry.format("%Y-%m-%dT%H:%M:%S.000Z").to_string()
+        };
+        
+        // Build the API endpoint
+        let endpoint = format!("/backupFabrics/Azure/protectionContainers/{}/protectedItems/{}/backup", 
+                              final_container_name, item_name);
+        
+        // Build the request body based on the object type
+        let body = match object_type {
+            "AzureWorkloadBackupRequest" => {
+                json!({
+                    "properties": {
+                        "objectType": "AzureWorkloadBackupRequest",
+                        "backupType": backup_type,
+                        "enableCompression": enable_compression,
+                        "recoveryPointExpiryTimeInUTC": expiry_time
+                    }
+                })
+            },
+            "IaasVMBackupRequest" => {
+                json!({
+                    "properties": {
+                        "objectType": "IaasVMBackupRequest",
+                        "recoveryPointExpiryTimeInUTC": expiry_time
+                    }
+                })
+            },
+            _ => {
+                return Err(CodexErr::Other(format!("Unsupported object type: {}. Supported types are: AzureWorkloadBackupRequest, IaasVMBackupRequest", object_type)));
+            }
+        };
+        
+        tracing::info!("Making POST request to trigger backup");
+        tracing::info!("Endpoint: {}", endpoint);
+        tracing::info!("Request body: {}", serde_json::to_string_pretty(&body).unwrap_or_default());
+        
+        // Use the client's trigger_workload_backup method
+        let result = client.trigger_workload_backup(&final_container_name, item_name, &body).await?;
+        
+        let base_response = json!({
+            "success": true,
+            "item_name": item_name,
+            "backup_type": backup_type,
+            "object_type": object_type,
+            "container_name": final_container_name,
+            "enable_compression": enable_compression,
+            "recovery_point_expiry_time": expiry_time,
+            "retention_days": retention_days,
+            "operation": "trigger_backup",
+            "api_reference": {
+                "method": "POST",
+                "endpoint": format!("/subscriptions/{}/resourceGroups/{}/providers/Microsoft.RecoveryServices/vaults/{}/backupFabrics/Azure/protectionContainers/{}/protectedItems/{}/backup", 
+                                  self.config.subscription_id, self.config.resource_group, 
+                                  vault_name.unwrap_or(&self.config.vault_name), final_container_name, item_name),
+                "request_body_sent": body,
+                "api_version": "2021-12-01"
+            },
+            "curl_equivalent": format!(
+                "curl --location 'https://management.azure.com/subscriptions/{}/resourceGroups/{}/providers/Microsoft.RecoveryServices/vaults/{}/backupFabrics/Azure/protectionContainers/{}/protectedItems/{}/backup?api-version=2021-12-01' --header 'authorization: Bearer {{token}}' --header 'accept: application/json' --header 'content-type: application/json' --data '{}'",
+                self.config.subscription_id,
+                self.config.resource_group,
+                vault_name.unwrap_or(&self.config.vault_name),
+                final_container_name,
+                item_name,
+                serde_json::to_string(&body).unwrap_or_default()
+            ),
+            "result": result
+        });
+        
+        // Handle async operation
+        let async_response = self.handle_async_operation(base_response, "Trigger backup", &client).await;
+        Ok(async_response)
+    }
 }

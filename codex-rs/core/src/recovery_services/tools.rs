@@ -318,16 +318,22 @@ fn create_list_protected_items_tool() -> OpenAiTool {
 fn create_trigger_backup_tool() -> OpenAiTool {
     let mut parameters = BTreeMap::new();
     parameters.insert("item_name".to_string(), JsonSchema::String);
-    parameters.insert("server_name".to_string(), JsonSchema::String);
+    parameters.insert("container_name".to_string(), JsonSchema::String);
+    parameters.insert("vm_name".to_string(), JsonSchema::String);
+    parameters.insert("vm_resource_group".to_string(), JsonSchema::String);
     parameters.insert("backup_type".to_string(), JsonSchema::String);
+    parameters.insert("object_type".to_string(), JsonSchema::String);
+    parameters.insert("enable_compression".to_string(), JsonSchema::Boolean);
+    parameters.insert("recovery_point_expiry_time".to_string(), JsonSchema::String);
     parameters.insert("retain_until".to_string(), JsonSchema::String);
+    parameters.insert("retention_days".to_string(), JsonSchema::Number);
     parameters.insert("vault_name".to_string(), JsonSchema::String);
     
     create_function_tool(
         "recovery_services_trigger_backup",
-        "Trigger an ad-hoc backup for a protected database. backup_type can be 'Full', 'Incremental', or 'Log'",
+        "Trigger an ad-hoc backup for protected workloads (databases) or VMs. For workload backups: provide item_name (e.g., 'SAPAseDatabase;azu;azu'), backup_type ('Full', 'Incremental', 'Log'), object_type ('AzureWorkloadBackupRequest'), and either container_name OR vm_name+vm_resource_group. For VMs: provide vm_name, vm_resource_group, object_type ('IaasVMBackupRequest'). Example workload: item_name='SAPAseDatabase;azu;azu', backup_type='Full', object_type='AzureWorkloadBackupRequest'.",
         parameters,
-        &["item_name", "server_name", "backup_type"],
+        &["item_name", "backup_type"],
     )
 }
 

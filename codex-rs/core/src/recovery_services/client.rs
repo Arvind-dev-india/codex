@@ -1228,4 +1228,29 @@ impl RecoveryServicesClient {
         self.handle_response(response).await
     }
 
+    /// Trigger workload backup with custom body
+    pub async fn trigger_workload_backup(&self, container_name: &str, protected_item_name: &str, body: &Value) -> Result<Value> {
+        let endpoint = format!("/backupFabrics/Azure/protectionContainers/{}/protectedItems/{}/backup", 
+                              container_name, protected_item_name);
+        
+        // Use a custom POST request with the correct API version for workload backup
+        let url = format!("{}{}", self.get_base_url(), endpoint);
+        tracing::debug!("POST request to: {}", url);
+        tracing::debug!("Request body: {}", serde_json::to_string_pretty(body).unwrap_or_default());
+
+        let response = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.access_token))
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json")
+            .query(&[("api-version", "2021-12-01")])  // Use newer API version for backup operations
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| CodexErr::Other(format!("Failed to send POST request: {}", e)))?;
+
+        self.handle_response(response).await
+    }
+
 }

@@ -117,15 +117,7 @@ pub async fn handle_recovery_services_tool_call(
             tools.list_backup_jobs(args).await
         },
         "recovery_services_trigger_backup" => {
-            let vault_name = args["vault_name"].as_str().unwrap_or("default");
-            let vm_name = args["vm_name"].as_str().ok_or_else(|| {
-                CodexErr::Other("vm_name parameter is required".to_string())
-            })?;
-            let vm_resource_group = args["vm_resource_group"].as_str().ok_or_else(|| {
-                CodexErr::Other("vm_resource_group parameter is required".to_string())
-            })?;
-            let retention_days = args["retention_days"].as_u64().map(|d| d as u32);
-            tools.trigger_backup(vault_name, vm_name, vm_resource_group, retention_days).await
+            tools.trigger_backup_new(args).await
         },
         "recovery_services_get_job_details" => {
             let vault_name = args["vault_name"].as_str().unwrap_or("default");
