@@ -2,9 +2,10 @@
 
 use anyhow::Result;
 use codex_core::recovery_services::tool_handler::handle_recovery_services_tool_call;
+use codex_core::recovery_services::auth::RecoveryServicesOAuthHandler;
 use codex_core::config_types::RecoveryServicesConfig;
 use codex_core::mcp_tool_call::ToolCall;
-use serde_json::Value;
+use serde_json::{json, Value};
 use serde::Deserialize;
 use std::path::Path;
 use std::sync::OnceLock;
@@ -178,21 +179,30 @@ fn init_from_codex_config() -> Result<()> {
 
 /// Call a Recovery Services tool with the given arguments
 pub async fn call_recovery_services_tool(tool_name: &str, arguments: Value) -> Result<Value> {
-    let config = RECOVERY_SERVICES_CONFIG.get()
-        .ok_or_else(|| anyhow::anyhow!("Recovery Services configuration not initialized"))?;
-    
-    // Create a tool call structure
-    let tool_call = ToolCall {
-        name: tool_name.to_string(),
-        arguments,
-    };
-    
-    // Call the Recovery Services tool handler
-    match handle_recovery_services_tool_call(&tool_call, config).await {
-        Ok(result) => Ok(result),
-        Err(e) => {
-            error!("Error calling Recovery Services tool '{}': {}", tool_name, e);
-            Err(anyhow::anyhow!("Recovery Services tool error: {}", e))
+    // Handle authentication tools separately
+    match tool_name {
+        "recovery_services_auth_login" => handle_auth_login().await,
+        "recovery_services_auth_logout" => handle_auth_logout().await,
+        "recovery_services_auth_status" => handle_auth_status().await,
+        _ => {
+            // Handle regular Recovery Services tools
+            let config = RECOVERY_SERVICES_CONFIG.get()
+                .ok_or_else(|| anyhow::anyhow!("Recovery Services configuration not initialized"))?;
+            
+            // Create a tool call structure
+            let tool_call = ToolCall {
+                name: tool_name.to_string(),
+                arguments,
+            };
+            
+            // Call the Recovery Services tool handler
+            match handle_recovery_services_tool_call(&tool_call, config).await {
+                Ok(result) => Ok(result),
+                Err(e) => {
+                    error!("Error calling Recovery Services tool '{}': {}", tool_name, e);
+                    Err(anyhow::anyhow!("Recovery Services tool error: {}", e))
+                }
+            }
         }
     }
 }
@@ -200,4 +210,123 @@ pub async fn call_recovery_services_tool(tool_name: &str, arguments: Value) -> R
 /// Get the current Recovery Services configuration (for debugging/info purposes)
 pub fn get_config() -> Option<&'static RecoveryServicesConfig> {
     RECOVERY_SERVICES_CONFIG.get()
+}
+
+/// Handle authentication login
+async fn handle_auth_login() -> Result<Value> {
+    let codex_home = get_codex_home()?;
+    let oauth_handler = RecoveryServicesOAuthHandler::new(&codex_home);
+    
+    match oauth_handler.get_access_token().await {
+        Ok(_) => {
+            info!("Recovery Services authentication successful");
+            Ok(json!({
+                "status": "success",
+                "message": "Successfully authenticated with Azure Recovery Services. Tokens have been stored securely.",
+                "token_location": format!("{}/.codex/recovery_services_auth.json", codex_home.display())
+            }))
+        },
+        Err(e) => {
+            error!("Recovery Services authentication failed: {}", e);
+            Err(anyhow::anyhow!("Authentication failed: {}", e))
+        }
+    }
+}
+
+/// Handle authentication logout
+async fn handle_auth_logout() -> Result<Value> {
+    let codex_home = get_codex_home()?;
+    let oauth_handler = RecoveryServicesOAuthHandler::new(&codex_home);
+    
+    match oauth_handler.logout().await {
+        Ok(_) => {
+            info!("Recovery Services logout successful");
+            Ok(json!({
+                "status": "success",
+                "message": "Successfully logged out from Recovery Services. Authentication tokens have been cleared."
+            }))
+        },
+        Err(e) => {
+            error!("Recovery Services logout failed: {}", e);
+            Err(anyhow::anyhow!("Logout failed: {}", e))
+        }
+    }
+}
+
+/// Handle authentication status check
+async fn handle_auth_status() -> Result<Value> {
+    let codex_home = get_codex_home()?;
+    let oauth_handler = RecoveryServicesOAuthHandler::new(&codex_home);
+    
+    // Try to get a valid access token to test authentication
+    match oauth_handler.get_access_token().await {
+        Ok(token) => {
+            // Make a simple API call to verify the token works
+            let config = get_config();
+            let subscription_id = config
+                .map(|c| c.subscription_id.clone())
+                .unwrap_or_else(|| "unknown".to_string());
+            
+            let client = reqwest::Client::new();
+            let test_url = format!(
+                "https://management.azure.com/subscriptions/{}/providers/Microsoft.RecoveryServices/vaults?api-version=2023-04-01",
+                subscription_id
+            );
+            
+            let response = client
+                .get(&test_url)
+                .bearer_auth(&token)
+                .send()
+                .await;
+            
+            match response {
+                Ok(resp) if resp.status().is_success() => {
+                    info!("Recovery Services authentication status: valid");
+                    Ok(json!({
+                        "status": "authenticated",
+                        "message": "Authentication is valid and working",
+                        "token_location": format!("{}/.codex/recovery_services_auth.json", codex_home.display()),
+                        "subscription_id": subscription_id,
+                        "test_result": "API call successful"
+                    }))
+                },
+                Ok(resp) => {
+                    error!("Recovery Services API test failed with status: {}", resp.status());
+                    Ok(json!({
+                        "status": "invalid",
+                        "message": format!("Authentication token exists but API test failed with status: {}", resp.status()),
+                        "token_location": format!("{}/.codex/recovery_services_auth.json", codex_home.display()),
+                        "recommendation": "Try logging out and logging in again"
+                    }))
+                },
+                Err(e) => {
+                    error!("Recovery Services API test failed: {}", e);
+                    Ok(json!({
+                        "status": "error",
+                        "message": format!("Authentication token exists but API test failed: {}", e),
+                        "token_location": format!("{}/.codex/recovery_services_auth.json", codex_home.display()),
+                        "recommendation": "Check network connectivity and try logging out and logging in again"
+                    }))
+                }
+            }
+        },
+        Err(e) => {
+            info!("Recovery Services authentication status: not authenticated");
+            Ok(json!({
+                "status": "not_authenticated",
+                "message": format!("Not authenticated: {}", e),
+                "token_location": format!("{}/.codex/recovery_services_auth.json", codex_home.display()),
+                "recommendation": "Run the recovery_services_auth_login tool to authenticate"
+            }))
+        }
+    }
+}
+
+/// Get the codex home directory
+fn get_codex_home() -> Result<std::path::PathBuf> {
+    let home_dir = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|_| anyhow::anyhow!("Could not determine home directory"))?;
+    
+    Ok(std::path::PathBuf::from(home_dir).join(".codex"))
 }

@@ -395,6 +395,7 @@ dependencies = [
  "clap",
  "codex-core",
  "mcp-types",
+ "reqwest 0.12.20",
  "serde",
  "serde_json",
  "tokio",
@@ -2761,9 +2762,11 @@ name = "kusto-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "clap",
  "codex-core",
  "mcp-types",
+ "reqwest 0.12.20",
  "serde",
  "serde_json",
  "tokio",
@@ -3958,6 +3961,7 @@ dependencies = [
  "clap",
  "codex-core",
  "mcp-types",
+ "reqwest 0.12.20",
  "serde",
  "serde_json",
  "tokio",

@@ -2,10 +2,11 @@
 
 use anyhow::Result;
 use codex_core::azure_devops::tool_handler::handle_azure_devops_tool_call;
+use codex_core::azure_devops::auth::oauth_auth::AzureDevOpsOAuthHandler;
 use codex_core::config::{Config, ConfigOverrides};
 use codex_core::config_types::{AzureDevOpsConfig, AzureDevOpsAuthMethod};
 use codex_core::mcp_tool_call::ToolCall;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::path::Path;
 use std::sync::OnceLock;
 use tracing::{info, error};
@@ -222,4 +223,120 @@ pub fn get_config_status() -> String {
         },
         Err(e) => format!("Configuration Error: {}", e),
     }
+}
+
+/// Handle authentication login
+async fn handle_auth_login() -> Result<Value> {
+    let codex_home = get_codex_home()?;
+    let oauth_handler = AzureDevOpsOAuthHandler::new(&codex_home);
+    
+    match oauth_handler.get_access_token().await {
+        Ok(_) => {
+            info!("Azure DevOps authentication successful");
+            Ok(json!({
+                "status": "success",
+                "message": "Successfully authenticated with Azure DevOps. Tokens have been stored securely.",
+                "token_location": format!("{}/.codex/azure_devops_auth.json", codex_home.display())
+            }))
+        },
+        Err(e) => {
+            error!("Azure DevOps authentication failed: {}", e);
+            Err(anyhow::anyhow!("Authentication failed: {}", e))
+        }
+    }
+}
+
+/// Handle authentication logout
+async fn handle_auth_logout() -> Result<Value> {
+    let codex_home = get_codex_home()?;
+    let oauth_handler = AzureDevOpsOAuthHandler::new(&codex_home);
+    
+    match oauth_handler.logout().await {
+        Ok(_) => {
+            info!("Azure DevOps logout successful");
+            Ok(json!({
+                "status": "success",
+                "message": "Successfully logged out from Azure DevOps. Authentication tokens have been cleared."
+            }))
+        },
+        Err(e) => {
+            error!("Azure DevOps logout failed: {}", e);
+            Err(anyhow::anyhow!("Logout failed: {}", e))
+        }
+    }
+}
+
+/// Handle authentication status check
+async fn handle_auth_status() -> Result<Value> {
+    let codex_home = get_codex_home()?;
+    let oauth_handler = AzureDevOpsOAuthHandler::new(&codex_home);
+    
+    // Try to get a valid access token to test authentication
+    match oauth_handler.get_access_token().await {
+        Ok(token) => {
+            // Make a simple API call to verify the token works
+            let config = get_config().ok();
+            let organization_url = config
+                .map(|c| c.organization_url.clone())
+                .unwrap_or_else(|| "https://dev.azure.com/unknown".to_string());
+            
+            let client = reqwest::Client::new();
+            let test_url = format!("{}_apis/projects?api-version=7.1", organization_url);
+            
+            let response = client
+                .get(&test_url)
+                .bearer_auth(&token)
+                .send()
+                .await;
+            
+            match response {
+                Ok(resp) if resp.status().is_success() => {
+                    info!("Azure DevOps authentication status: valid");
+                    Ok(json!({
+                        "status": "authenticated",
+                        "message": "Authentication is valid and working",
+                        "token_location": format!("{}/.codex/azure_devops_auth.json", codex_home.display()),
+                        "organization_url": organization_url,
+                        "test_result": "API call successful"
+                    }))
+                },
+                Ok(resp) => {
+                    error!("Azure DevOps API test failed with status: {}", resp.status());
+                    Ok(json!({
+                        "status": "invalid",
+                        "message": format!("Authentication token exists but API test failed with status: {}", resp.status()),
+                        "token_location": format!("{}/.codex/azure_devops_auth.json", codex_home.display()),
+                        "recommendation": "Try logging out and logging in again"
+                    }))
+                },
+                Err(e) => {
+                    error!("Azure DevOps API test failed: {}", e);
+                    Ok(json!({
+                        "status": "error",
+                        "message": format!("Authentication token exists but API test failed: {}", e),
+                        "token_location": format!("{}/.codex/azure_devops_auth.json", codex_home.display()),
+                        "recommendation": "Check network connectivity and try logging out and logging in again"
+                    }))
+                }
+            }
+        },
+        Err(e) => {
+            info!("Azure DevOps authentication status: not authenticated");
+            Ok(json!({
+                "status": "not_authenticated",
+                "message": format!("Not authenticated: {}", e),
+                "token_location": format!("{}/.codex/azure_devops_auth.json", codex_home.display()),
+                "recommendation": "Run the azure_devops_auth_login tool to authenticate"
+            }))
+        }
+    }
+}
+
+/// Get the codex home directory
+fn get_codex_home() -> Result<std::path::PathBuf> {
+    let home_dir = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|_| anyhow::anyhow!("Could not determine home directory"))?;
+    
+    Ok(std::path::PathBuf::from(home_dir).join(".codex"))
 }

@@ -2,9 +2,10 @@
 
 use anyhow::Result;
 use codex_core::kusto::tool_handler::handle_kusto_tool_call;
+use codex_core::kusto::auth::KustoOAuthHandler;
 use codex_core::config_types::KustoConfig;
 use codex_core::mcp_tool_call::ToolCall;
-use serde_json::Value;
+use serde_json::{json, Value};
 use serde::Deserialize;
 use std::path::Path;
 use std::sync::OnceLock;
@@ -162,21 +163,30 @@ fn init_from_codex_config() -> Result<()> {
 
 /// Call a Kusto tool with the given arguments
 pub async fn call_kusto_tool(tool_name: &str, arguments: Value) -> Result<Value> {
-    let config = KUSTO_CONFIG.get()
-        .ok_or_else(|| anyhow::anyhow!("Kusto configuration not initialized"))?;
-    
-    // Create a tool call structure
-    let tool_call = ToolCall {
-        name: tool_name.to_string(),
-        arguments,
-    };
-    
-    // Call the Kusto tool handler
-    match handle_kusto_tool_call(&tool_call, config).await {
-        Ok(result) => Ok(result),
-        Err(e) => {
-            error!("Error calling Kusto tool '{}': {}", tool_name, e);
-            Err(anyhow::anyhow!("Kusto tool error: {}", e))
+    // Handle authentication tools separately
+    match tool_name {
+        "kusto_auth_login" => handle_auth_login().await,
+        "kusto_auth_logout" => handle_auth_logout().await,
+        "kusto_auth_status" => handle_auth_status().await,
+        _ => {
+            // Handle regular Kusto tools
+            let config = KUSTO_CONFIG.get()
+                .ok_or_else(|| anyhow::anyhow!("Kusto configuration not initialized"))?;
+            
+            // Create a tool call structure
+            let tool_call = ToolCall {
+                name: tool_name.to_string(),
+                arguments,
+            };
+            
+            // Call the Kusto tool handler
+            match handle_kusto_tool_call(&tool_call, config).await {
+                Ok(result) => Ok(result),
+                Err(e) => {
+                    error!("Error calling Kusto tool '{}': {}", tool_name, e);
+                    Err(anyhow::anyhow!("Kusto tool error: {}", e))
+                }
+            }
         }
     }
 }
@@ -184,4 +194,126 @@ pub async fn call_kusto_tool(tool_name: &str, arguments: Value) -> Result<Value>
 /// Get the current Kusto configuration (for debugging/info purposes)
 pub fn get_config() -> Option<&'static KustoConfig> {
     KUSTO_CONFIG.get()
+}
+
+/// Handle authentication login
+async fn handle_auth_login() -> Result<Value> {
+    let codex_home = get_codex_home()?;
+    let oauth_handler = KustoOAuthHandler::new(&codex_home);
+    
+    match oauth_handler.get_access_token().await {
+        Ok(_) => {
+            info!("Kusto authentication successful");
+            Ok(json!({
+                "status": "success",
+                "message": "Successfully authenticated with Kusto (Azure Data Explorer). Tokens have been stored securely.",
+                "token_location": format!("{}/.codex/kusto_auth.json", codex_home.display())
+            }))
+        },
+        Err(e) => {
+            error!("Kusto authentication failed: {}", e);
+            Err(anyhow::anyhow!("Authentication failed: {}", e))
+        }
+    }
+}
+
+/// Handle authentication logout
+async fn handle_auth_logout() -> Result<Value> {
+    let codex_home = get_codex_home()?;
+    let oauth_handler = KustoOAuthHandler::new(&codex_home);
+    
+    match oauth_handler.logout().await {
+        Ok(_) => {
+            info!("Kusto logout successful");
+            Ok(json!({
+                "status": "success",
+                "message": "Successfully logged out from Kusto. Authentication tokens have been cleared."
+            }))
+        },
+        Err(e) => {
+            error!("Kusto logout failed: {}", e);
+            Err(anyhow::anyhow!("Logout failed: {}", e))
+        }
+    }
+}
+
+/// Handle authentication status check
+async fn handle_auth_status() -> Result<Value> {
+    let codex_home = get_codex_home()?;
+    let oauth_handler = KustoOAuthHandler::new(&codex_home);
+    
+    // Try to get a valid access token to test authentication
+    match oauth_handler.get_access_token().await {
+        Ok(token) => {
+            // Make a simple API call to verify the token works
+            let config = get_config();
+            let cluster_url = config
+                .map(|c| c.cluster_url.clone())
+                .unwrap_or_else(|| "https://unknown.kusto.windows.net".to_string());
+            
+            let client = reqwest::Client::new();
+            let test_url = format!("{}/v1/rest/mgmt", cluster_url);
+            
+            let test_query = json!({
+                "csl": ".show version",
+                "db": config.map(|c| c.database.clone()).unwrap_or_else(|| "unknown".to_string())
+            });
+            
+            let response = client
+                .post(&test_url)
+                .bearer_auth(&token)
+                .json(&test_query)
+                .send()
+                .await;
+            
+            match response {
+                Ok(resp) if resp.status().is_success() => {
+                    info!("Kusto authentication status: valid");
+                    Ok(json!({
+                        "status": "authenticated",
+                        "message": "Authentication is valid and working",
+                        "token_location": format!("{}/.codex/kusto_auth.json", codex_home.display()),
+                        "cluster_url": cluster_url,
+                        "test_result": "API call successful"
+                    }))
+                },
+                Ok(resp) => {
+                    error!("Kusto API test failed with status: {}", resp.status());
+                    Ok(json!({
+                        "status": "invalid",
+                        "message": format!("Authentication token exists but API test failed with status: {}", resp.status()),
+                        "token_location": format!("{}/.codex/kusto_auth.json", codex_home.display()),
+                        "recommendation": "Try logging out and logging in again"
+                    }))
+                },
+                Err(e) => {
+                    error!("Kusto API test failed: {}", e);
+                    Ok(json!({
+                        "status": "error",
+                        "message": format!("Authentication token exists but API test failed: {}", e),
+                        "token_location": format!("{}/.codex/kusto_auth.json", codex_home.display()),
+                        "recommendation": "Check network connectivity and try logging out and logging in again"
+                    }))
+                }
+            }
+        },
+        Err(e) => {
+            info!("Kusto authentication status: not authenticated");
+            Ok(json!({
+                "status": "not_authenticated",
+                "message": format!("Not authenticated: {}", e),
+                "token_location": format!("{}/.codex/kusto_auth.json", codex_home.display()),
+                "recommendation": "Run the kusto_auth_login tool to authenticate"
+            }))
+        }
+    }
+}
+
+/// Get the codex home directory
+fn get_codex_home() -> Result<std::path::PathBuf> {
+    let home_dir = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|_| anyhow::anyhow!("Could not determine home directory"))?;
+    
+    Ok(std::path::PathBuf::from(home_dir).join(".codex"))
 }
