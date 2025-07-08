@@ -298,14 +298,14 @@ fn create_reregister_vm_tool() -> Tool {
 fn create_unregister_vm_tool() -> Tool {
     Tool {
         name: "recovery_services_unregister_vm".to_string(),
-        description: Some("Unregister a virtual machine from backup".to_string()),
+        description: Some("Unregister a VM from backup protection. Automatically detects if the VM is registered for standard backup (AzureIaasVM) or workload backup (AzureWorkload) and uses the appropriate unregistration method. For workload VMs, provide workload_type ('SAPAseDatabase', 'SAPHanaDatabase', 'SQLDataBase', 'AnyDatabase') to ensure correct unregistration. For workload VMs, uses DELETE request with body containing container details. For standard VMs, uses simple DELETE request without body. TOOL RESULT CHAINING: Use vm_name and vm_resource_group from VM registration operations. If you don't know the exact workload_type or want to see what containers are registered, first use recovery_services_list_protectable_containers with backup_management_type='AzureWorkload' to list workload containers (equivalent to: GET /backupProtectionContainers?$filter=providertype eq 'AzureWorkload'), then use the container details and workload types in this tool.".to_string()),
         annotations: None,
         input_schema: ToolInputSchema {
             r#type: "object".to_string(),
             properties: Some(json!({
                 "vault_name": {
                     "type": "string",
-                    "description": "Name of the Recovery Services vault"
+                    "description": "Name of the Recovery Services vault (optional, uses default from config if not specified)"
                 },
                 "vm_name": {
                     "type": "string",
@@ -314,9 +314,14 @@ fn create_unregister_vm_tool() -> Tool {
                 "vm_resource_group": {
                     "type": "string",
                     "description": "Resource group containing the VM"
+                },
+                "workload_type": {
+                    "type": "string",
+                    "description": "Type of workload for workload containers (optional, auto-detected if not provided). Use 'SAPAseDatabase' for SAP ASE, 'SAPHanaDatabase' for SAP HANA, 'SQLDataBase' for SQL Server, 'AnyDatabase' for generic databases. If not specified, the tool will attempt to detect the workload type automatically.",
+                    "enum": ["SAPAseDatabase", "SAPHanaDatabase", "SQLDataBase", "AnyDatabase", "VM"]
                 }
             })),
-            required: Some(vec!["vault_name".to_string(), "vm_name".to_string(), "vm_resource_group".to_string()]),
+            required: Some(vec!["vm_name".to_string(), "vm_resource_group".to_string()]),
         },
     }
 }

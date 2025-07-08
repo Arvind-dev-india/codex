@@ -665,6 +665,29 @@ impl RecoveryServicesClient {
         }
     }
 
+    /// Disable workload protection (for databases like SAP ASE) using DELETE request
+    pub async fn disable_workload_protection(&self, container_name: &str, protected_item_name: &str) -> Result<Value> {
+        let endpoint = format!("/backupFabrics/Azure/protectionContainers/{}/protectedItems/{}", 
+                              container_name, protected_item_name);
+        
+        // Use a custom DELETE request with the correct API version for workload protection
+        let url = format!("{}{}", self.get_base_url(), endpoint);
+        tracing::debug!("DELETE request to: {}", url);
+
+        let response = self
+            .client
+            .delete(&url)
+            .header("Authorization", format!("Bearer {}", self.access_token))
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json")
+            .query(&[("api-version", "2018-01-10")])  // Use the API version from SAP ASE example
+            .send()
+            .await
+            .map_err(|e| CodexErr::Other(format!("Failed to send DELETE request: {}", e)))?;
+
+        self.handle_response(response).await
+    }
+
     /// Create backup policy
     pub async fn create_backup_policy(&self, policy_name: &str, schedule_type: &str, retention_days: u32) -> Result<Value> {
         let endpoint = format!("/backupPolicies/{}", policy_name);
@@ -788,6 +811,49 @@ impl RecoveryServicesClient {
     pub async fn unregister_container(&self, container_name: &str) -> Result<Value> {
         let endpoint = format!("/backupFabrics/Azure/protectionContainers/{}", container_name);
         self.delete_request(&endpoint).await
+    }
+
+    /// Unregister workload container (for VMs registered for workload backup like SAP ASE)
+    pub async fn unregister_workload_container(&self, container_name: &str, vm_name: &str, vm_resource_group: &str, workload_type: &str) -> Result<Value> {
+        let endpoint = format!("/backupFabrics/Azure/protectionContainers/{}", container_name);
+        
+        // Build the request body as shown in SAP ASE API documentation
+        let vm_resource_id = format!("/subscriptions/{}/resourceGroups/{}/providers/Microsoft.Compute/virtualMachines/{}", 
+                                   self.subscription_id, vm_resource_group, vm_name);
+        
+        let body = json!({
+            "Id": format!("/subscriptions/{}/resourceGroups/{}/providers/Microsoft.RecoveryServices/vaults/{}/backupFabrics/Azure/protectionContainers/{}", 
+                         self.subscription_id, self.resource_group, self.vault_name, container_name),
+            "name": container_name,
+            "type": "",
+            "properties": {
+                "containerType": "VMAppContainer",
+                "friendlyName": vm_name,
+                "backupManagementType": "AzureWorkload",
+                "sourceResourceId": vm_resource_id,
+                "workloadType": workload_type
+            },
+            "SubscriptionId": self.subscription_id
+        });
+        
+        // Use a custom DELETE request with body and correct API version for workload unregistration
+        let url = format!("{}{}", self.get_base_url(), endpoint);
+        tracing::debug!("DELETE request to: {}", url);
+        tracing::debug!("Request body: {}", serde_json::to_string_pretty(&body).unwrap_or_default());
+
+        let response = self
+            .client
+            .delete(&url)
+            .header("Authorization", format!("Bearer {}", self.access_token))
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json")
+            .query(&[("api-version", "2018-01-10")])  // Use the API version from SAP ASE example
+            .json(&body)  // Include the request body
+            .send()
+            .await
+            .map_err(|e| CodexErr::Other(format!("Failed to send DELETE request: {}", e)))?;
+
+        self.handle_response(response).await
     }
 
     /// Create workload-specific backup policy

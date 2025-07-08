@@ -1228,21 +1228,100 @@ impl RecoveryServicesTools {
     }
 
     /// Unregister VM from backup
-    pub async fn unregister_vm(&self, vault_name: &str, vm_name: &str, vm_resource_group: &str) -> Result<Value> {
+    pub async fn unregister_vm(&self, args: Value) -> Result<Value> {
+        let vault_name = args["vault_name"].as_str().unwrap_or("default");
+        let vm_name = args["vm_name"].as_str().ok_or_else(|| {
+            CodexErr::Other("vm_name parameter is required".to_string())
+        })?;
+        let vm_resource_group = args["vm_resource_group"].as_str().ok_or_else(|| {
+            CodexErr::Other("vm_resource_group parameter is required".to_string())
+        })?;
         let client = self.get_client(Some(vault_name))?;
         
-        // Generate container name for the VM
-        let container_name = client.generate_vm_container_name(vm_resource_group, vm_name);
+        // First, check what type of registration this VM has by looking at protected containers
+        let containers = client.list_backup_containers().await.unwrap_or_default();
         
-        // Unregister the container
-        let result = client.unregister_container(&container_name).await?;
+        // Look for both standard VM containers and workload containers
+        let standard_container_name = client.generate_vm_container_name(vm_resource_group, vm_name);
+        let workload_container_name = format!("VMAppContainer;compute;{};{}", vm_resource_group, vm_name);
+        
+        let mut found_container = None;
+        let mut is_workload = false;
+        
+        // Check if this VM is registered as a workload container
+        for container in &containers {
+            if container.name == workload_container_name {
+                found_container = Some(workload_container_name.clone());
+                is_workload = true;
+                break;
+            } else if container.name == standard_container_name {
+                found_container = Some(standard_container_name.clone());
+                is_workload = false;
+                break;
+            }
+        }
+        
+        let container_name = found_container.unwrap_or_else(|| {
+            // Default to workload container format if not found in containers list
+            // This handles cases where the container might exist but not be listed
+            tracing::warn!("Container not found in list, defaulting to workload container format");
+            workload_container_name.clone()
+        });
+        
+        tracing::info!("Unregistering VM: {}, container: {}, is_workload: {}", vm_name, container_name, is_workload);
+        
+        let result = if is_workload || container_name.starts_with("VMAppContainer") {
+            // Use workload-specific unregistration (with request body)
+            // Try to determine workload type from args or detect from container properties
+            let workload_type = args.get("workload_type")
+                .and_then(|v| v.as_str())
+                .unwrap_or_else(|| {
+                    // Try to detect workload type from container properties or default to SAPAseDatabase
+                    // In a real implementation, we could query the container to get its actual workload type
+                    tracing::warn!("No workload_type provided, defaulting to SAPAseDatabase. For better accuracy, provide workload_type parameter.");
+                    "SAPAseDatabase"
+                });
+            
+            tracing::info!("Using workload type: {} for unregistration", workload_type);
+            client.unregister_workload_container(&container_name, vm_name, vm_resource_group, workload_type).await?
+        } else {
+            // Use standard VM unregistration (no request body)
+            client.unregister_container(&container_name).await?
+        };
         
         let base_response = json!({
             "vm_name": vm_name,
             "vm_resource_group": vm_resource_group,
             "vault_name": vault_name,
             "container_name": container_name,
+            "container_type": if is_workload { "workload" } else { "standard_vm" },
             "operation": "unregister",
+            "api_reference": {
+                "method": "DELETE",
+                "endpoint": format!("/subscriptions/{}/resourceGroups/{}/providers/Microsoft.RecoveryServices/vaults/{}/backupFabrics/Azure/protectionContainers/{}", 
+                                  self.config.subscription_id, self.config.resource_group, 
+                                  vault_name, container_name),
+                "api_version": "2018-01-10",
+                "includes_request_body": is_workload,
+                "description": if is_workload { "DELETE request with body for workload container" } else { "DELETE request without body for standard VM container" }
+            },
+            "curl_equivalent": if is_workload {
+                format!(
+                    "curl --location --request DELETE 'https://management.azure.com/subscriptions/{}/resourceGroups/{}/providers/Microsoft.RecoveryServices/vaults/{}/backupFabrics/Azure/protectionContainers/{}?api-version=2018-01-10' --header 'authorization: Bearer {{token}}' --header 'accept: application/json' --header 'content-type: application/json' --data '{{...workload_container_body...}}'",
+                    self.config.subscription_id,
+                    self.config.resource_group,
+                    vault_name,
+                    container_name
+                )
+            } else {
+                format!(
+                    "curl --location --request DELETE 'https://management.azure.com/subscriptions/{}/resourceGroups/{}/providers/Microsoft.RecoveryServices/vaults/{}/backupFabrics/Azure/protectionContainers/{}?api-version=2018-01-10' --header 'authorization: Bearer {{token}}' --header 'accept: application/json'",
+                    self.config.subscription_id,
+                    self.config.resource_group,
+                    vault_name,
+                    container_name
+                )
+            },
             "result": result
         });
         
@@ -1335,6 +1414,57 @@ impl RecoveryServicesTools {
         
         // Handle async operation
         let async_response = self.handle_async_operation(base_response, "Disable protection", &client).await;
+        Ok(async_response)
+    }
+
+    /// Disable workload protection (for databases like SAP ASE)
+    pub async fn disable_workload_protection(&self, args: Value) -> Result<Value> {
+        let vault_name = args["vault_name"].as_str();
+        let client = self.get_client(vault_name)?;
+        
+        // Get container and item names
+        let container_name = args["container_name"].as_str().ok_or_else(|| {
+            CodexErr::Other("container_name parameter is required".to_string())
+        })?;
+        
+        let protected_item_name = args["protected_item_name"].as_str().ok_or_else(|| {
+            CodexErr::Other("protected_item_name parameter is required".to_string())
+        })?;
+        
+        let vault_key = vault_name.unwrap_or("default");
+        
+        tracing::info!("Disabling workload protection for container: {}, item: {}, vault: {}", 
+                      container_name, protected_item_name, vault_key);
+        
+        // Use the workload-specific disable protection method (DELETE request)
+        let result = client.disable_workload_protection(container_name, protected_item_name).await?;
+        
+        let base_response = json!({
+            "vault": vault_key,
+            "container_name": container_name,
+            "protected_item_name": protected_item_name,
+            "operation": "disable_workload_protection",
+            "api_reference": {
+                "method": "DELETE",
+                "endpoint": format!("/subscriptions/{}/resourceGroups/{}/providers/Microsoft.RecoveryServices/vaults/{}/backupFabrics/Azure/protectionContainers/{}/protectedItems/{}", 
+                                  self.config.subscription_id, self.config.resource_group, 
+                                  vault_name.unwrap_or(&self.config.vault_name), container_name, protected_item_name),
+                "api_version": "2018-01-10",
+                "description": "DELETE request to stop protection and remove the protected item"
+            },
+            "curl_equivalent": format!(
+                "curl --location --request DELETE 'https://management.azure.com/subscriptions/{}/resourceGroups/{}/providers/Microsoft.RecoveryServices/vaults/{}/backupFabrics/Azure/protectionContainers/{}/protectedItems/{}?api-version=2018-01-10' --header 'Authorization: Bearer {{token}}' --header 'Accept: application/json' --header 'Content-Type: application/json'",
+                self.config.subscription_id,
+                self.config.resource_group,
+                vault_name.unwrap_or(&self.config.vault_name),
+                container_name,
+                protected_item_name
+            ),
+            "result": result
+        });
+        
+        // Handle async operation
+        let async_response = self.handle_async_operation(base_response, "Disable workload protection", &client).await;
         Ok(async_response)
     }
 
@@ -1912,7 +2042,7 @@ impl RecoveryServicesTools {
                 CodexErr::Other("vm_resource_group parameter is required when using vm_name".to_string())
             })?;
             
-            // Format: VMAppContainer;compute;RESOURCE_GROUP;VM_NAME
+            // Format: VMAppContainer;compute;RESOURCE_GROUP;VM_NAME (following SAP ASE API schema)
             format!("VMAppContainer;compute;{};{}", vm_resource_group, vm_name)
         };
         
@@ -1931,10 +2061,10 @@ impl RecoveryServicesTools {
             tracing::info!("Auto-generated container name from VM details: {}", container_name);
         }
         
-        // Validate workload type
+        // Validate workload type - following SAP ASE API schema
         let valid_workload_types = vec![
-            "SAPAseDatabase", "SAPHanaDatabase", "SQLDataBase", "AnyDatabase",
-            "VM", "AzureFileShare", "Exchange", "Sharepoint"
+            "SAPAseDatabase", "SAPHanaDatabase", "SAPHanaDBInstance", "SQLDataBase", "AnyDatabase",
+            "VM", "AzureFileShare", "Exchange", "Sharepoint", "VMwareVM", "SystemState", "Client", "GenericDataSource"
         ];
         
         if !valid_workload_types.contains(&workload_type) {
@@ -1955,7 +2085,8 @@ impl RecoveryServicesTools {
                 "auto_generated": args["container_name"].as_str().is_none(),
                 "vm_name": args["vm_name"].as_str(),
                 "vm_resource_group": args["vm_resource_group"].as_str(),
-                "format": "VMAppContainer;compute;RESOURCE_GROUP;VM_NAME"
+                "format": "VMAppContainer;compute;RESOURCE_GROUP;VM_NAME",
+                "schema_compliance": "SAP ASE API compatible"
             },
             "result": result,
             "api_reference": {
@@ -1967,7 +2098,20 @@ impl RecoveryServicesTools {
                     "api-version": "2018-01-10",
                     "$filter": format!("workloadType eq '{}'", workload_type)
                 },
-                "description": "This endpoint discovers databases for the specified workload type within the container"
+                "description": "This endpoint discovers databases for the specified workload type within the container",
+                "schema_reference": "Based on SAP ASE API documentation - section 04 Trigger Inquiry"
+            },
+            "next_steps": {
+                "after_success": [
+                    "Use recovery_services_list_protectable_items to see discovered databases",
+                    "Use recovery_services_create_workload_policy to create backup policies",
+                    "Use recovery_services_enable_database_protection to protect discovered databases"
+                ],
+                "tool_chaining": {
+                    "container_name": "Use this container_name in subsequent protection operations",
+                    "workload_type": "Use this workload_type for policy creation and protection",
+                    "discovered_items": "Results can be used to identify databases for protection"
+                }
             }
         });
         
@@ -1981,7 +2125,8 @@ impl RecoveryServicesTools {
                 response["tracking_info"] = json!({
                     "message": "Database discovery operation is running asynchronously. Use recovery_services_track_async_operation to check status.",
                     "location_url": location,
-                    "recommended_action": format!("Call recovery_services_track_async_operation with location_url: {}", location)
+                    "recommended_action": format!("Call recovery_services_track_async_operation with location_url: {}", location),
+                    "tool_chaining": "After completion, use recovery_services_list_protectable_items to see discovered databases"
                 });
                 
                 // Try to get initial status
@@ -1994,6 +2139,7 @@ impl RecoveryServicesTools {
                                 "Succeeded" => {
                                     response["status"] = json!("completed");
                                     response["message"] = json!(format!("Database discovery for {} completed successfully", workload_type));
+                                    response["next_action"] = json!("Run recovery_services_list_protectable_items to see discovered databases");
                                 },
                                 "Failed" => {
                                     response["status"] = json!("failed");

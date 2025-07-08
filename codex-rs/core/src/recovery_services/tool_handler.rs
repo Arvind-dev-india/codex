@@ -59,14 +59,7 @@ pub async fn handle_recovery_services_tool_call(
             tools.reregister_vm(vault_name, vm_name, vm_resource_group).await
         },
         "recovery_services_unregister_vm" => {
-            let vault_name = args["vault_name"].as_str().unwrap_or("default");
-            let vm_name = args["vm_name"].as_str().ok_or_else(|| {
-                CodexErr::Other("vm_name parameter is required".to_string())
-            })?;
-            let vm_resource_group = args["vm_resource_group"].as_str().ok_or_else(|| {
-                CodexErr::Other("vm_resource_group parameter is required".to_string())
-            })?;
-            tools.unregister_vm(vault_name, vm_name, vm_resource_group).await
+            tools.unregister_vm(args).await
         },
         "recovery_services_check_registration_status" => {
             tools.check_registration_status(args).await
@@ -182,6 +175,9 @@ pub async fn handle_recovery_services_tool_call(
         },
         "recovery_services_inquire_workload_databases" => {
             tools.inquire_workload_databases(args).await
+        },
+        "recovery_services_disable_database_protection" => {
+            tools.disable_workload_protection(args).await
         },
         
         // Utility tools

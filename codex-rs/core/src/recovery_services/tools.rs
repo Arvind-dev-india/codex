@@ -174,13 +174,15 @@ fn create_reregister_vm_tool() -> OpenAiTool {
 fn create_unregister_vm_tool() -> OpenAiTool {
     let mut parameters = BTreeMap::new();
     parameters.insert("vm_name".to_string(), JsonSchema::String);
+    parameters.insert("vm_resource_group".to_string(), JsonSchema::String);
     parameters.insert("vault_name".to_string(), JsonSchema::String);
+    parameters.insert("workload_type".to_string(), JsonSchema::String);
     
     create_function_tool(
         "recovery_services_unregister_vm",
-        "Unregister a VM from backup protection",
+        "Unregister a VM from backup protection. Automatically detects if the VM is registered for standard backup (AzureIaasVM) or workload backup (AzureWorkload) and uses the appropriate unregistration method. For workload VMs, provide workload_type ('SAPAseDatabase', 'SAPHanaDatabase', 'SQLDataBase', 'AnyDatabase') to ensure correct unregistration. For workload VMs, uses DELETE request with body containing container details. For standard VMs, uses simple DELETE request without body. TOOL RESULT CHAINING: Use vm_name and vm_resource_group from VM registration operations. If you don't know the exact workload_type or want to see what containers are registered, first use recovery_services_list_protectable_containers with backup_management_type='AzureWorkload' to list workload containers (equivalent to: GET /backupProtectionContainers?$filter=providertype eq 'AzureWorkload'), then use the container details and workload types in this tool.",
         parameters,
-        &["vm_name"],
+        &["vm_name", "vm_resource_group"],
     )
 }
 
@@ -253,7 +255,7 @@ fn create_list_protectable_items_tool() -> OpenAiTool {
     
     create_function_tool(
         "recovery_services_list_protectable_items",
-        "List protectable items (databases, VMs, etc.) that can be backed up. Required parameters: workload_type supports 'SAPAseDatabase', 'SAPHanaDatabase', 'SQLDataBase', 'VM', 'AzureFileShare', etc. backup_management_type should be 'AzureWorkload' for databases, 'AzureIaasVM' for VMs, 'AzureStorage' for file shares. Example: workload_type='SAPAseDatabase' and backup_management_type='AzureWorkload'. You can also use simplified names like 'SAPASE', 'SAPHANA', 'SQL' for workload_type.",
+        "List protectable items (databases, VMs, etc.) that can be backed up. Required parameters: workload_type supports 'SAPAseDatabase', 'SAPHanaDatabase', 'SAPHanaDBInstance', 'SQLDataBase', 'AnyDatabase', 'VM', 'AzureFileShare', etc. backup_management_type should be 'AzureWorkload' for databases, 'AzureIaasVM' for VMs, 'AzureStorage' for file shares. Example: workload_type='SAPAseDatabase' and backup_management_type='AzureWorkload'. TOOL RESULT CHAINING: Use this after recovery_services_inquire_workload_databases to see discovered databases. The returned protectable_items array contains database names that can be used in recovery_services_enable_protection. Each item has 'name' field for protection configuration.",
         parameters,
         &["workload_type", "backup_management_type"],
     )
@@ -275,7 +277,7 @@ fn create_enable_protection_tool() -> OpenAiTool {
     
     create_function_tool(
         "recovery_services_enable_protection",
-        "Enable backup protection for workloads (databases) or VMs. For workload backups like SAP ASE: provide item_name (e.g., 'SAPAseDatabase;azu;azu'), policy_name, workload_type ('SAPAse'), backup_management_type ('AzureWorkload'), protected_item_type ('SAPAseDatabase'), friendly_name ('azu'), and either container_name OR vm_name+vm_resource_group to auto-generate container. For VMs: provide vm_name, vm_resource_group, policy_name. Example workload: item_name='SAPAseDatabase;azu;azu', workload_type='SAPAse', backup_management_type='AzureWorkload', protected_item_type='SAPAseDatabase'.",
+        "Enable backup protection for workloads (databases) or VMs. For workload backups like SAP ASE: provide item_name (e.g., 'SAPAseDatabase;azu;azu'), policy_name, workload_type ('SAPAse'), backup_management_type ('AzureWorkload'), protected_item_type ('SAPAseDatabase'), friendly_name ('azu'), and either container_name OR vm_name+vm_resource_group to auto-generate container. For VMs: provide vm_name, vm_resource_group, policy_name. TOOL RESULT CHAINING: Use container_name from recovery_services_inquire_workload_databases and item_name from recovery_services_list_protectable_items. Returns protected_item_id for use in backup operations. Example: item_name='SAPAseDatabase;azu;azu', workload_type='SAPAse', policy_name='DailyFullHourlyLog'.ad_type='SAPAse', backup_management_type='AzureWorkload', protected_item_type='SAPAseDatabase'.",
         parameters,
         &["item_name", "policy_name"],
     )
@@ -331,7 +333,7 @@ fn create_trigger_backup_tool() -> OpenAiTool {
     
     create_function_tool(
         "recovery_services_trigger_backup",
-        "Trigger an ad-hoc backup for protected workloads (databases) or VMs. For workload backups: provide item_name (e.g., 'SAPAseDatabase;azu;azu'), backup_type ('Full', 'Incremental', 'Log'), object_type ('AzureWorkloadBackupRequest'), and either container_name OR vm_name+vm_resource_group. For VMs: provide vm_name, vm_resource_group, object_type ('IaasVMBackupRequest'). Example workload: item_name='SAPAseDatabase;azu;azu', backup_type='Full', object_type='AzureWorkloadBackupRequest'.",
+        "Trigger an ad-hoc backup for protected workloads (databases) or VMs. For workload backups: provide item_name (e.g., 'SAPAseDatabase;azu;azu'), backup_type ('Full', 'Incremental', 'Log'), object_type ('AzureWorkloadBackupRequest'), and either container_name OR vm_name+vm_resource_group. For VMs: provide vm_name, vm_resource_group, object_type ('IaasVMBackupRequest'). TOOL RESULT CHAINING: Use container_name and item_name from protection operations. Returns job_id for monitoring with recovery_services_get_job_status. Example: item_name='SAPAseDatabase;azu;azu', backup_type='Full', object_type='AzureWorkloadBackupRequest'.",
         parameters,
         &["item_name", "backup_type"],
     )
@@ -396,7 +398,7 @@ fn create_list_recovery_points_tool() -> OpenAiTool {
     
     create_function_tool(
         "recovery_services_list_recovery_points",
-        "List available recovery points for protected VMs or workloads (databases). For workload backups: provide container_name and item_name (e.g., container_name='VMAppContainer;compute;ASERG;aseecyvm1', item_name='SAPAseDatabase;azu;azu'). For VM backups: provide vm_name and vm_resource_group. Optional: backup_management_type ('AzureWorkload' for databases, 'AzureIaasVM' for VMs), start_date/end_date in format '2019-01-01 05:23:52 AM', or time_range_days for recent points.",
+        "List available recovery points for protected VMs or workloads (databases). For workload backups: provide container_name and item_name (e.g., container_name='VMAppContainer;compute;ASERG;aseecyvm1', item_name='SAPAseDatabase;azu;azu'). For VM backups: provide vm_name and vm_resource_group. Optional: backup_management_type ('AzureWorkload' for databases, 'AzureIaasVM' for VMs), start_date/end_date in format '2019-01-01 05:23:52 AM', or time_range_days for recent points. TOOL RESULT CHAINING: Use container_name and item_name from protection operations. Returns recovery_points array with IDs for use in restore operations.",
         parameters,
         &[],
     )
@@ -483,7 +485,7 @@ fn create_inquire_workload_databases_tool() -> OpenAiTool {
     
     create_function_tool(
         "recovery_services_inquire_workload_databases",
-        "Discover databases for a specific workload type using the Azure Recovery Services inquire endpoint. You can either provide vm_name and vm_resource_group (recommended) to auto-generate the container name, OR provide the container_name directly. The tool will automatically format the container name as 'VMAppContainer;compute;RESOURCE_GROUP;VM_NAME'. Supported workload types: 'SAPAseDatabase' (SAP ASE databases), 'SAPHanaDatabase' (SAP HANA databases), 'SQLDataBase' (SQL Server databases), 'AnyDatabase' (generic databases), 'VM' (virtual machines), 'AzureFileShare' (file shares), 'Exchange' (Exchange servers), 'Sharepoint' (SharePoint servers). This implements the POST /inquire endpoint with workload type filtering to discover databases.",
+        "Discover databases for a specific workload type using the Azure Recovery Services inquire endpoint. You can either provide vm_name and vm_resource_group (recommended) to auto-generate the container name, OR provide the container_name directly. The tool will automatically format the container name as 'VMAppContainer;compute;RESOURCE_GROUP;VM_NAME'. Supported workload types: 'SAPAseDatabase' (SAP ASE databases), 'SAPHanaDatabase' (SAP HANA databases), 'SAPHanaDBInstance' (SAP HANA instances), 'SQLDataBase' (SQL Server databases), 'AnyDatabase' (generic databases). TOOL RESULT CHAINING: The returned container_name can be used in subsequent protection operations. After async completion, use recovery_services_list_protectable_items to see discovered databases. 'AnyDatabase' (generic databases), 'VM' (virtual machines), 'AzureFileShare' (file shares), 'Exchange' (Exchange servers), 'Sharepoint' (SharePoint servers). This implements the POST /inquire endpoint with workload type filtering to discover databases.",
         parameters,
         &["workload_type"],
     )
@@ -571,12 +573,11 @@ fn create_disable_database_protection_tool() -> OpenAiTool {
     let mut parameters = BTreeMap::new();
     parameters.insert("container_name".to_string(), JsonSchema::String);
     parameters.insert("protected_item_name".to_string(), JsonSchema::String);
-    parameters.insert("delete_backup_data".to_string(), JsonSchema::Boolean);
     parameters.insert("vault_name".to_string(), JsonSchema::String);
     
     create_function_tool(
         "recovery_services_disable_database_protection",
-        "Disable backup protection for a database, optionally deleting backup data",
+        "Disable backup protection for a workload database (SAP ASE, SAP HANA, SQL Server) using DELETE request. This stops protection and removes the protected item. Provide container_name (e.g., 'VMAppContainer;compute;ASERG;aseecyvm1') and protected_item_name (e.g., 'SAPAseDatabase;azu;azu'). TOOL RESULT CHAINING: Use container_name and protected_item_name from previous protection operations. This matches the SAP ASE API pattern: DELETE /protectedItems/{item}?api-version=2018-01-10",
         parameters,
         &["container_name", "protected_item_name"],
     )
