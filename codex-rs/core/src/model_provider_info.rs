@@ -35,7 +35,7 @@ pub enum WireApi {
 }
 
 /// Serializable representation of a provider definition.
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 pub struct ModelProviderInfo {
     /// Friendly display name.
     pub name: String,
