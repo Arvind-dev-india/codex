@@ -197,7 +197,7 @@ pub async fn call_azure_devops_tool(tool_name: &str, arguments: Value) -> Result
 }
 
 /// Get configuration status for debugging
-pub fn get_config_status() -> String {
+pub fn _get_config_status() -> String {
     match get_config() {
         Ok(config) => {
             format!(
@@ -226,8 +226,8 @@ pub fn get_config_status() -> String {
 }
 
 /// Handle authentication login
-async fn handle_auth_login() -> Result<Value> {
-    let codex_home = get_codex_home()?;
+async fn _handle_auth_login() -> Result<Value> {
+    let codex_home = _get_codex_home()?;
     let oauth_handler = AzureDevOpsOAuthHandler::new(&codex_home);
     
     match oauth_handler.get_access_token().await {
@@ -247,8 +247,8 @@ async fn handle_auth_login() -> Result<Value> {
 }
 
 /// Handle authentication logout
-async fn handle_auth_logout() -> Result<Value> {
-    let codex_home = get_codex_home()?;
+async fn _handle_auth_logout() -> Result<Value> {
+    let codex_home = _get_codex_home()?;
     let oauth_handler = AzureDevOpsOAuthHandler::new(&codex_home);
     
     match oauth_handler.logout().await {
@@ -267,8 +267,8 @@ async fn handle_auth_logout() -> Result<Value> {
 }
 
 /// Handle authentication status check
-async fn handle_auth_status() -> Result<Value> {
-    let codex_home = get_codex_home()?;
+async fn _handle_auth_status() -> Result<Value> {
+    let codex_home = _get_codex_home()?;
     let oauth_handler = AzureDevOpsOAuthHandler::new(&codex_home);
     
     // Try to get a valid access token to test authentication
@@ -333,7 +333,7 @@ async fn handle_auth_status() -> Result<Value> {
 }
 
 /// Get the codex home directory
-fn get_codex_home() -> Result<std::path::PathBuf> {
+fn _get_codex_home() -> Result<std::path::PathBuf> {
     let home_dir = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .map_err(|_| anyhow::anyhow!("Could not determine home directory"))?;

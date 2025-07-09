@@ -6,7 +6,6 @@ use serde_json::{json, Value};
 use tracing;
 
 use crate::openai_tools::{JsonSchema, OpenAiTool, create_function_tool};
-use super::repo_mapper::{CodeEdgeType, CodeNodeType};
 
 /// Register all code analysis tools
 pub fn register_code_analysis_tools() -> Vec<OpenAiTool> {
@@ -95,7 +94,7 @@ fn create_get_symbol_subgraph_tool() -> OpenAiTool {
 }
 
 /// Create a tool for updating the code graph
-fn create_update_code_graph_tool() -> OpenAiTool {
+fn _create_update_code_graph_tool() -> OpenAiTool {
     let mut properties = BTreeMap::new();
     
     properties.insert(
@@ -210,7 +209,7 @@ pub fn handle_analyze_code(args: Value) -> Option<Result<Value, String>> {
             }
             
             // First, try to get the file's directory to ensure the global graph is initialized
-            let dir_path = file_path.parent().unwrap_or_else(|| std::path::Path::new("."));
+            let _dir_path = file_path.parent().unwrap_or_else(|| std::path::Path::new("."));
             
             // Use the pre-initialized global graph (no need to rebuild)
             if super::graph_manager::is_graph_initialized() {
@@ -264,7 +263,7 @@ pub fn handle_analyze_code(args: Value) -> Option<Result<Value, String>> {
             match extractor.extract_symbols_from_file(&input.file_path) {
                 Ok(()) => {
                     // Debug: Check how many symbols were found
-                    let symbol_count = extractor.get_symbols().len();
+                    let _symbol_count = extractor.get_symbols().len();
                     // eprintln!("Tree-sitter parsing succeeded, found {} symbols", symbol_count);
                     
                     // Debug: Print all found symbols
@@ -342,7 +341,7 @@ pub fn handle_analyze_code(args: Value) -> Option<Result<Value, String>> {
                         }
                         
                         // Find struct definitions
-                        if (trimmed.starts_with("pub struct ") || trimmed.starts_with("struct ")) {
+                        if trimmed.starts_with("pub struct ") || trimmed.starts_with("struct ") {
                             let struct_part = if trimmed.starts_with("pub struct ") {
                                 &trimmed[11..]
                             } else {
@@ -448,7 +447,7 @@ pub fn handle_analyze_code(args: Value) -> Option<Result<Value, String>> {
                                 
                                 // If the opening brace is not on the same line, look for it
                                 if !in_function {
-                                    for (i, next_line) in file_content.lines().enumerate().skip(line_num) {
+                                    for (_i, next_line) in file_content.lines().enumerate().skip(line_num) {
                                         if next_line.contains('{') {
                                             brace_count = 1;
                                             in_function = true;
@@ -523,7 +522,7 @@ pub fn handle_analyze_code(args: Value) -> Option<Result<Value, String>> {
                                 
                                 // If the opening brace is not on the same line, look for it
                                 if !in_struct {
-                                    for (i, next_line) in file_content.lines().enumerate().skip(line_num) {
+                                    for (_i, next_line) in file_content.lines().enumerate().skip(line_num) {
                                         if next_line.contains('{') {
                                             brace_count = 1;
                                             in_struct = true;
@@ -592,7 +591,7 @@ pub fn handle_analyze_code(args: Value) -> Option<Result<Value, String>> {
                                 
                                 // If the opening brace is not on the same line, look for it
                                 if !in_method {
-                                    for (i, next_line) in file_content.lines().enumerate().skip(line_num) {
+                                    for (_i, next_line) in file_content.lines().enumerate().skip(line_num) {
                                         if next_line.contains('{') {
                                             brace_count = 1;
                                             in_method = true;
@@ -734,8 +733,8 @@ pub fn handle_analyze_code(args: Value) -> Option<Result<Value, String>> {
                         }
                         
                         // Find class definitions (must start with class keyword, not be in comments)
-                        if (trimmed.starts_with("public class ") || trimmed.starts_with("private class ") || 
-                            trimmed.starts_with("internal class ") || trimmed.starts_with("class ")) {
+                        if trimmed.starts_with("public class ") || trimmed.starts_with("private class ") || 
+                            trimmed.starts_with("internal class ") || trimmed.starts_with("class ") {
                             
                             let class_part = if trimmed.starts_with("public class ") {
                                 &trimmed[13..]
@@ -1661,7 +1660,7 @@ pub fn handle_get_symbol_subgraph(args: Value) -> Option<Result<Value, String>> 
     Some(match serde_json::from_value::<GetSymbolSubgraphInput>(args) {
         Ok(input) => {
             // Get the current working directory as the root path
-            let root_path = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let _root_path = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
             
             // Use the pre-initialized global graph (no need to rebuild)
             if super::graph_manager::is_graph_initialized() {
@@ -1796,7 +1795,7 @@ pub fn handle_update_code_graph(args: Value) -> Option<Result<Value, String>> {
                     .unwrap_or_else(|_| ".".to_string())
             });
             
-            let root_path = std::path::Path::new(&root_path_str);
+            let _root_path = std::path::Path::new(&root_path_str);
             
             // Since the graph is automatically managed, this is now a no-op
             // Just return success without rebuilding

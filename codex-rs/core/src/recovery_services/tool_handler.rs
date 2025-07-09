@@ -120,8 +120,8 @@ pub async fn handle_recovery_services_tool_call(
             tools.get_job_details(vault_name, job_id).await
         },
         "recovery_services_cancel_job" => {
-            let vault_name = args["vault_name"].as_str().unwrap_or("default");
-            let job_id = args["job_id"].as_str().ok_or_else(|| {
+            let _vault_name = args["vault_name"].as_str().unwrap_or("default");
+            let _job_id = args["job_id"].as_str().ok_or_else(|| {
                 CodexErr::Other("job_id parameter is required".to_string())
             })?;
             // Note: cancel_job method needs to be implemented in tools_impl.rs

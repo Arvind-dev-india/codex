@@ -63,7 +63,7 @@ impl KustoDiagnostics {
     }
     
     /// Test database access with a database-specific query
-    async fn test_database_access(client: &KustoSdkClient, database: &str) -> Result<()> {
+    async fn test_database_access(client: &KustoSdkClient, _database: &str) -> Result<()> {
         // Try a simple query that should work if database access is correct
         let query = "print database_name = database()";
         tracing::info!("Running database access test: {}", query);

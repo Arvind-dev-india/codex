@@ -53,9 +53,9 @@ struct Column {
     #[serde(rename = "ColumnName")]
     column_name: String,
     #[serde(rename = "DataType")]
-    data_type: String,
+    _data_type: String,
     #[serde(rename = "ColumnType")]
-    column_type: String,
+    _column_type: String,
 }
 
 impl KustoRestClient {

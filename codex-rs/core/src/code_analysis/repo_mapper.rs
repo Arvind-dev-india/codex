@@ -255,7 +255,7 @@ impl RepoMapper {
     }
 
     /// Scan a directory recursively (kept for compatibility)
-    fn scan_directory(&mut self, dir_path: &Path) -> Result<(), String> {
+    fn _scan_directory(&mut self, dir_path: &Path) -> Result<(), String> {
         let entries = fs::read_dir(dir_path)
             .map_err(|e| format!("Failed to read directory {}: {}", dir_path.display(), e))?;
 
@@ -267,7 +267,7 @@ impl RepoMapper {
                 // Skip hidden directories and common directories to ignore
                 let dir_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
                 if !dir_name.starts_with('.') && !["node_modules", "target", "dist"].contains(&dir_name) {
-                    self.scan_directory(&path)?;
+                    self._scan_directory(&path)?;
                 }
             } else if path.is_file() {
                 // Process file if it has a supported extension

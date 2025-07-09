@@ -3,10 +3,9 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use std::time::SystemTime;
 use tree_sitter::{Language, Parser, Query, QueryCursor, Tree, StreamingIterator};
-use once_cell::sync::Lazy;
 use tracing;
 
 // Import the tree-sitter language parsers
@@ -377,7 +376,7 @@ impl ParserPool {
 }
 
 /// Debug function to show JavaScript AST structure
-fn debug_javascript_ast(lang: &Language) {
+fn _debug_javascript_ast(lang: &Language) {
     eprintln!("=== Debugging JavaScript AST ===");
     
     let mut parser = Parser::new();
@@ -400,13 +399,13 @@ class TestClass {
 "#;
     
     if let Some(tree) = parser.parse(test_code, None) {
-        print_ast_node(tree.root_node(), test_code, 0);
+        _print_ast_node(tree.root_node(), test_code, 0);
     }
     eprintln!("=== End JavaScript AST Debug ===");
 }
 
 /// Debug function to show Python AST structure
-fn debug_python_ast(lang: &Language) {
+fn _debug_python_ast(lang: &Language) {
     eprintln!("=== Debugging Python AST ===");
     
     let mut parser = Parser::new();
@@ -425,13 +424,13 @@ def simple_function():
 "#;
     
     if let Some(tree) = parser.parse(test_code, None) {
-        print_ast_node(tree.root_node(), test_code, 0);
+        _print_ast_node(tree.root_node(), test_code, 0);
     }
     eprintln!("=== End Python AST Debug ===");
 }
 
 /// Debug function to test Python query directly
-fn debug_python_query(lang: &Language) {
+fn _debug_python_query(lang: &Language) {
     eprintln!("=== Debugging Python Query ===");
     
     let mut parser = Parser::new();
@@ -499,7 +498,7 @@ def simple_function():
     eprintln!("=== End Python Query Debug ===");
 }
 
-fn print_ast_node(node: tree_sitter::Node, source: &str, depth: usize) {
+fn _print_ast_node(node: tree_sitter::Node, source: &str, depth: usize) {
     let indent = "  ".repeat(depth);
     let node_text = node.utf8_text(source.as_bytes()).unwrap_or("<error>");
     let node_text_preview = if node_text.len() > 50 {
@@ -514,7 +513,7 @@ fn print_ast_node(node: tree_sitter::Node, source: &str, depth: usize) {
     if depth < 4 {
         for i in 0..node.child_count() {
             if let Some(child) = node.child(i) {
-                print_ast_node(child, source, depth + 1);
+                _print_ast_node(child, source, depth + 1);
             }
         }
     }

@@ -619,7 +619,7 @@ impl RecoveryServicesTools {
         
         // Get workload type with enhanced support for all types
         let workload_type_str = args["workload_type"].as_str();
-        let workload_type = if let Some(wl_str) = workload_type_str {
+        let _workload_type = if let Some(wl_str) = workload_type_str {
             match wl_str.to_uppercase().as_str() {
                 "VM" => Some(WorkloadType::VM),
                 "FILEFOLDER" => Some(WorkloadType::FileFolder),

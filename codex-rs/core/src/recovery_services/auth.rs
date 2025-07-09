@@ -36,7 +36,7 @@ struct DeviceCodeResponse {
     verification_uri: String,
     expires_in: u64,
     interval: u64,
-    message: String,
+    _message: String,
 }
 
 #[derive(Debug, Deserialize)]

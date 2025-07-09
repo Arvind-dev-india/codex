@@ -1,7 +1,6 @@
 //! Context extractor for extracting code context from parsed files.
 
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
 use std::fs;
 use tracing;
 

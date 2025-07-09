@@ -35,7 +35,7 @@ pub enum GraphStatus {
 /// File metadata for change detection
 #[derive(Debug, Clone)]
 struct FileMetadata {
-    path: PathBuf,
+    _path: PathBuf,
     last_modified: SystemTime,
     size: u64,
 }
@@ -139,7 +139,7 @@ impl CodeGraphManager {
                 .map_err(|e| format!("Failed to get metadata for {}: {}", file_path.display(), e))?;
             
             let current_metadata = FileMetadata {
-                path: file_path.clone(),
+                _path: file_path.clone(),
                 last_modified: metadata.modified()
                     .map_err(|e| format!("Failed to get modified time for {}: {}", file_path.display(), e))?,
                 size: metadata.len(),
@@ -171,7 +171,7 @@ impl CodeGraphManager {
                 .map_err(|e| format!("Failed to get metadata for {}: {}", file_path.display(), e))?;
             
             let file_metadata = FileMetadata {
-                path: file_path.clone(),
+                _path: file_path.clone(),
                 last_modified: metadata.modified()
                     .map_err(|e| format!("Failed to get modified time for {}: {}", file_path.display(), e))?,
                 size: metadata.len(),
