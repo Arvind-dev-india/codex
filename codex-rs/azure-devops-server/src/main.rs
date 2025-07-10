@@ -144,36 +144,53 @@ async fn handle_status() -> Result<()> {
     
     println!("Checking Azure DevOps authentication status...");
     
-    match oauth_handler.get_access_token().await {
-        Ok(token) => {
-            // Try to make a test API call
-            let client = reqwest::Client::new();
-            let test_url = "https://app.vssps.visualstudio.com/_apis/profile/profiles/me?api-version=6.0";
-            
-            match client.get(test_url).bearer_auth(&token).send().await {
-                Ok(resp) if resp.status().is_success() => {
-                    println!("Authentication is valid and working");
-                    println!("Token location: {}/.codex/azure_devops_auth.json", codex_home.display());
-                    println!("API test: Successful");
+    match oauth_handler.get_token_status().await {
+        Ok(status) => {
+            if status.authenticated {
+                println!("Status: Authenticated with Azure DevOps");
+                println!("Token location: {}/.codex/azure_devops_auth.json", codex_home.display());
+                
+                if let Some(created_at) = status.created_at {
+                    println!("Token created: {} ({} days ago)", 
+                        created_at.format("%Y-%m-%d %H:%M:%S UTC"),
+                        status.token_age_days);
                 }
-                Ok(resp) => {
-                    println!("Authentication token exists but API test failed");
-                    println!("Token location: {}/.codex/azure_devops_auth.json", codex_home.display());
-                    println!("API status: {}", resp.status());
-                    println!("Recommendation: Try running 'azure-devops-server logout' and 'azure-devops-server login'");
+                
+                if let Some(access_expires_at) = status.access_expires_at {
+                    println!("Access token: {} (expires: {})", 
+                        if status.access_token_valid { "Valid" } else { "Expired" },
+                        access_expires_at.format("%Y-%m-%d %H:%M:%S UTC"));
+                    
+                    if status.access_expires_in_minutes > 0 {
+                        println!("  - Expires in: {} minutes", status.access_expires_in_minutes);
+                    } else {
+                        println!("  - Expired {} minutes ago", -status.access_expires_in_minutes);
+                    }
                 }
-                Err(e) => {
-                    println!("Authentication token exists but network test failed");
-                    println!("Token location: {}/.codex/azure_devops_auth.json", codex_home.display());
-                    println!("Network error: {}", e);
-                    println!("Recommendation: Check network connectivity");
+                
+                if let Some(refresh_expires_at) = status.refresh_expires_at {
+                    println!("Refresh token: {} (expires: {})", 
+                        if status.refresh_token_valid { "Valid" } else { "Expired" },
+                        refresh_expires_at.format("%Y-%m-%d %H:%M:%S UTC"));
+                    
+                    if status.refresh_expires_in_days > 0 {
+                        println!("  - Expires in: {} days", status.refresh_expires_in_days);
+                    } else {
+                        println!("  - Expired {} days ago", -status.refresh_expires_in_days);
+                    }
                 }
+                
+                if !status.access_token_valid {
+                    println!("Recommendation: Run 'azure-devops-server login' to refresh authentication");
+                }
+            } else {
+                println!("Status: Not authenticated with Azure DevOps");
+                println!("Token location: {}/.codex/azure_devops_auth.json", codex_home.display());
+                println!("Recommendation: Run 'azure-devops-server login' to authenticate");
             }
         }
-        Err(_) => {
-            println!("Not authenticated with Azure DevOps");
-            println!("Token location: {}/.codex/azure_devops_auth.json", codex_home.display());
-            println!("Recommendation: Run 'azure-devops-server login' to authenticate");
+        Err(e) => {
+            println!("Failed to check authentication status: {}", e);
         }
     }
     

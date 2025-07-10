@@ -9,6 +9,20 @@ use std::path::Path;
 use std::time::Duration;
 use tokio::time::sleep;
 
+/// Token status information for display
+#[derive(Debug, Clone)]
+pub struct TokenStatus {
+    pub authenticated: bool,
+    pub access_token_valid: bool,
+    pub refresh_token_valid: bool,
+    pub access_expires_at: Option<DateTime<Utc>>,
+    pub refresh_expires_at: Option<DateTime<Utc>>,
+    pub created_at: Option<DateTime<Utc>>,
+    pub access_expires_in_minutes: i64,
+    pub refresh_expires_in_days: i64,
+    pub token_age_days: i64,
+}
+
 /// Microsoft's public client ID for Azure DevOps
 /// This is the same client ID used by Azure CLI and VS Code
 const AZURE_DEVOPS_CLIENT_ID: &str = "04b07795-8ddb-461a-bbee-02f9e1bf7b46";
@@ -26,6 +40,13 @@ pub struct AzureDevOpsTokens {
     pub refresh_token: String,
     pub expires_at: DateTime<Utc>,
     pub refresh_expires_at: DateTime<Utc>,
+    #[serde(default = "default_created_at")]
+    pub created_at: DateTime<Utc>,
+}
+
+fn default_created_at() -> DateTime<Utc> {
+    // For backward compatibility, use a reasonable default for old tokens
+    Utc::now() - chrono::Duration::days(30)
 }
 
 #[derive(Debug, Deserialize)]
@@ -35,7 +56,7 @@ struct DeviceCodeResponse {
     verification_uri: String,
     expires_in: u64,
     interval: u64,
-    _message: String,
+    message: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -118,7 +139,7 @@ impl AzureDevOpsOAuthHandler {
             .map_err(|e| CodexErr::Other(format!("Failed to parse device code response: {}", e)))?;
 
         // Step 2: Display instructions to user
-        eprintln!("\n🔐 Azure DevOps Authentication Required");
+        eprintln!("\nAzure DevOps Authentication Required");
         eprintln!("To sign in, use a web browser to open the page:");
         eprintln!("    {}", device_code_resp.verification_uri);
         eprintln!("And enter the code: {}", device_code_resp.user_code);
@@ -155,13 +176,15 @@ impl AzureDevOpsOAuthHandler {
                     .await
                     .map_err(|e| CodexErr::Other(format!("Failed to parse token response: {}", e)))?;
 
-                eprintln!("✅ Authentication successful!");
+                eprintln!("Authentication successful!");
 
+                let now = Utc::now();
                 return Ok(AzureDevOpsTokens {
                     access_token: token_resp.access_token,
                     refresh_token: token_resp.refresh_token.unwrap_or_default(),
-                    expires_at: Utc::now() + chrono::Duration::seconds(token_resp.expires_in as i64),
-                    refresh_expires_at: Utc::now() + chrono::Duration::days(90), // Typical refresh token lifetime
+                    expires_at: now + chrono::Duration::seconds(token_resp.expires_in as i64),
+                    refresh_expires_at: now + chrono::Duration::days(90), // Typical refresh token lifetime
+                    created_at: now,
                 });
             } else if token_response.status().as_u16() == 400 {
                 // Still waiting for user to complete authentication
@@ -199,11 +222,13 @@ impl AzureDevOpsOAuthHandler {
                 .await
                 .map_err(|e| CodexErr::Other(format!("Failed to parse refresh response: {}", e)))?;
 
+            let now = Utc::now();
             Ok(AzureDevOpsTokens {
                 access_token: token_resp.access_token,
                 refresh_token: token_resp.refresh_token.unwrap_or_else(|| refresh_token.to_string()),
-                expires_at: Utc::now() + chrono::Duration::seconds(token_resp.expires_in as i64),
-                refresh_expires_at: Utc::now() + chrono::Duration::days(90),
+                expires_at: now + chrono::Duration::seconds(token_resp.expires_in as i64),
+                refresh_expires_at: now + chrono::Duration::days(90),
+                created_at: now, // New token created during refresh
             })
         } else {
             Err(CodexErr::Other(format!(
@@ -268,5 +293,42 @@ impl AzureDevOpsOAuthHandler {
                 .map_err(|e| CodexErr::Other(format!("Failed to remove auth file: {}", e)))?;
         }
         Ok(())
+    }
+
+    /// Get token status information for display
+    pub async fn get_token_status(&self) -> Result<TokenStatus> {
+        match self.load_tokens().await {
+            Ok(tokens) => {
+                let now = Utc::now();
+                let access_expires_in = tokens.expires_at.signed_duration_since(now);
+                let refresh_expires_in = tokens.refresh_expires_at.signed_duration_since(now);
+                let token_age = now.signed_duration_since(tokens.created_at);
+                
+                Ok(TokenStatus {
+                    authenticated: true,
+                    access_token_valid: tokens.expires_at > now,
+                    refresh_token_valid: tokens.refresh_expires_at > now,
+                    access_expires_at: Some(tokens.expires_at),
+                    refresh_expires_at: Some(tokens.refresh_expires_at),
+                    created_at: Some(tokens.created_at),
+                    access_expires_in_minutes: access_expires_in.num_minutes(),
+                    refresh_expires_in_days: refresh_expires_in.num_days(),
+                    token_age_days: token_age.num_days(),
+                })
+            }
+            Err(_) => {
+                Ok(TokenStatus {
+                    authenticated: false,
+                    access_token_valid: false,
+                    refresh_token_valid: false,
+                    access_expires_at: None,
+                    refresh_expires_at: None,
+                    created_at: None,
+                    access_expires_in_minutes: 0,
+                    refresh_expires_in_days: 0,
+                    token_age_days: 0,
+                })
+            }
+        }
     }
 }
