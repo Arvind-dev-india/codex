@@ -1,9 +1,9 @@
 #!/bin/bash
-# Script to run all C++ code analysis tests
-# Usage: ./run_cpp_tests.sh [--verbose]
+# Script to run all Python code analysis tests
+# Usage: ./run_python_tests.sh [--verbose]
 #
-# This script runs all C++ related tests to verify the code analysis functionality.
-# It includes comprehensive tests for C++ language features, code analysis tools,
+# This script runs all Python related tests to verify the code analysis functionality.
+# It includes comprehensive tests for Python language features, code analysis tools,
 # and performance/edge cases.
 
 set -e  # Exit on error
@@ -173,29 +173,41 @@ if [ ! -d "core/tests" ]; then
   fi
 fi
 
-echo -e "${BLUE}=== Running C++ Code Analysis Test Suite ===${NC}"
-echo -e "${YELLOW}This will run all C++ related tests to verify code analysis functionality${NC}"
+echo -e "${BLUE}=== Running Python Code Analysis Test Suite ===${NC}"
+echo -e "${YELLOW}This will run all Python related tests to verify code analysis functionality${NC}"
 echo ""
 
-# Run the comprehensive detailed tests
-run_test "cpp_detailed_comprehensive_test" "Comprehensive tests for C++ language features and code analysis tools"
+# Run the comprehensive analysis tests
+run_test "python_analysis_comprehensive" "Comprehensive tests for Python language features and code analysis tools"
 
-# Run specific test functions from the detailed test suite
-run_test_function "cpp_detailed_comprehensive_test" "test_cpp_symbol_extraction_accuracy" "Testing C++ symbol extraction accuracy"
-run_test_function "cpp_detailed_comprehensive_test" "test_cpp_line_number_accuracy" "Testing C++ line number accuracy"
-run_test_function "cpp_detailed_comprehensive_test" "test_cpp_comprehensive_language_features" "Testing comprehensive C++ language features"
-run_test_function "cpp_detailed_comprehensive_test" "test_cpp_code_analysis_tools" "Testing C++ code analysis tools"
-run_test_function "cpp_detailed_comprehensive_test" "test_cpp_performance_and_edge_cases" "Testing C++ performance and edge cases"
+# Run specific test functions from the comprehensive test suite
+run_test_function "python_analysis_comprehensive" "test_python_basic_class_parsing" "Testing Python basic class parsing"
+run_test_function "python_analysis_comprehensive" "test_python_skeleton_generation" "Testing Python skeleton generation with line numbers"
+run_test_function "python_analysis_comprehensive" "test_python_skeleton_with_token_limit" "Testing Python skeleton generation with token limits"
+run_test_function "python_analysis_comprehensive" "test_python_skeleton_bfs_depth" "Testing Python skeleton BFS depth functionality"
+run_test_function "python_analysis_comprehensive" "test_python_skeleton_edge_weight_priority" "Testing Python skeleton edge-weight priority"
 
-# Run other C++ related tests
-run_test "cpp_simple_test" "Simple C++ parsing tests"
-run_test "cpp_analysis_comprehensive" "Comprehensive C++ analysis tests"
-run_test "cpp_comprehensive_multifile_test" "Multi-file C++ analysis tests"
-run_test "cpp_intra_file_calls" "C++ intra-file call analysis"
-run_test "cpp_advanced_features_test" "Advanced C++ features and patterns"
-run_test "code_analysis_cpp_csharp_java" "Cross-language tests including C++"
+# Run other Python related tests
+run_test "python_simple_test" "Simple Python parsing tests"
+run_test "python_inter_file_analysis" "Multi-file Python analysis tests"
+run_test "python_intra_file_calls" "Python intra-file call analysis"
+run_test "python_line_number_validation" "Python line number validation tests"
 
-echo -e "${BLUE}=== C++ Test Suite Summary ===${NC}"
+# Run Python specific debugging and validation tests
+run_test "debug_python_line_numbers" "Debug Python line number extraction"
+
+# Run Python specific test functions for advanced features
+run_test_function "python_analysis_comprehensive" "test_python_inheritance_and_decorators" "Testing Python inheritance and decorator parsing"
+run_test_function "python_analysis_comprehensive" "test_python_imports_and_modules" "Testing Python import and module analysis"
+run_test_function "python_analysis_comprehensive" "test_python_function_definitions" "Testing Python function definition parsing"
+run_test_function "python_analysis_comprehensive" "test_python_class_methods_and_properties" "Testing Python class methods and properties"
+
+# Run inter-file analysis tests
+run_test_function "python_inter_file_analysis" "test_python_cross_file_references" "Testing Python cross-file reference analysis"
+run_test_function "python_inter_file_analysis" "test_python_import_resolution" "Testing Python import resolution"
+run_test_function "python_inter_file_analysis" "test_python_inheritance_across_files" "Testing Python inheritance across files"
+
+echo -e "${BLUE}=== Python Test Suite Summary ===${NC}"
 echo -e "${BLUE}Test Suites:${NC}"
 echo -e "${GREEN}  [PASS] Suites Passed: ${SUITES_PASSED}${NC}"
 echo -e "${RED}  [FAIL] Suites Failed: ${SUITES_FAILED}${NC}"
@@ -210,10 +222,10 @@ echo -e "${BLUE}  [TOTAL] Total Tests: ${TOTAL_INDIVIDUAL_TESTS}${NC}"
 echo ""
 
 if [ $SUITES_FAILED -eq 0 ] && [ $INDIVIDUAL_TESTS_FAILED -eq 0 ]; then
-  echo -e "${GREEN}=== All C++ tests completed successfully! ===${NC}"
+  echo -e "${GREEN}=== All Python tests completed successfully! ===${NC}"
   exit 0
 else
-  echo -e "${RED}=== Some C++ tests failed! ===${NC}"
+  echo -e "${RED}=== Some Python tests failed! ===${NC}"
   echo -e "${RED}Failed suites: ${SUITES_FAILED}, Failed individual tests: ${INDIVIDUAL_TESTS_FAILED}${NC}"
   exit 1
 fi

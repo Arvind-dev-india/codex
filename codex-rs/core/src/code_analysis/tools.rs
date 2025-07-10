@@ -15,6 +15,7 @@ pub fn register_code_analysis_tools() -> Vec<OpenAiTool> {
         create_find_symbol_definitions_tool(),
         create_get_symbol_subgraph_tool(),
         create_get_related_files_skeleton_tool(),
+        create_get_multiple_files_skeleton_tool(),
         // Note: update_code_graph_tool removed as initialization is now automatic
         // Note: get_code_graph_tool removed as it can return huge amounts of data for large repositories
     ]
@@ -117,9 +118,33 @@ fn create_get_related_files_skeleton_tool() -> OpenAiTool {
     
     create_function_tool(
         "code_analysis_get_related_files_skeleton",
-        "Returns skeleton views of files related to the provided active files. Uses BFS traversal to find related files through symbol references and dependencies. Provides function signatures, class definitions, and import statements while replacing implementation details with '...'. Respects the specified token limit by prioritizing closer relationships and truncating content as needed.",
+        "Returns skeleton views of files related to the provided active files. Uses BFS traversal to find related files through symbol references and dependencies. Provides function signatures, class definitions, and import statements while replacing implementation details with '...'. Includes line numbers for each symbol. Respects the specified token limit by prioritizing closer relationships and truncating content as needed.",
         properties,
         &["active_files", "max_tokens"],
+    )
+}
+
+/// Create a tool for getting skeleton of multiple specific files
+fn create_get_multiple_files_skeleton_tool() -> OpenAiTool {
+    let mut properties = BTreeMap::new();
+    
+    properties.insert(
+        "file_paths".to_string(),
+        JsonSchema::Array {
+            items: Box::new(JsonSchema::String),
+        },
+    );
+    
+    properties.insert(
+        "max_tokens".to_string(),
+        JsonSchema::Number,
+    );
+    
+    create_function_tool(
+        "code_analysis_get_multiple_files_skeleton",
+        "Returns skeleton views of the specified files. Provides function signatures, class definitions, and import statements while replacing implementation details with '...'. Includes line numbers for each symbol (start_line-end_line). This is like a collapsed view of files for LLMs with knowledge of line numbers. Respects the specified token limit by truncating content as needed.",
+        properties,
+        &["file_paths"],
     )
 }
 
@@ -194,6 +219,14 @@ pub struct GetRelatedFilesSkeletonInput {
     pub max_tokens: usize,
     #[serde(default = "default_skeleton_max_depth")]
     pub max_depth: usize,
+}
+
+/// Input for the get_multiple_files_skeleton tool
+#[derive(Debug, Deserialize, Serialize)]
+pub struct GetMultipleFilesSkeletonInput {
+    pub file_paths: Vec<String>,
+    #[serde(default = "default_max_tokens")]
+    pub max_tokens: usize,
 }
 
 fn default_max_tokens() -> usize {
@@ -1708,6 +1741,11 @@ pub fn handle_get_related_files_skeleton(args: Value) -> Option<Result<Value, St
     Some(get_related_files_skeleton_handler(args))
 }
 
+/// Handle the get_multiple_files_skeleton tool call
+pub fn handle_get_multiple_files_skeleton(args: Value) -> Option<Result<Value, String>> {
+    Some(get_multiple_files_skeleton_handler(args))
+}
+
 /// Handle the get_symbol_subgraph tool call
 pub fn handle_get_symbol_subgraph(args: Value) -> Option<Result<Value, String>> {
     Some(match serde_json::from_value::<GetSymbolSubgraphInput>(args) {
@@ -1943,6 +1981,21 @@ fn get_related_files_skeleton_handler(args: Value) -> Result<Value, String> {
     }))
 }
 
+/// Implementation for get_multiple_files_skeleton tool
+fn get_multiple_files_skeleton_handler(args: Value) -> Result<Value, String> {
+    let input: GetMultipleFilesSkeletonInput = serde_json::from_value(args)
+        .map_err(|e| format!("Invalid arguments: {}", e))?;
+
+    // Generate skeletons for the specified files with token limit
+    let skeletons = generate_file_skeletons(&input.file_paths, input.max_tokens)?;
+    
+    Ok(json!({
+        "files": skeletons,
+        "total_files": input.file_paths.len(),
+        "max_tokens_used": input.max_tokens
+    }))
+}
+
 /// Find related files using BFS traversal with edge-weight priority
 fn find_related_files_bfs(active_files: &[String], max_depth: usize) -> Result<Vec<String>, String> {
     use std::collections::{HashSet, BinaryHeap, HashMap};
@@ -2064,7 +2117,7 @@ fn generate_file_skeletons(files: &[String], max_tokens: usize) -> Result<Vec<Va
 }
 
 /// Generate skeleton for a single file
-fn generate_single_file_skeleton(file_path: &str) -> Result<String, String> {
+pub fn generate_single_file_skeleton(file_path: &str) -> Result<String, String> {
     use std::fs;
     use std::collections::HashMap;
     
@@ -2158,8 +2211,9 @@ fn generate_symbol_skeleton(
 ) -> Result<(), String> {
     let indent = "    ".repeat(indent_level);
     
-    // Extract and add the symbol signature
+    // Extract and add the symbol signature with line numbers
     let signature = extract_symbol_signature(lines, symbol)?;
+    skeleton.push_str(&format!("{}// Lines {}-{}\n", indent, symbol.start_line, symbol.end_line));
     skeleton.push_str(&format!("{}{}", indent, signature));
     
     // Check if this symbol has children (methods, properties, etc.)

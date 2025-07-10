@@ -17,5 +17,6 @@ pub use tools::{
     handle_find_symbol_definitions,
     handle_get_symbol_subgraph,
     handle_get_related_files_skeleton,
+    handle_get_multiple_files_skeleton,
 };
 pub use parser_pool::{get_parser_pool, SupportedLanguage, QueryType};

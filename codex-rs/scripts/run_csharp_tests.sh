@@ -1,9 +1,9 @@
 #!/bin/bash
-# Script to run all C++ code analysis tests
-# Usage: ./run_cpp_tests.sh [--verbose]
+# Script to run all C# code analysis tests
+# Usage: ./run_csharp_tests.sh [--verbose]
 #
-# This script runs all C++ related tests to verify the code analysis functionality.
-# It includes comprehensive tests for C++ language features, code analysis tools,
+# This script runs all C# related tests to verify the code analysis functionality.
+# It includes comprehensive tests for C# language features, code analysis tools,
 # and performance/edge cases.
 
 set -e  # Exit on error
@@ -173,29 +173,35 @@ if [ ! -d "core/tests" ]; then
   fi
 fi
 
-echo -e "${BLUE}=== Running C++ Code Analysis Test Suite ===${NC}"
-echo -e "${YELLOW}This will run all C++ related tests to verify code analysis functionality${NC}"
+echo -e "${BLUE}=== Running C# Code Analysis Test Suite ===${NC}"
+echo -e "${YELLOW}This will run all C# related tests to verify code analysis functionality${NC}"
 echo ""
 
-# Run the comprehensive detailed tests
-run_test "cpp_detailed_comprehensive_test" "Comprehensive tests for C++ language features and code analysis tools"
+# Run the comprehensive analysis tests
+run_test "csharp_analysis_comprehensive" "Comprehensive tests for C# language features and code analysis tools"
 
-# Run specific test functions from the detailed test suite
-run_test_function "cpp_detailed_comprehensive_test" "test_cpp_symbol_extraction_accuracy" "Testing C++ symbol extraction accuracy"
-run_test_function "cpp_detailed_comprehensive_test" "test_cpp_line_number_accuracy" "Testing C++ line number accuracy"
-run_test_function "cpp_detailed_comprehensive_test" "test_cpp_comprehensive_language_features" "Testing comprehensive C++ language features"
-run_test_function "cpp_detailed_comprehensive_test" "test_cpp_code_analysis_tools" "Testing C++ code analysis tools"
-run_test_function "cpp_detailed_comprehensive_test" "test_cpp_performance_and_edge_cases" "Testing C++ performance and edge cases"
+# Run specific test functions from the comprehensive test suite
+run_test_function "csharp_analysis_comprehensive" "test_csharp_basic_class_parsing" "Testing C# basic class parsing"
+run_test_function "csharp_analysis_comprehensive" "test_csharp_skeleton_generation" "Testing C# skeleton generation with line numbers"
+run_test_function "csharp_analysis_comprehensive" "test_csharp_skeleton_with_token_limit" "Testing C# skeleton generation with token limits"
+run_test_function "csharp_analysis_comprehensive" "test_csharp_skeleton_bfs_depth" "Testing C# skeleton BFS depth functionality"
+run_test_function "csharp_analysis_comprehensive" "test_csharp_skeleton_edge_weight_priority" "Testing C# skeleton edge-weight priority"
 
-# Run other C++ related tests
-run_test "cpp_simple_test" "Simple C++ parsing tests"
-run_test "cpp_analysis_comprehensive" "Comprehensive C++ analysis tests"
-run_test "cpp_comprehensive_multifile_test" "Multi-file C++ analysis tests"
-run_test "cpp_intra_file_calls" "C++ intra-file call analysis"
-run_test "cpp_advanced_features_test" "Advanced C++ features and patterns"
-run_test "code_analysis_cpp_csharp_java" "Cross-language tests including C++"
+# Run other C# related tests
+run_test "csharp_simple_test" "Simple C# parsing tests"
+run_test "csharp_comprehensive_multifile_test" "Multi-file C# analysis tests"
+run_test "csharp_intra_file_calls" "C# intra-file call analysis"
+run_test "csharp_advanced_features_test" "Advanced C# features and patterns"
 
-echo -e "${BLUE}=== C++ Test Suite Summary ===${NC}"
+# Run cross-language tests that include C#
+run_test "code_analysis_cpp_csharp_java" "Cross-language tests including C#"
+
+# Run C# specific edge case tests
+run_test_function "csharp_analysis_comprehensive" "test_csharp_inheritance_and_interfaces" "Testing C# inheritance and interface parsing"
+run_test_function "csharp_analysis_comprehensive" "test_csharp_generics_and_advanced_features" "Testing C# generics and advanced features"
+run_test_function "csharp_analysis_comprehensive" "test_csharp_inter_file_references" "Testing C# inter-file reference analysis"
+
+echo -e "${BLUE}=== C# Test Suite Summary ===${NC}"
 echo -e "${BLUE}Test Suites:${NC}"
 echo -e "${GREEN}  [PASS] Suites Passed: ${SUITES_PASSED}${NC}"
 echo -e "${RED}  [FAIL] Suites Failed: ${SUITES_FAILED}${NC}"
@@ -210,10 +216,10 @@ echo -e "${BLUE}  [TOTAL] Total Tests: ${TOTAL_INDIVIDUAL_TESTS}${NC}"
 echo ""
 
 if [ $SUITES_FAILED -eq 0 ] && [ $INDIVIDUAL_TESTS_FAILED -eq 0 ]; then
-  echo -e "${GREEN}=== All C++ tests completed successfully! ===${NC}"
+  echo -e "${GREEN}=== All C# tests completed successfully! ===${NC}"
   exit 0
 else
-  echo -e "${RED}=== Some C++ tests failed! ===${NC}"
+  echo -e "${RED}=== Some C# tests failed! ===${NC}"
   echo -e "${RED}Failed suites: ${SUITES_FAILED}, Failed individual tests: ${INDIVIDUAL_TESTS_FAILED}${NC}"
   exit 1
 fi

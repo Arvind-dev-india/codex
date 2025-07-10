@@ -9,6 +9,7 @@ use crate::code_analysis::tools::{
     handle_find_symbol_definitions,
     handle_get_symbol_subgraph,
     handle_get_related_files_skeleton,
+    handle_get_multiple_files_skeleton,
 };
 use crate::error::{CodexErr, Result};
 use crate::mcp_tool_call::ToolCall;
@@ -85,6 +86,11 @@ pub async fn handle_code_analysis_tool_call(
         "code_analysis_get_related_files_skeleton" => {
             Ok(handle_get_related_files_skeleton(args)
                 .ok_or_else(|| CodexErr::Other("Failed to handle get_related_files_skeleton".to_string()))?
+                .map_err(|e| CodexErr::Other(e.to_string()))?)
+        },
+        "code_analysis_get_multiple_files_skeleton" => {
+            Ok(handle_get_multiple_files_skeleton(args)
+                .ok_or_else(|| CodexErr::Other("Failed to handle get_multiple_files_skeleton".to_string()))?
                 .map_err(|e| CodexErr::Other(e.to_string()))?)
         },
         _ => {
