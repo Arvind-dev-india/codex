@@ -18,9 +18,13 @@ struct Args {
     #[arg(short, long)]
     verbose: bool,
     
-    /// Port to listen on (if running as a network service)
+    /// Port to listen on for HTTP/SSE server (0 = stdio mode)
     #[arg(short, long, default_value = "0")]
     port: u16,
+    
+    /// Enable SSE (Server-Sent Events) mode for easier testing
+    #[arg(long)]
+    sse: bool,
 }
 
 #[tokio::main]
@@ -43,10 +47,10 @@ async fn main() -> Result<()> {
     }
     
     // Run the server
-    if args.port > 0 {
-        // Network mode (for future implementation)
-        tracing::info!("Network mode not yet implemented");
-        return Ok(());
+    if args.sse || args.port > 0 {
+        // HTTP/SSE mode for easier testing
+        let port = if args.port > 0 { args.port } else { 3000 };
+        server::run_http_server(port).await?;
     } else {
         // Standard MCP mode (stdin/stdout)
         server::run_server().await?;

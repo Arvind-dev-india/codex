@@ -16,6 +16,13 @@ use tracing::{info, error};
 /// Initialize the code graph for the current directory
 pub fn init_code_graph() -> Result<()> {
     let current_dir = std::env::current_dir()?;
+    
+    // Check if graph is already initialized for this path to avoid redundant initialization
+    if graph_manager::is_graph_initialized() {
+        info!("Code graph already initialized for: {}", current_dir.display());
+        return Ok(());
+    }
+    
     info!("Initializing code graph for: {}", current_dir.display());
     
     // Use the graph manager to initialize and handle file changes
@@ -31,17 +38,13 @@ pub fn init_code_graph() -> Result<()> {
     }
 }
 
-/// Ensure the graph is up-to-date before processing requests
-fn ensure_graph_updated() -> Result<()> {
-    let current_dir = std::env::current_dir()?;
-    graph_manager::ensure_graph_for_path(&current_dir)
-        .map_err(|e| anyhow::anyhow!("Failed to update code graph: {}", e))
-}
 
 /// Call the analyze_code function from codex-core
 pub fn call_analyze_code(args: Value) -> Result<Value> {
-    // Ensure the graph is up-to-date before processing
-    ensure_graph_updated()?;
+    // Check if graph is initialized, but don't force updates since graph manager handles changes
+    if !graph_manager::is_graph_initialized() {
+        return Err(anyhow::anyhow!("Code graph not initialized. Please wait for initialization to complete."));
+    }
     
     match handle_analyze_code(args) {
         Some(Ok(result)) => Ok(result),
@@ -52,8 +55,10 @@ pub fn call_analyze_code(args: Value) -> Result<Value> {
 
 /// Call the find_symbol_references function from codex-core
 pub fn call_find_symbol_references(args: Value) -> Result<Value> {
-    // Ensure the graph is up-to-date before processing
-    ensure_graph_updated()?;
+    // Check if graph is initialized, but don't force updates since graph manager handles changes
+    if !graph_manager::is_graph_initialized() {
+        return Err(anyhow::anyhow!("Code graph not initialized. Please wait for initialization to complete."));
+    }
     
     match handle_find_symbol_references(args) {
         Some(Ok(result)) => Ok(result),
@@ -64,8 +69,10 @@ pub fn call_find_symbol_references(args: Value) -> Result<Value> {
 
 /// Call the find_symbol_definitions function from codex-core
 pub fn call_find_symbol_definitions(args: Value) -> Result<Value> {
-    // Ensure the graph is up-to-date before processing
-    ensure_graph_updated()?;
+    // Check if graph is initialized, but don't force updates since graph manager handles changes
+    if !graph_manager::is_graph_initialized() {
+        return Err(anyhow::anyhow!("Code graph not initialized. Please wait for initialization to complete."));
+    }
     
     match handle_find_symbol_definitions(args) {
         Some(Ok(result)) => Ok(result),
@@ -76,8 +83,10 @@ pub fn call_find_symbol_definitions(args: Value) -> Result<Value> {
 
 /// Call the get_symbol_subgraph function from codex-core
 pub fn call_get_symbol_subgraph(args: Value) -> Result<Value> {
-    // Ensure the graph is up-to-date before processing
-    ensure_graph_updated()?;
+    // Check if graph is initialized, but don't force updates since graph manager handles changes
+    if !graph_manager::is_graph_initialized() {
+        return Err(anyhow::anyhow!("Code graph not initialized. Please wait for initialization to complete."));
+    }
     
     match handle_get_symbol_subgraph(args) {
         Some(Ok(result)) => Ok(result),
@@ -88,9 +97,8 @@ pub fn call_get_symbol_subgraph(args: Value) -> Result<Value> {
 
 /// Call the get_related_files_skeleton function from codex-core
 pub fn call_get_related_files_skeleton(args: Value) -> Result<Value> {
-    // Ensure the graph is up-to-date before processing
-    ensure_graph_updated()?;
-    
+    // Skip graph update for skeleton operations since they use cached data
+    // and the graph is already initialized during server startup
     match handle_get_related_files_skeleton(args) {
         Some(Ok(result)) => Ok(result),
         Some(Err(e)) => Err(anyhow::anyhow!("Error in get_related_files_skeleton: {}", e)),
@@ -100,9 +108,8 @@ pub fn call_get_related_files_skeleton(args: Value) -> Result<Value> {
 
 /// Call the get_multiple_files_skeleton function from codex-core
 pub fn call_get_multiple_files_skeleton(args: Value) -> Result<Value> {
-    // Ensure the graph is up-to-date before processing
-    ensure_graph_updated()?;
-    
+    // Skip graph update for skeleton operations since they use cached data
+    // and the graph is already initialized during server startup
     match handle_get_multiple_files_skeleton(args) {
         Some(Ok(result)) => Ok(result),
         Some(Err(e)) => Err(anyhow::anyhow!("Error in get_multiple_files_skeleton: {}", e)),

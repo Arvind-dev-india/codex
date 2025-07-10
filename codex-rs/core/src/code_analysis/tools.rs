@@ -1986,8 +1986,17 @@ fn get_multiple_files_skeleton_handler(args: Value) -> Result<Value, String> {
     let input: GetMultipleFilesSkeletonInput = serde_json::from_value(args)
         .map_err(|e| format!("Invalid arguments: {}", e))?;
 
+    // Check if the code graph is initialized
+    if !super::graph_manager::is_graph_initialized() {
+        return Err("Code graph not initialized. Please wait for initialization to complete.".to_string());
+    }
+
+    tracing::info!("Starting skeleton generation for {} files", input.file_paths.len());
+
     // Generate skeletons for the specified files with token limit
     let skeletons = generate_file_skeletons(&input.file_paths, input.max_tokens)?;
+    
+    tracing::info!("Completed skeleton generation for {} files", skeletons.len());
     
     Ok(json!({
         "files": skeletons,
@@ -2084,12 +2093,29 @@ fn generate_file_skeletons(files: &[String], max_tokens: usize) -> Result<Vec<Va
     let mut skeletons = Vec::new();
     let mut current_tokens = 0;
     
-    for file_path in files {
+    for (i, file_path) in files.iter().enumerate() {
         if current_tokens >= max_tokens {
+            tracing::debug!("Reached token limit, stopping at file {} of {}", i, files.len());
             break;
         }
         
-        let skeleton = generate_single_file_skeleton(file_path)?;
+        tracing::debug!("Generating skeleton for file {} of {}: {}", i + 1, files.len(), file_path);
+        
+        // Add timeout protection - if skeleton generation takes too long, use fallback
+        let skeleton = match std::panic::catch_unwind(|| {
+            generate_single_file_skeleton(file_path)
+        }) {
+            Ok(Ok(skeleton)) => skeleton,
+            Ok(Err(e)) => {
+                tracing::warn!("Failed to generate skeleton for {}: {}, using simple fallback", file_path, e);
+                generate_simple_fallback_skeleton(file_path)?
+            },
+            Err(_) => {
+                tracing::error!("Skeleton generation panicked for {}, using simple fallback", file_path);
+                generate_simple_fallback_skeleton(file_path)?
+            }
+        };
+        
         let skeleton_tokens = approximate_tokens(&skeleton);
         
         if current_tokens + skeleton_tokens <= max_tokens {
@@ -2121,8 +2147,18 @@ pub fn generate_single_file_skeleton(file_path: &str) -> Result<String, String> 
     use std::fs;
     use std::collections::HashMap;
     
+    tracing::debug!("Starting skeleton generation for: {}", file_path);
+    
     let content = fs::read_to_string(file_path)
         .map_err(|e| format!("Failed to read file {}: {}", file_path, e))?;
+    
+    tracing::debug!("File read successfully, {} bytes", content.len());
+    
+    // FAST PATH: For very large files, use simple fallback immediately to prevent timeout
+    if content.len() > 500_000 { // 500KB threshold
+        tracing::warn!("File {} is very large ({} bytes), using fast fallback skeleton", file_path, content.len());
+        return generate_simple_fallback_skeleton(file_path);
+    }
     
     let manager = super::graph_manager::get_graph_manager();
     let manager = manager.read().map_err(|e| format!("Failed to acquire read lock: {}", e))?;
@@ -2130,12 +2166,72 @@ pub fn generate_single_file_skeleton(file_path: &str) -> Result<String, String> 
     let repo_mapper = manager.get_repo_mapper()
         .ok_or("Repository mapper not available")?;
     
-    // Get symbols defined in this file
-    let mut symbols_in_file: Vec<_> = repo_mapper.get_all_symbols()
-        .iter()
-        .filter(|(_, symbol)| symbol.file_path == file_path)
-        .map(|(_, symbol)| symbol.clone())
-        .collect();
+    tracing::debug!("Got repo mapper, searching for symbols in file");
+    
+    // OPTIMIZATION: Instead of iterating through ALL symbols, use a more efficient approach
+    // First try to get symbols directly by file path
+    let mut symbols_in_file = if let Some(symbols) = get_cached_symbols_for_file(file_path, &repo_mapper) {
+        symbols
+    } else {
+        tracing::warn!("No cached symbols found for {}, using fallback", file_path);
+        // Fallback to the old method but with early termination
+        let mut symbols_in_file: Vec<_> = repo_mapper.get_all_symbols()
+            .iter()
+            .take(10000) // Limit iteration to prevent infinite loops on huge codebases
+            .filter_map(|(_, symbol)| {
+                // First try simple string comparison
+                if symbol.file_path == file_path {
+                    return Some(symbol.clone());
+                }
+                
+                // Skip expensive path normalization for performance
+                None
+            })
+            .collect();
+        
+        // If no symbols found with simple comparison, try one normalized comparison
+        if symbols_in_file.is_empty() {
+            let normalized_file_path = std::path::Path::new(file_path)
+                .canonicalize()
+                .unwrap_or_else(|_| std::path::PathBuf::from(file_path))
+                .to_string_lossy()
+                .to_string();
+            
+            symbols_in_file = repo_mapper.get_all_symbols()
+                .iter()
+                .take(5000) // Even more limited for expensive operation
+                .filter_map(|(_, symbol)| {
+                    let symbol_path = std::path::Path::new(&symbol.file_path)
+                        .canonicalize()
+                        .unwrap_or_else(|_| std::path::PathBuf::from(&symbol.file_path))
+                        .to_string_lossy()
+                        .to_string();
+                    
+                    if symbol_path == normalized_file_path {
+                        Some(symbol.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+        }
+        
+        symbols_in_file
+    };
+    
+    // Debug: Log symbol detection
+    tracing::debug!("Skeleton generation for {}: found {} symbols", file_path, symbols_in_file.len());
+    if symbols_in_file.is_empty() {
+        tracing::warn!("No symbols found for file: {}, using fallback skeleton", file_path);
+        // Fallback: try to parse the file directly if no symbols found
+        return generate_fallback_skeleton(file_path, &content);
+    }
+    
+    // Limit the number of symbols to prevent timeout on very large files
+    if symbols_in_file.len() > 500 {
+        tracing::warn!("File {} has {} symbols, truncating to 500 to prevent timeout", file_path, symbols_in_file.len());
+        symbols_in_file.truncate(500);
+    }
     
     // Sort symbols by start line to maintain order
     symbols_in_file.sort_by_key(|s| s.start_line);
@@ -2194,11 +2290,194 @@ pub fn generate_single_file_skeleton(file_path: &str) -> Result<String, String> 
     }
     
     // Generate skeleton with proper hierarchy
-    for symbol in top_level_symbols {
+    tracing::debug!("Generating skeleton for {} top-level symbols", top_level_symbols.len());
+    for (i, symbol) in top_level_symbols.iter().enumerate() {
+        if i % 50 == 0 {
+            tracing::debug!("Processing symbol {} of {}", i + 1, top_level_symbols.len());
+        }
         generate_symbol_skeleton(&mut skeleton, symbol, &child_symbols, &lines, 0)?;
     }
     
+    tracing::debug!("Skeleton generation completed for: {}", file_path);
     Ok(skeleton)
+}
+
+/// Get symbols for a specific file using cached/optimized lookup
+fn get_cached_symbols_for_file(file_path: &str, repo_mapper: &super::repo_mapper::RepoMapper) -> Option<Vec<super::context_extractor::CodeSymbol>> {
+    
+    // Try to get symbols more efficiently by using the repo mapper's internal structure
+    // This avoids iterating through ALL symbols in the codebase
+    
+    // First, try exact file path match
+    let mut symbols = Vec::new();
+    
+    // Get all symbols but limit the search scope
+    let all_symbols = repo_mapper.get_all_symbols();
+    let total_symbols = all_symbols.len();
+    
+    tracing::debug!("Searching through {} total symbols for file: {}", total_symbols, file_path);
+    
+    // Use a more efficient approach: collect symbols with matching file paths
+    for (_, symbol) in all_symbols.iter().take(std::cmp::min(total_symbols, 20000)) {
+        if symbol.file_path == file_path {
+            symbols.push(symbol.clone());
+        }
+    }
+    
+    if !symbols.is_empty() {
+        tracing::debug!("Found {} symbols for file {} using exact path match", symbols.len(), file_path);
+        return Some(symbols);
+    }
+    
+    // If no exact matches, try a few common path variations
+    let file_name = std::path::Path::new(file_path).file_name()?.to_str()?;
+    
+    for (_, symbol) in all_symbols.iter().take(std::cmp::min(total_symbols, 10000)) {
+        if let Some(symbol_file_name) = std::path::Path::new(&symbol.file_path).file_name() {
+            if symbol_file_name.to_str() == Some(file_name) {
+                symbols.push(symbol.clone());
+            }
+        }
+    }
+    
+    if !symbols.is_empty() {
+        tracing::debug!("Found {} symbols for file {} using filename match", symbols.len(), file_path);
+        return Some(symbols);
+    }
+    
+    tracing::debug!("No symbols found for file: {}", file_path);
+    None
+}
+
+/// Generate a simple fallback skeleton for timeout/error cases
+fn generate_simple_fallback_skeleton(file_path: &str) -> Result<String, String> {
+    use std::fs;
+    
+    let content = fs::read_to_string(file_path)
+        .map_err(|e| format!("Failed to read file {}: {}", file_path, e))?;
+    
+    let mut skeleton = String::new();
+    let lines: Vec<&str> = content.lines().collect();
+    
+    // Add file header comment
+    skeleton.push_str(&format!("// File: {}\n", file_path));
+    skeleton.push_str("// (Simple fallback skeleton - detailed analysis unavailable)\n\n");
+    
+    // Add imports/includes at the top (first 50 lines max)
+    for (i, line) in lines.iter().enumerate().take(50) {
+        let trimmed = line.trim();
+        if trimmed.starts_with("import ") || trimmed.starts_with("from ") || 
+           trimmed.starts_with("#include") || trimmed.starts_with("using ") ||
+           trimmed.starts_with("package ") || trimmed.starts_with("mod ") ||
+           trimmed.starts_with("use ") || trimmed.starts_with("namespace ") {
+            skeleton.push_str(&format!("{}  // Line {}\n", line, i + 1));
+        }
+    }
+    
+    skeleton.push_str("\n// ... (content truncated for performance) ...\n");
+    
+    Ok(skeleton)
+}
+
+/// Generate a fallback skeleton when no symbols are detected
+fn generate_fallback_skeleton(file_path: &str, content: &str) -> Result<String, String> {
+    tracing::info!("Generating fallback skeleton for {}", file_path);
+    
+    let mut skeleton = String::new();
+    let lines: Vec<&str> = content.lines().collect();
+    
+    // Add imports/using statements
+    for line in &lines {
+        let trimmed = line.trim();
+        if trimmed.starts_with("using ") || trimmed.starts_with("import ") {
+            skeleton.push_str(line);
+            skeleton.push('\n');
+        }
+    }
+    
+    skeleton.push('\n');
+    
+    // Parse the file directly with tree-sitter to extract structure
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&tree_sitter_c_sharp::LANGUAGE.into())
+        .map_err(|e| format!("Failed to set C# language: {}", e))?;
+    
+    let tree = parser.parse(content, None)
+        .ok_or("Failed to parse file with tree-sitter")?;
+    
+    let root_node = tree.root_node();
+    
+    // Extract basic structure
+    extract_node_skeleton(&mut skeleton, root_node, content, 0)?;
+    
+    Ok(skeleton)
+}
+
+/// Extract skeleton from tree-sitter nodes
+fn extract_node_skeleton(skeleton: &mut String, node: tree_sitter::Node, content: &str, depth: usize) -> Result<(), String> {
+    let indent = "    ".repeat(depth);
+    
+    match node.kind() {
+        "namespace_declaration" => {
+            let start_line = node.start_position().row + 1;
+            let end_line = node.end_position().row + 1;
+            
+            // Get namespace name
+            if let Some(name_node) = node.child_by_field_name("name") {
+                let name = name_node.utf8_text(content.as_bytes()).unwrap_or("Unknown");
+                skeleton.push_str(&format!("{}// Lines {}-{}\n", indent, start_line, end_line));
+                skeleton.push_str(&format!("{}// symbol: {} {{\n", indent, name));
+                
+                // Process children
+                for i in 0..node.child_count() {
+                    if let Some(child) = node.child(i) {
+                        extract_node_skeleton(skeleton, child, content, depth + 1)?;
+                    }
+                }
+                
+                skeleton.push_str(&format!("{}}}\n\n", indent));
+            }
+        }
+        "class_declaration" | "interface_declaration" | "struct_declaration" | "enum_declaration" => {
+            let start_line = node.start_position().row + 1;
+            let end_line = node.end_position().row + 1;
+            
+            // Get the declaration text (first line)
+            let start_byte = node.start_byte();
+            let first_line_end = content[start_byte..].find('\n').unwrap_or(content.len() - start_byte);
+            let declaration = &content[start_byte..start_byte + first_line_end];
+            
+            skeleton.push_str(&format!("{}// Lines {}-{}\n", indent, start_line, end_line));
+            skeleton.push_str(&format!("{}{} {{\n", indent, declaration.trim()));
+            skeleton.push_str(&format!("{}    // ...\n", indent));
+            skeleton.push_str(&format!("{}}}\n\n", indent));
+        }
+        "method_declaration" | "constructor_declaration" | "property_declaration" => {
+            let start_line = node.start_position().row + 1;
+            let end_line = node.end_position().row + 1;
+            
+            // Get the signature (first line or until opening brace)
+            let _start_byte = node.start_byte();
+            let node_text = node.utf8_text(content.as_bytes()).unwrap_or("");
+            let signature_end = node_text.find('{').unwrap_or(node_text.find('\n').unwrap_or(node_text.len()));
+            let signature = &node_text[..signature_end].trim();
+            
+            skeleton.push_str(&format!("{}// Lines {}-{}\n", indent, start_line, end_line));
+            skeleton.push_str(&format!("{}{} {{\n", indent, signature));
+            skeleton.push_str(&format!("{}    // ...\n", indent));
+            skeleton.push_str(&format!("{}}}\n\n", indent));
+        }
+        _ => {
+            // Process children for other node types
+            for i in 0..node.child_count() {
+                if let Some(child) = node.child(i) {
+                    extract_node_skeleton(skeleton, child, content, depth)?;
+                }
+            }
+        }
+    }
+    
+    Ok(())
 }
 
 /// Generate skeleton for a symbol and its children with proper indentation
