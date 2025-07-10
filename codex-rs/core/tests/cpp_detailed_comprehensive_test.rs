@@ -111,6 +111,22 @@ async fn test_cpp_templates_and_generics() {
     
     println!("Found {} template functions", template_functions.len());
     
+    // Check for template parameters
+    let template_params = symbols.iter()
+        .filter(|(fqn, _)| fqn.contains("<") && fqn.contains(">"))
+        .count();
+    
+    println!("Found {} symbols with template parameters", template_params);
+    
+    // Check for template specializations
+    let specializations = symbols.iter()
+        .filter(|(fqn, s)| 
+            (fqn.contains("<") && fqn.contains(">") && fqn.contains("specialization")) ||
+            (s.name.contains("specialization") || s.name.contains("Specialized")))
+        .count();
+    
+    println!("Found {} template specializations", specializations);
+    
     println!("Templates and generics parsing successful");
 }
 
@@ -172,6 +188,23 @@ async fn test_cpp_operator_overloading() {
     
     println!("Found operators: assignment={}, equality={}, stream={}", 
              assignment_op.is_some(), equality_op.is_some(), stream_op.is_some());
+    
+    // Check for operator methods in Point class
+    let point_operators = symbols.iter()
+        .filter(|(fqn, s)| 
+            fqn.contains("Point") && s.name.starts_with("operator"))
+        .count();
+    
+    println!("Found {} operator methods in Point class", point_operators);
+    
+    // Check for common arithmetic operators
+    let arithmetic_ops = symbols.iter()
+        .filter(|(_, s)| 
+            s.name.contains("operator+") || s.name.contains("operator-") || 
+            s.name.contains("operator*") || s.name.contains("operator/"))
+        .count();
+    
+    println!("Found {} arithmetic operators", arithmetic_ops);
     
     println!("Operator overloading parsing successful");
 }

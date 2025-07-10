@@ -15,22 +15,27 @@ The C++ code analysis tests verify the ability to parse, analyze, and extract in
    - Tests for all code analysis tools with C++ code
    - Performance and edge case tests
 
-2. **`cpp_simple_test.rs`**
+2. **`cpp_advanced_features_test.rs`**
+   - Tests for modern C++ features (C++11/14/17/20)
+   - Tests for complex design patterns (CRTP, Factory, Singleton)
+   - Tests for template metaprogramming
+
+3. **`cpp_simple_test.rs`**
    - Basic C++ parsing tests
    - Simple C++ language feature tests
 
-3. **`cpp_analysis_comprehensive.rs`**
+4. **`cpp_analysis_comprehensive.rs`**
    - Comprehensive tests for C++ symbol extraction
    - Tests for class hierarchies, templates, etc.
 
-4. **`cpp_comprehensive_multifile_test.rs`**
+5. **`cpp_comprehensive_multifile_test.rs`**
    - Tests for analyzing C++ code across multiple files
    - Tests for cross-file dependencies
 
-5. **`cpp_intra_file_calls.rs`**
+6. **`cpp_intra_file_calls.rs`**
    - Tests for detecting function calls within C++ files
 
-6. **`code_analysis_cpp_csharp_java.rs`**
+7. **`code_analysis_cpp_csharp_java.rs`**
    - Cross-language tests including C++
 
 ## Test Data
@@ -92,7 +97,18 @@ Tests for parsing and analyzing various C++ language features:
 - Cross-file dependencies
 - Advanced features (lambdas, auto keyword)
 
-### 2. Code Analysis Tool Tests
+### 2. Modern C++ Features
+
+Tests for modern C++ features and design patterns:
+
+- C++11 features (auto, lambdas, nullptr, range-based for loops)
+- C++14 features (generic lambdas, return type deduction)
+- C++17 features (structured bindings, if constexpr, std::optional)
+- C++20 features (concepts, ranges, coroutines)
+- Design patterns (CRTP, Pimpl, Factory, Observer, Singleton)
+- Template metaprogramming (compile-time calculations, SFINAE, variadic templates)
+
+### 3. Code Analysis Tool Tests
 
 Tests for the code analysis tools with C++ code:
 
@@ -102,7 +118,7 @@ Tests for the code analysis tools with C++ code:
 - `get_symbol_subgraph` - Gets the subgraph of related symbols
 - `get_related_files_skeleton` - Gets skeleton views of related files
 
-### 3. Performance and Edge Case Tests
+### 4. Performance and Edge Case Tests
 
 Tests for handling special cases:
 

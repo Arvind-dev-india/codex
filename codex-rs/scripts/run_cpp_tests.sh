@@ -103,6 +103,7 @@ run_test "cpp_simple_test" "Simple C++ parsing tests"
 run_test "cpp_analysis_comprehensive" "Comprehensive C++ analysis tests"
 run_test "cpp_comprehensive_multifile_test" "Multi-file C++ analysis tests"
 run_test "cpp_intra_file_calls" "C++ intra-file call analysis"
+run_test "cpp_advanced_features_test" "Advanced C++ features and patterns"
 run_test "code_analysis_cpp_csharp_java" "Cross-language tests including C++"
 
 echo -e "${GREEN}=== All C++ tests completed successfully! ===${NC}"
