@@ -647,6 +647,11 @@ impl RepoMapper {
         self.context_extractor.get_symbols()
     }
     
+    /// Get symbols for a specific file - O(1) lookup using cached index
+    pub fn get_symbols_for_file(&self, file_path: &str) -> Vec<&CodeSymbol> {
+        self.context_extractor.get_symbols_for_file(file_path)
+    }
+    
     /// Get mapping from symbol names to FQNs
     pub fn get_name_to_fqns(&self) -> &std::collections::HashMap<String, Vec<String>> {
         self.context_extractor.get_name_to_fqns()

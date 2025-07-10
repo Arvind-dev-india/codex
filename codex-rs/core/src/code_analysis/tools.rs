@@ -2168,59 +2168,15 @@ pub fn generate_single_file_skeleton(file_path: &str) -> Result<String, String> 
     
     tracing::debug!("Got repo mapper, searching for symbols in file");
     
-    // OPTIMIZATION: Instead of iterating through ALL symbols, use a more efficient approach
-    // First try to get symbols directly by file path
-    let mut symbols_in_file = if let Some(symbols) = get_cached_symbols_for_file(file_path, &repo_mapper) {
-        symbols
-    } else {
-        tracing::warn!("No cached symbols found for {}, using fallback", file_path);
-        // Fallback to the old method but with early termination
-        let mut symbols_in_file: Vec<_> = repo_mapper.get_all_symbols()
-            .iter()
-            .take(10000) // Limit iteration to prevent infinite loops on huge codebases
-            .filter_map(|(_, symbol)| {
-                // First try simple string comparison
-                if symbol.file_path == file_path {
-                    return Some(symbol.clone());
-                }
-                
-                // Skip expensive path normalization for performance
-                None
-            })
-            .collect();
-        
-        // If no symbols found with simple comparison, try one normalized comparison
-        if symbols_in_file.is_empty() {
-            let normalized_file_path = std::path::Path::new(file_path)
-                .canonicalize()
-                .unwrap_or_else(|_| std::path::PathBuf::from(file_path))
-                .to_string_lossy()
-                .to_string();
-            
-            symbols_in_file = repo_mapper.get_all_symbols()
-                .iter()
-                .take(5000) // Even more limited for expensive operation
-                .filter_map(|(_, symbol)| {
-                    let symbol_path = std::path::Path::new(&symbol.file_path)
-                        .canonicalize()
-                        .unwrap_or_else(|_| std::path::PathBuf::from(&symbol.file_path))
-                        .to_string_lossy()
-                        .to_string();
-                    
-                    if symbol_path == normalized_file_path {
-                        Some(symbol.clone())
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-        }
-        
-        symbols_in_file
-    };
+    // OPTIMIZATION: Use O(1) file-based symbol lookup from graph manager's cache
+    let symbols_in_file: Vec<_> = repo_mapper.get_symbols_for_file(file_path)
+        .into_iter()
+        .cloned()
+        .collect();
     
-    // Debug: Log symbol detection
-    tracing::debug!("Skeleton generation for {}: found {} symbols", file_path, symbols_in_file.len());
+    tracing::debug!("Found {} symbols for file {} using O(1) lookup", symbols_in_file.len(), file_path);
+    
+    // Check if we found any symbols
     if symbols_in_file.is_empty() {
         tracing::warn!("No symbols found for file: {}, using fallback skeleton", file_path);
         // Fallback: try to parse the file directly if no symbols found
@@ -2228,6 +2184,7 @@ pub fn generate_single_file_skeleton(file_path: &str) -> Result<String, String> 
     }
     
     // Limit the number of symbols to prevent timeout on very large files
+    let mut symbols_in_file = symbols_in_file;
     if symbols_in_file.len() > 500 {
         tracing::warn!("File {} has {} symbols, truncating to 500 to prevent timeout", file_path, symbols_in_file.len());
         symbols_in_file.truncate(500);
@@ -2302,52 +2259,7 @@ pub fn generate_single_file_skeleton(file_path: &str) -> Result<String, String> 
     Ok(skeleton)
 }
 
-/// Get symbols for a specific file using cached/optimized lookup
-fn get_cached_symbols_for_file(file_path: &str, repo_mapper: &super::repo_mapper::RepoMapper) -> Option<Vec<super::context_extractor::CodeSymbol>> {
-    
-    // Try to get symbols more efficiently by using the repo mapper's internal structure
-    // This avoids iterating through ALL symbols in the codebase
-    
-    // First, try exact file path match
-    let mut symbols = Vec::new();
-    
-    // Get all symbols but limit the search scope
-    let all_symbols = repo_mapper.get_all_symbols();
-    let total_symbols = all_symbols.len();
-    
-    tracing::debug!("Searching through {} total symbols for file: {}", total_symbols, file_path);
-    
-    // Use a more efficient approach: collect symbols with matching file paths
-    for (_, symbol) in all_symbols.iter().take(std::cmp::min(total_symbols, 20000)) {
-        if symbol.file_path == file_path {
-            symbols.push(symbol.clone());
-        }
-    }
-    
-    if !symbols.is_empty() {
-        tracing::debug!("Found {} symbols for file {} using exact path match", symbols.len(), file_path);
-        return Some(symbols);
-    }
-    
-    // If no exact matches, try a few common path variations
-    let file_name = std::path::Path::new(file_path).file_name()?.to_str()?;
-    
-    for (_, symbol) in all_symbols.iter().take(std::cmp::min(total_symbols, 10000)) {
-        if let Some(symbol_file_name) = std::path::Path::new(&symbol.file_path).file_name() {
-            if symbol_file_name.to_str() == Some(file_name) {
-                symbols.push(symbol.clone());
-            }
-        }
-    }
-    
-    if !symbols.is_empty() {
-        tracing::debug!("Found {} symbols for file {} using filename match", symbols.len(), file_path);
-        return Some(symbols);
-    }
-    
-    tracing::debug!("No symbols found for file: {}", file_path);
-    None
-}
+
 
 /// Generate a simple fallback skeleton for timeout/error cases
 fn generate_simple_fallback_skeleton(file_path: &str) -> Result<String, String> {

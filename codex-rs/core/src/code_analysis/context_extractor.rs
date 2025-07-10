@@ -443,6 +443,17 @@ impl ContextExtractor {
         &self.symbols
     }
     
+    /// Get symbols for a specific file - O(1) lookup using cached file_symbols index
+    pub fn get_symbols_for_file(&self, file_path: &str) -> Vec<&CodeSymbol> {
+        if let Some(symbol_fqns) = self.file_symbols.get(file_path) {
+            symbol_fqns.iter()
+                .filter_map(|fqn| self.symbols.get(fqn))
+                .collect()
+        } else {
+            Vec::new()
+        }
+    }
+    
     /// Get mapping from symbol names to their FQNs
     pub fn get_name_to_fqns(&self) -> &HashMap<String, Vec<String>> {
         &self.name_to_fqns
