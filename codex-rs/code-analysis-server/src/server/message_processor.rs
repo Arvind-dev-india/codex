@@ -222,6 +222,46 @@ impl MessageProcessor {
                     },
                 }
             },
+            "get_related_files_skeleton" => {
+                match code_analysis_bridge::call_get_related_files_skeleton(arguments) {
+                    Ok(result) => CallToolResult {
+                        content: vec![CallToolResultContent::TextContent(TextContent {
+                            r#type: "text".to_string(),
+                            text: serde_json::to_string_pretty(&result).unwrap_or_else(|_| result.to_string()),
+                            annotations: None,
+                        })],
+                        is_error: Some(false),
+                    },
+                    Err(e) => CallToolResult {
+                        content: vec![CallToolResultContent::TextContent(TextContent {
+                            r#type: "text".to_string(),
+                            text: format!("Error getting related files skeleton: {}", e),
+                            annotations: None,
+                        })],
+                        is_error: Some(true),
+                    },
+                }
+            },
+            "get_multiple_files_skeleton" => {
+                match code_analysis_bridge::call_get_multiple_files_skeleton(arguments) {
+                    Ok(result) => CallToolResult {
+                        content: vec![CallToolResultContent::TextContent(TextContent {
+                            r#type: "text".to_string(),
+                            text: serde_json::to_string_pretty(&result).unwrap_or_else(|_| result.to_string()),
+                            annotations: None,
+                        })],
+                        is_error: Some(false),
+                    },
+                    Err(e) => CallToolResult {
+                        content: vec![CallToolResultContent::TextContent(TextContent {
+                            r#type: "text".to_string(),
+                            text: format!("Error getting multiple files skeleton: {}", e),
+                            annotations: None,
+                        })],
+                        is_error: Some(true),
+                    },
+                }
+            },
             _ => CallToolResult {
                 content: vec![CallToolResultContent::TextContent(TextContent {
                     r#type: "text".to_string(),

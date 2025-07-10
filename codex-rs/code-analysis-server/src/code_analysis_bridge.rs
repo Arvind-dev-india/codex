@@ -6,6 +6,8 @@ use codex_core::code_analysis::{
     handle_find_symbol_references,
     handle_find_symbol_definitions,
     handle_get_symbol_subgraph,
+    handle_get_related_files_skeleton,
+    handle_get_multiple_files_skeleton,
     graph_manager,
 };
 use serde_json::Value;
@@ -81,5 +83,29 @@ pub fn call_get_symbol_subgraph(args: Value) -> Result<Value> {
         Some(Ok(result)) => Ok(result),
         Some(Err(e)) => Err(anyhow::anyhow!("Error in get_symbol_subgraph: {}", e)),
         None => Err(anyhow::anyhow!("Failed to handle get_symbol_subgraph")),
+    }
+}
+
+/// Call the get_related_files_skeleton function from codex-core
+pub fn call_get_related_files_skeleton(args: Value) -> Result<Value> {
+    // Ensure the graph is up-to-date before processing
+    ensure_graph_updated()?;
+    
+    match handle_get_related_files_skeleton(args) {
+        Some(Ok(result)) => Ok(result),
+        Some(Err(e)) => Err(anyhow::anyhow!("Error in get_related_files_skeleton: {}", e)),
+        None => Err(anyhow::anyhow!("Failed to handle get_related_files_skeleton")),
+    }
+}
+
+/// Call the get_multiple_files_skeleton function from codex-core
+pub fn call_get_multiple_files_skeleton(args: Value) -> Result<Value> {
+    // Ensure the graph is up-to-date before processing
+    ensure_graph_updated()?;
+    
+    match handle_get_multiple_files_skeleton(args) {
+        Some(Ok(result)) => Ok(result),
+        Some(Err(e)) => Err(anyhow::anyhow!("Error in get_multiple_files_skeleton: {}", e)),
+        None => Err(anyhow::anyhow!("Failed to handle get_multiple_files_skeleton")),
     }
 }

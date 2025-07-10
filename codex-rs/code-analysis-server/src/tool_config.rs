@@ -10,6 +10,8 @@ pub fn create_code_analysis_tools() -> Vec<Tool> {
         create_find_symbol_references_tool(),
         create_find_symbol_definitions_tool(),
         create_get_symbol_subgraph_tool(),
+        create_get_related_files_skeleton_tool(),
+        create_get_multiple_files_skeleton_tool(),
     ]
 }
 
@@ -102,6 +104,71 @@ fn create_get_symbol_subgraph_tool() -> Tool {
                 }
             })),
             required: Some(vec!["symbol_name".to_string()]),
+        },
+    }
+}
+
+/// Create the get_related_files_skeleton tool definition
+fn create_get_related_files_skeleton_tool() -> Tool {
+    Tool {
+        name: "get_related_files_skeleton".to_string(),
+        description: Some("Get skeleton views of files related to the provided active files. Uses BFS traversal to find related files through symbol references and dependencies. Provides function signatures, class definitions, and import statements while replacing implementation details with '...'. Includes line numbers for each symbol. Respects the specified token limit by prioritizing closer relationships and truncating content as needed.".to_string()),
+        annotations: None,
+        input_schema: ToolInputSchema {
+            r#type: "object".to_string(),
+            properties: Some(json!({
+                "active_files": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "List of active file paths to find related files for"
+                },
+                "max_tokens": {
+                    "type": "integer",
+                    "description": "Maximum number of tokens to include in the response (default: 4000)",
+                    "default": 4000,
+                    "minimum": 100,
+                    "maximum": 20000
+                },
+                "max_depth": {
+                    "type": "integer",
+                    "description": "Maximum depth for BFS traversal (default: 3)",
+                    "default": 3,
+                    "minimum": 1,
+                    "maximum": 10
+                }
+            })),
+            required: Some(vec!["active_files".to_string()]),
+        },
+    }
+}
+
+/// Create the get_multiple_files_skeleton tool definition
+fn create_get_multiple_files_skeleton_tool() -> Tool {
+    Tool {
+        name: "get_multiple_files_skeleton".to_string(),
+        description: Some("Get skeleton views of the specified files. Provides function signatures, class definitions, and import statements while replacing implementation details with '...'. Includes line numbers for each symbol (start_line-end_line). This is like a collapsed view of files for LLMs with knowledge of line numbers. Respects the specified token limit by truncating content as needed.".to_string()),
+        annotations: None,
+        input_schema: ToolInputSchema {
+            r#type: "object".to_string(),
+            properties: Some(json!({
+                "file_paths": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "List of file paths to generate skeletons for"
+                },
+                "max_tokens": {
+                    "type": "integer",
+                    "description": "Maximum number of tokens to include in the response (default: 4000)",
+                    "default": 4000,
+                    "minimum": 100,
+                    "maximum": 20000
+                }
+            })),
+            required: Some(vec!["file_paths".to_string()]),
         },
     }
 }
