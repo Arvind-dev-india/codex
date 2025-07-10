@@ -14,6 +14,7 @@ pub fn register_code_analysis_tools() -> Vec<OpenAiTool> {
         create_find_symbol_references_tool(),
         create_find_symbol_definitions_tool(),
         create_get_symbol_subgraph_tool(),
+        create_get_related_files_skeleton_tool(),
         // Note: update_code_graph_tool removed as initialization is now automatic
         // Note: get_code_graph_tool removed as it can return huge amounts of data for large repositories
     ]
@@ -93,6 +94,35 @@ fn create_get_symbol_subgraph_tool() -> OpenAiTool {
     )
 }
 
+/// Create a tool for getting skeleton of related files with token limit
+fn create_get_related_files_skeleton_tool() -> OpenAiTool {
+    let mut properties = BTreeMap::new();
+    
+    properties.insert(
+        "active_files".to_string(),
+        JsonSchema::Array {
+            items: Box::new(JsonSchema::String),
+        },
+    );
+    
+    properties.insert(
+        "max_tokens".to_string(),
+        JsonSchema::Number,
+    );
+    
+    properties.insert(
+        "max_depth".to_string(),
+        JsonSchema::Number,
+    );
+    
+    create_function_tool(
+        "code_analysis_get_related_files_skeleton",
+        "Returns skeleton views of files related to the provided active files. Uses BFS traversal to find related files through symbol references and dependencies. Provides function signatures, class definitions, and import statements while replacing implementation details with '...'. Respects the specified token limit by prioritizing closer relationships and truncating content as needed.",
+        properties,
+        &["active_files", "max_tokens"],
+    )
+}
+
 /// Create a tool for updating the code graph
 fn _create_update_code_graph_tool() -> OpenAiTool {
     let mut properties = BTreeMap::new();
@@ -154,6 +184,24 @@ fn default_max_depth() -> usize {
 pub struct UpdateCodeGraphInput {
     #[serde(default)]
     pub root_path: Option<String>,
+}
+
+/// Input for the get_related_files_skeleton tool
+#[derive(Debug, Deserialize, Serialize)]
+pub struct GetRelatedFilesSkeletonInput {
+    pub active_files: Vec<String>,
+    #[serde(default = "default_max_tokens")]
+    pub max_tokens: usize,
+    #[serde(default = "default_skeleton_max_depth")]
+    pub max_depth: usize,
+}
+
+fn default_max_tokens() -> usize {
+    4000
+}
+
+fn default_skeleton_max_depth() -> usize {
+    3
 }
 
 /// Symbol information returned by analyze_code
@@ -1655,6 +1703,11 @@ pub fn handle_find_symbol_definitions(args: Value) -> Option<Result<Value, Strin
 }
 
 
+/// Handle the get_related_files_skeleton tool call
+pub fn handle_get_related_files_skeleton(args: Value) -> Option<Result<Value, String>> {
+    Some(get_related_files_skeleton_handler(args))
+}
+
 /// Handle the get_symbol_subgraph tool call
 pub fn handle_get_symbol_subgraph(args: Value) -> Option<Result<Value, String>> {
     Some(match serde_json::from_value::<GetSymbolSubgraphInput>(args) {
@@ -1865,5 +1918,329 @@ fn find_matching_brace(lines: &[&str], start_line: usize) -> Option<usize> {
     }
     
     None
+}
+
+/// Implementation for get_related_files_skeleton tool
+fn get_related_files_skeleton_handler(args: Value) -> Result<Value, String> {
+    let input: GetRelatedFilesSkeletonInput = serde_json::from_value(args)
+        .map_err(|e| format!("Invalid arguments: {}", e))?;
+
+    // Check if the code graph is initialized
+    if !super::graph_manager::is_graph_initialized() {
+        return Err("Code graph not initialized. Please wait for initialization to complete.".to_string());
+    }
+
+    // Find related files using BFS
+    let related_files = find_related_files_bfs(&input.active_files, input.max_depth)?;
+    
+    // Generate skeletons with token limit
+    let skeletons = generate_file_skeletons(&related_files, input.max_tokens)?;
+    
+    Ok(json!({
+        "related_files": skeletons,
+        "total_files": related_files.len(),
+        "max_tokens_used": input.max_tokens
+    }))
+}
+
+/// Find related files using BFS traversal with edge-weight priority
+fn find_related_files_bfs(active_files: &[String], max_depth: usize) -> Result<Vec<String>, String> {
+    use std::collections::{HashSet, BinaryHeap, HashMap};
+    use std::cmp::Reverse;
+    
+    let manager = super::graph_manager::get_graph_manager();
+    let manager = manager.read().map_err(|e| format!("Failed to acquire read lock: {}", e))?;
+    
+    let repo_mapper = manager.get_repo_mapper()
+        .ok_or("Repository mapper not available")?;
+    
+    let mut visited = HashSet::new();
+    // Priority queue: (Reverse(edge_count), depth, file_path)
+    // Using Reverse to make it a max-heap (higher edge counts first)
+    let mut queue = BinaryHeap::new();
+    let mut result = Vec::new();
+    
+    // Add active files to queue with depth 0 and max priority
+    for file in active_files {
+        queue.push((Reverse(0), 0, file.clone())); // Start with 0 depth, will be processed first
+        visited.insert(file.clone());
+        result.push(file.clone());
+    }
+    
+    // BFS traversal with priority based on edge count
+    while let Some((Reverse(_), depth, current_file)) = queue.pop() {
+        if depth >= max_depth {
+            continue;
+        }
+        
+        // Calculate edge counts between current file and potential next files
+        let mut file_edge_counts: HashMap<String, usize> = HashMap::new();
+        
+        // Find symbols defined in current file
+        let symbols_in_file: Vec<_> = repo_mapper.get_all_symbols()
+            .iter()
+            .filter(|(_, symbol)| symbol.file_path == current_file)
+            .map(|(fqn, _)| fqn.clone())
+            .collect();
+        
+        // Count references FROM current file TO other files
+        for symbol_fqn in &symbols_in_file {
+            let references = repo_mapper.find_symbol_references_by_fqn(symbol_fqn);
+            for reference in references {
+                if !visited.contains(&reference.reference_file) && reference.reference_file != current_file {
+                    *file_edge_counts.entry(reference.reference_file.clone()).or_insert(0) += 1;
+                }
+            }
+        }
+        
+        // Count references TO current file FROM other files
+        let references_from_file: Vec<_> = repo_mapper.get_all_symbols()
+            .iter()
+            .filter_map(|(fqn, symbol)| {
+                let refs = repo_mapper.find_symbol_references_by_fqn(fqn);
+                if refs.iter().any(|r| r.reference_file == current_file) {
+                    Some((fqn.clone(), symbol.file_path.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        
+        for (_, symbol_file) in references_from_file {
+            if !visited.contains(&symbol_file) && symbol_file != current_file {
+                *file_edge_counts.entry(symbol_file).or_insert(0) += 1;
+            }
+        }
+        
+        // Add files to queue prioritized by edge count (higher edge count = higher priority)
+        for (file_path, edge_count) in file_edge_counts {
+            if !visited.contains(&file_path) {
+                visited.insert(file_path.clone());
+                result.push(file_path.clone());
+                // Use negative edge count for max-heap behavior (higher edge count = higher priority)
+                queue.push((Reverse(-(edge_count as i32)), depth + 1, file_path));
+            }
+        }
+    }
+    
+    Ok(result)
+}
+
+/// Generate file skeletons with token limit
+fn generate_file_skeletons(files: &[String], max_tokens: usize) -> Result<Vec<Value>, String> {
+    let mut skeletons = Vec::new();
+    let mut current_tokens = 0;
+    
+    for file_path in files {
+        if current_tokens >= max_tokens {
+            break;
+        }
+        
+        let skeleton = generate_single_file_skeleton(file_path)?;
+        let skeleton_tokens = approximate_tokens(&skeleton);
+        
+        if current_tokens + skeleton_tokens <= max_tokens {
+            skeletons.push(json!({
+                "file_path": file_path,
+                "skeleton": skeleton,
+                "tokens": skeleton_tokens
+            }));
+            current_tokens += skeleton_tokens;
+        } else {
+            // Truncate the skeleton to fit remaining tokens
+            let remaining_tokens = max_tokens - current_tokens;
+            let truncated_skeleton = truncate_skeleton(&skeleton, remaining_tokens);
+            skeletons.push(json!({
+                "file_path": file_path,
+                "skeleton": truncated_skeleton,
+                "tokens": remaining_tokens,
+                "truncated": true
+            }));
+            break;
+        }
+    }
+    
+    Ok(skeletons)
+}
+
+/// Generate skeleton for a single file
+fn generate_single_file_skeleton(file_path: &str) -> Result<String, String> {
+    use std::fs;
+    use std::collections::HashMap;
+    
+    let content = fs::read_to_string(file_path)
+        .map_err(|e| format!("Failed to read file {}: {}", file_path, e))?;
+    
+    let manager = super::graph_manager::get_graph_manager();
+    let manager = manager.read().map_err(|e| format!("Failed to acquire read lock: {}", e))?;
+    
+    let repo_mapper = manager.get_repo_mapper()
+        .ok_or("Repository mapper not available")?;
+    
+    // Get symbols defined in this file
+    let mut symbols_in_file: Vec<_> = repo_mapper.get_all_symbols()
+        .iter()
+        .filter(|(_, symbol)| symbol.file_path == file_path)
+        .map(|(_, symbol)| symbol.clone())
+        .collect();
+    
+    // Sort symbols by start line to maintain order
+    symbols_in_file.sort_by_key(|s| s.start_line);
+    
+    let mut skeleton = String::new();
+    let lines: Vec<&str> = content.lines().collect();
+    
+    // Add imports/includes at the top
+    for line in &lines {
+        let trimmed = line.trim();
+        if trimmed.starts_with("import ") || trimmed.starts_with("from ") || 
+           trimmed.starts_with("#include") || trimmed.starts_with("using ") ||
+           trimmed.starts_with("package ") || trimmed.starts_with("mod ") ||
+           trimmed.starts_with("use ") {
+            skeleton.push_str(line);
+            skeleton.push('\n');
+        }
+    }
+    
+    skeleton.push('\n');
+    
+    // Group symbols by their hierarchy based on line ranges
+    let mut top_level_symbols = Vec::new();
+    let mut child_symbols: HashMap<String, Vec<_>> = HashMap::new();
+    
+    // First, identify container symbols (classes, namespaces, etc.)
+    let container_symbols: Vec<_> = symbols_in_file.iter()
+        .filter(|s| matches!(s.symbol_type, 
+            super::context_extractor::SymbolType::Class | 
+            super::context_extractor::SymbolType::Struct |
+            super::context_extractor::SymbolType::Interface |
+            super::context_extractor::SymbolType::Module |
+            super::context_extractor::SymbolType::Package
+        ))
+        .collect();
+    
+    // For each symbol, determine if it's contained within a container symbol
+    for symbol in &symbols_in_file {
+        let mut found_parent = false;
+        
+        // Check if this symbol is contained within any container symbol
+        for container in &container_symbols {
+            if container.name != symbol.name && // Don't make a symbol its own parent
+               symbol.start_line > container.start_line && 
+               symbol.end_line <= container.end_line {
+                // This symbol is contained within the container
+                child_symbols.entry(container.name.clone()).or_insert_with(Vec::new).push(symbol);
+                found_parent = true;
+                break;
+            }
+        }
+        
+        if !found_parent {
+            top_level_symbols.push(symbol);
+        }
+    }
+    
+    // Generate skeleton with proper hierarchy
+    for symbol in top_level_symbols {
+        generate_symbol_skeleton(&mut skeleton, symbol, &child_symbols, &lines, 0)?;
+    }
+    
+    Ok(skeleton)
+}
+
+/// Generate skeleton for a symbol and its children with proper indentation
+fn generate_symbol_skeleton(
+    skeleton: &mut String,
+    symbol: &super::context_extractor::CodeSymbol,
+    child_symbols: &std::collections::HashMap<String, Vec<&super::context_extractor::CodeSymbol>>,
+    lines: &[&str],
+    indent_level: usize,
+) -> Result<(), String> {
+    let indent = "    ".repeat(indent_level);
+    
+    // Extract and add the symbol signature
+    let signature = extract_symbol_signature(lines, symbol)?;
+    skeleton.push_str(&format!("{}{}", indent, signature));
+    
+    // Check if this symbol has children (methods, properties, etc.)
+    let empty_vec = vec![];
+    let children = child_symbols.get(&symbol.name).unwrap_or(&empty_vec);
+    
+    if children.is_empty() {
+        // No children, just add simple body
+        skeleton.push_str(" {\n");
+        skeleton.push_str(&format!("{}    // ...\n", indent));
+        skeleton.push_str(&format!("{}}}\n\n", indent));
+    } else {
+        // Has children, add them nested inside
+        skeleton.push_str(" {\n");
+        
+        // Add child symbols with increased indentation
+        for child in children {
+            generate_symbol_skeleton(skeleton, child, child_symbols, lines, indent_level + 1)?;
+        }
+        
+        skeleton.push_str(&format!("{}}}\n\n", indent));
+    }
+    
+    Ok(())
+}
+
+/// Extract symbol signature from source lines
+fn extract_symbol_signature(lines: &[&str], symbol: &super::context_extractor::CodeSymbol) -> Result<String, String> {
+    if symbol.start_line == 0 || symbol.start_line > lines.len() {
+        return Ok(format!("// Symbol: {}", symbol.name));
+    }
+    
+    let start_idx = symbol.start_line.saturating_sub(1);
+    let mut signature = String::new();
+    
+    // Look for the signature line(s)
+    for i in start_idx..std::cmp::min(start_idx + 3, lines.len()) {
+        let line = lines[i].trim();
+        if line.contains(&symbol.name) && (
+            line.contains("fn ") || line.contains("function ") || 
+            line.contains("def ") || line.contains("class ") ||
+            line.contains("struct ") || line.contains("interface ") ||
+            line.contains("enum ") || line.contains("impl ") ||
+            line.contains("pub ") || line.contains("private ") ||
+            line.contains("public ") || line.contains("protected ")
+        ) {
+            signature = line.to_string();
+            break;
+        }
+    }
+    
+    if signature.is_empty() {
+        signature = format!("// {}: {}", 
+            match symbol.symbol_type {
+                super::context_extractor::SymbolType::Function => "function",
+                super::context_extractor::SymbolType::Method => "method",
+                super::context_extractor::SymbolType::Class => "class",
+                super::context_extractor::SymbolType::Struct => "struct",
+                _ => "symbol",
+            },
+            symbol.name
+        );
+    }
+    
+    Ok(signature)
+}
+
+/// Approximate token count for text (4 chars per token)
+fn approximate_tokens(text: &str) -> usize {
+    (text.len() + 3) / 4
+}
+
+/// Truncate skeleton to fit token limit
+fn truncate_skeleton(skeleton: &str, max_tokens: usize) -> String {
+    let max_chars = max_tokens * 4;
+    if skeleton.len() <= max_chars {
+        skeleton.to_string()
+    } else {
+        let mut truncated = skeleton.chars().take(max_chars).collect::<String>();
+        truncated.push_str("\n// ... (truncated)");
+        truncated
+    }
 }
 
