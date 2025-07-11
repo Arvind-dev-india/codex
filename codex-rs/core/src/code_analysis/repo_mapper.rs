@@ -632,6 +632,69 @@ impl RepoMapper {
         
         CodeReferenceGraph { nodes, edges }
     }
+
+    /// Find related files by traversing the graph from a set of starting symbols.
+    pub fn find_related_files_from_symbols(
+        &self,
+        start_symbols: Vec<&super::context_extractor::CodeSymbol>,
+        max_depth: usize,
+        exclude_files: &std::collections::HashSet<String>,
+    ) -> Vec<String> {
+        use std::collections::{HashMap, HashSet, VecDeque};
+        let mut visited_nodes = HashSet::new();
+        let mut queue = VecDeque::new();
+        let mut related_file_counts: HashMap<String, usize> = HashMap::new();
+
+        // Add all starting symbols to the queue with depth 0
+        for symbol in start_symbols {
+            let node_id = format!("symbol:{}", symbol.fqn);
+            if visited_nodes.insert(node_id.clone()) {
+                queue.push_back((node_id, 0));
+            }
+        }
+
+        // BFS traversal
+        while let Some((node_id, depth)) = queue.pop_front() {
+            if depth >= max_depth {
+                continue;
+            }
+
+            // Find all edges connected to this node (both outgoing and incoming)
+            for edge in &self.edges {
+                let neighbor_id = if edge.source == node_id {
+                    Some(&edge.target)
+                } else if edge.target == node_id {
+                    Some(&edge.source)
+                } else {
+                    None
+                };
+
+                if let Some(neighbor_id) = neighbor_id {
+                    if visited_nodes.insert(neighbor_id.clone()) {
+                        // Find the node details for the neighbor
+                        if let Some(neighbor_node) = self.find_node_by_id(neighbor_id) {
+                            // Add to queue for further traversal
+                            queue.push_back((neighbor_id.clone(), depth + 1));
+
+                            // If it's a symbol, count its file
+                            if neighbor_id.starts_with("symbol:") {
+                                if !exclude_files.contains(&neighbor_node.file_path) {
+                                    *related_file_counts.entry(neighbor_node.file_path.clone()).or_insert(0) += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Sort files by relevance (number of connections found)
+        let mut sorted_files: Vec<(String, usize)> = related_file_counts.into_iter().collect();
+        sorted_files.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+
+        // Return just the file paths
+        sorted_files.into_iter().map(|(path, _)| path).collect()
+    }
     
     /// Find a node by its ID
     fn find_node_by_id(&self, id: &str) -> Option<&CodeNode> {

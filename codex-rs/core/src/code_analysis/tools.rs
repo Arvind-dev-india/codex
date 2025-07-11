@@ -2035,21 +2035,38 @@ fn find_matching_brace(lines: &[&str], start_line: usize) -> Option<usize> {
 fn get_related_files_skeleton_handler(args: Value) -> Result<Value, String> {
     let input: GetRelatedFilesSkeletonInput = serde_json::from_value(args)
         .map_err(|e| format!("Invalid arguments: {}", e))?;
-
+    
     // Check if the code graph is initialized
     if !super::graph_manager::is_graph_initialized() {
         return Err("Code graph not initialized. Please wait for initialization to complete.".to_string());
     }
-
-    // Find related files using BFS
-    let related_files = find_related_files_bfs(&input.active_files, input.max_depth)?;
     
-    // Generate skeletons with token limit
+    let manager = super::graph_manager::get_graph_manager();
+    let manager = manager.read().map_err(|e| format!("Failed to acquire read lock: {}", e))?;
+    
+    let repo_mapper = manager.get_repo_mapper()
+        .ok_or("Repository mapper not available")?;
+        
+    // 1. Collect all symbols from the active files
+    let mut start_symbols = Vec::new();
+    let active_files_set: std::collections::HashSet<String> = input.active_files.iter().cloned().collect();
+    for file_path in &input.active_files {
+        start_symbols.extend(repo_mapper.get_symbols_for_file(file_path));
+    }
+    
+    // 2. Find related files by traversing the graph
+    let related_files = repo_mapper.find_related_files_from_symbols(
+        start_symbols,
+        input.max_depth,
+        &active_files_set,
+    );
+    
+    // 3. Generate skeletons for the related files
     let skeletons = generate_file_skeletons(&related_files, input.max_tokens)?;
     
     Ok(json!({
-        "related_files": skeletons,
-        "total_files": related_files.len(),
+        "files": skeletons,
+        "total_files": skeletons.len(),
         "max_tokens_used": input.max_tokens
     }))
 }
