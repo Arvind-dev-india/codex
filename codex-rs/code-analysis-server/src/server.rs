@@ -37,6 +37,14 @@ struct McpRequest {
     params: Option<serde_json::Value>,
 }
 
+/// HTTP notification structure for MCP calls (no id)
+#[derive(Debug, Deserialize)]
+struct McpNotification {
+    jsonrpc: String,
+    method: String,
+    params: Option<serde_json::Value>,
+}
+
 /// HTTP response structure for MCP calls
 #[derive(Debug, Serialize)]
 struct McpResponse {
@@ -255,96 +263,157 @@ curl -X POST http://localhost:3000/mcp \
 }
 
 /// MCP JSON-RPC handler
+use axum::body::Body;
+use axum::body::Bytes;
+use axum::http::StatusCode;
+
 async fn mcp_handler(
     State(state): State<ServerState>,
-    Json(request): Json<McpRequest>,
+    body: Body,
 ) -> impl IntoResponse {
-    info!("Received MCP request: {} - {}", request.method, request.id);
-    
-    // Convert HTTP request to JSONRPCMessage
-    let request_id = match &request.id {
-        serde_json::Value::String(s) => mcp_types::RequestId::String(s.clone()),
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                mcp_types::RequestId::Integer(i)
-            } else {
-                mcp_types::RequestId::String(n.to_string())
-            }
-        }
-        _ => mcp_types::RequestId::String(request.id.to_string()),
-    };
-    
-    let jsonrpc_request = mcp_types::JSONRPCRequest {
-        id: request_id.clone(),
-        jsonrpc: request.jsonrpc.clone(),
-        method: request.method.clone(),
-        params: request.params,
-    };
-    
-    // Create a channel to capture the response
-    let (response_tx, mut response_rx) = mpsc::channel::<JSONRPCMessage>(1);
-    
-    // Create a temporary processor that sends responses to our channel
-    let mut temp_processor = message_processor::MessageProcessor::new(response_tx);
-    
-    // Process the message and wait for response
-    let mcp_message = JSONRPCMessage::Request(jsonrpc_request);
-    temp_processor.process_message(mcp_message).await;
-    
-    // Wait for the response with timeout (increased for large files)
-    let response = match tokio::time::timeout(
-        std::time::Duration::from_secs(120),  // Increased from 30 to 120 seconds
-        response_rx.recv()
-    ).await {
-        Ok(Some(JSONRPCMessage::Response(resp))) => {
-            // Return the actual tool result
-            McpResponse {
-                jsonrpc: "2.0".to_string(),
-                id: request.id,
-                result: Some(resp.result),
-                error: None,
-            }
-        }
-        Ok(Some(JSONRPCMessage::Error(err))) => {
-            // Return the error
-            McpResponse {
-                jsonrpc: "2.0".to_string(),
-                id: request.id,
-                result: None,
-                error: Some(serde_json::json!({
-                    "code": err.error.code,
-                    "message": err.error.message,
-                    "data": err.error.data
-                })),
-            }
-        }
-        Ok(_) => {
-            // Unexpected message type
-            McpResponse {
-                jsonrpc: "2.0".to_string(),
-                id: request.id,
-                result: None,
-                error: Some(serde_json::json!({
-                    "code": -32603,
-                    "message": "Internal error: unexpected response type"
-                })),
-            }
-        }
-        Err(_) => {
-            // Timeout
-            McpResponse {
-                jsonrpc: "2.0".to_string(),
-                id: request.id,
-                result: None,
-                error: Some(serde_json::json!({
-                    "code": -32603,
-                    "message": "Internal error: request timeout"
-                })),
-            }
+    // Read the raw body for debugging
+    let bytes = axum::body::to_bytes(body, 2 * 1024 * 1024).await.unwrap_or_else(|_| Bytes::new());
+    let body_str = String::from_utf8_lossy(&bytes);
+    info!("Raw /mcp request body: {}", body_str);
+
+    // Try to parse as JSON
+    let request_json: serde_json::Value = match serde_json::from_str(&body_str) {
+        Ok(val) => val,
+        Err(e) => {
+            error!("Failed to parse JSON: {}", e);
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(serde_json::json!({
+                    "error": format!("Failed to parse JSON: {}", e)
+                }))
+            );
         }
     };
-    
-    Json(response)
+
+    // Try to parse as McpRequest (with id)
+    if let Ok(request) = serde_json::from_value::<McpRequest>(request_json.clone()) {
+        info!("Received MCP request: {} - {}", request.method, request.id);
+
+        // Convert HTTP request to JSONRPCMessage
+        let request_id = match &request.id {
+            serde_json::Value::String(s) => mcp_types::RequestId::String(s.clone()),
+            serde_json::Value::Number(n) => {
+                if let Some(i) = n.as_i64() {
+                    mcp_types::RequestId::Integer(i)
+                } else {
+                    mcp_types::RequestId::String(n.to_string())
+                }
+            }
+            _ => mcp_types::RequestId::String(request.id.to_string()),
+        };
+        
+        let jsonrpc_request = mcp_types::JSONRPCRequest {
+            id: request_id.clone(),
+            jsonrpc: request.jsonrpc.clone(),
+            method: request.method.clone(),
+            params: request.params,
+        };
+        
+        // Create a channel to capture the response
+        let (response_tx, mut response_rx) = mpsc::channel::<JSONRPCMessage>(1);
+        
+        // Create a temporary processor that sends responses to our channel
+        let mut temp_processor = message_processor::MessageProcessor::new(response_tx);
+        
+        // Process the message and wait for response
+        let mcp_message = JSONRPCMessage::Request(jsonrpc_request);
+        temp_processor.process_message(mcp_message).await;
+        
+        // Wait for the response with timeout (increased for large files)
+        let response = match tokio::time::timeout(
+            std::time::Duration::from_secs(120),  // Increased from 30 to 120 seconds
+            response_rx.recv()
+        ).await {
+            Ok(Some(JSONRPCMessage::Response(resp))) => {
+                // Return the actual tool result
+                McpResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id: request.id,
+                    result: Some(resp.result),
+                    error: None,
+                }
+            }
+            Ok(Some(JSONRPCMessage::Error(err))) => {
+                // Return the error
+                McpResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id: request.id,
+                    result: None,
+                    error: Some(serde_json::json!({
+                        "code": err.error.code,
+                        "message": err.error.message,
+                        "data": err.error.data
+                    })),
+                }
+            }
+            Ok(_) => {
+                // Unexpected message type
+                McpResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id: request.id,
+                    result: None,
+                    error: Some(serde_json::json!({
+                        "code": -32603,
+                        "message": "Internal error: unexpected response type"
+                    })),
+                }
+            }
+            Err(_) => {
+                // Timeout
+                McpResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id: request.id,
+                    result: None,
+                    error: Some(serde_json::json!({
+                        "code": -32603,
+                        "message": "Internal error: request timeout"
+                    })),
+                }
+            }
+        };
+
+        return (StatusCode::OK, Json(serde_json::to_value(response).unwrap()));
+    }
+
+    // Try to parse as McpNotification (without id)
+    if let Ok(notification) = serde_json::from_value::<McpNotification>(request_json.clone()) {
+        info!("Received MCP notification: {} (no id)", notification.method);
+        // Optionally, handle known notifications here, or just return 200 OK
+        return (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "jsonrpc": "2.0",
+                "result": "Notification received",
+                "method": notification.method
+            }))
+        );
+    }
+
+    // If neither, return error
+    error!("Failed to deserialize as McpRequest or McpNotification");
+    (
+        StatusCode::UNPROCESSABLE_ENTITY,
+        Json(serde_json::json!({
+            "error": "Failed to deserialize as JSON-RPC 2.0 request or notification",
+            "hint": "Make sure your request includes 'jsonrpc' and 'method' fields.",
+            "example_request": {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {}
+            },
+            "example_notification": {
+                "jsonrpc": "2.0",
+                "method": "notifications/initialized",
+                "params": {}
+            }
+        }))
+    )
 }
 
 /// SSE event stream handler
