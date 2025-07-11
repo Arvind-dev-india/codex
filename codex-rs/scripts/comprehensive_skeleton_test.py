@@ -15,9 +15,9 @@ from pathlib import Path
 def start_server():
     """Start the code analysis server"""
     print("Starting code analysis server...")
-    project_dir = "/home/arvkum/project/codex"
+    project_dir = os.getcwd()
     cmd = [
-        "./codex-rs/target/release/code-analysis-server",
+        "./target/release/code-analysis-server",
         "--sse",
         "--project-dir", project_dir
     ]
@@ -34,16 +34,18 @@ def get_all_test_files():
         "Python": []
     }
     
-    # Find all test files
-    for root, dirs, files in os.walk("codex-rs/test_files"):
+    # Find all test files using absolute paths
+    base_dir = os.getcwd()
+    for root, dirs, files in os.walk("test_files"):
         for file in files:
-            file_path = os.path.join(root, file)
+            rel_path = os.path.join(root, file)
+            abs_path = os.path.abspath(rel_path)
             if file.endswith('.cs'):
-                test_files["C#"].append(file_path)
+                test_files["C#"].append(abs_path)
             elif file.endswith(('.cpp', '.h')):
-                test_files["C++"].append(file_path)
+                test_files["C++"].append(abs_path)
             elif file.endswith('.py'):
-                test_files["Python"].append(file_path)
+                test_files["Python"].append(abs_path)
     
     # Sort files for consistent output
     for lang in test_files:

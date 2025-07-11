@@ -326,6 +326,23 @@ pub fn handle_analyze_code(args: Value) -> Option<Result<Value, String>> {
                                 super::context_extractor::SymbolType::Import => "import",
                                 super::context_extractor::SymbolType::Module => "module",
                                 super::context_extractor::SymbolType::Package => "package",
+                                // New C++ specific symbol types
+                                super::context_extractor::SymbolType::Operator => "operator",
+                                super::context_extractor::SymbolType::TemplateFunction => "template_function",
+                                super::context_extractor::SymbolType::TemplateClass => "template_class",
+                                super::context_extractor::SymbolType::TemplateMethod => "template_method",
+                                super::context_extractor::SymbolType::ConstMethod => "const_method",
+                                super::context_extractor::SymbolType::InlineMethod => "inline_method",
+                                super::context_extractor::SymbolType::InlineFunction => "inline_function",
+                                super::context_extractor::SymbolType::Destructor => "destructor",
+                                super::context_extractor::SymbolType::FunctionPointer => "function_pointer",
+                                super::context_extractor::SymbolType::Parameter => "parameter",
+                                super::context_extractor::SymbolType::VirtualMethod => "virtual_method",
+                                super::context_extractor::SymbolType::PureVirtualMethod => "pure_virtual_method",
+                                super::context_extractor::SymbolType::FriendFunction => "friend_function",
+                                super::context_extractor::SymbolType::StaticMethod => "static_method",
+                                super::context_extractor::SymbolType::TemplateSpecialization => "template_specialization",
+                                super::context_extractor::SymbolType::InlineClassMethod => "inline_class_method",
                             };
                             
                             SymbolInfo {
@@ -382,6 +399,23 @@ pub fn handle_analyze_code(args: Value) -> Option<Result<Value, String>> {
                                 SymbolType::Import => "import",
                                 SymbolType::Module => "module",
                                 SymbolType::Package => "package",
+                                // New C++ specific symbol types
+                                SymbolType::Operator => "operator",
+                                SymbolType::TemplateFunction => "template_function",
+                                SymbolType::TemplateClass => "template_class",
+                                SymbolType::TemplateMethod => "template_method",
+                                SymbolType::ConstMethod => "const_method",
+                                SymbolType::InlineMethod => "inline_method",
+                                SymbolType::InlineFunction => "inline_function",
+                                SymbolType::Destructor => "destructor",
+                                SymbolType::FunctionPointer => "function_pointer",
+                                SymbolType::Parameter => "parameter",
+                                SymbolType::VirtualMethod => "virtual_method",
+                                SymbolType::PureVirtualMethod => "pure_virtual_method",
+                                SymbolType::FriendFunction => "friend_function",
+                                SymbolType::StaticMethod => "static_method",
+                                SymbolType::TemplateSpecialization => "template_specialization",
+                                SymbolType::InlineClassMethod => "inline_class_method",
                             };
                             
                             SymbolInfo {
@@ -1696,6 +1730,23 @@ pub fn handle_find_symbol_definitions(args: Value) -> Option<Result<Value, Strin
                                 super::context_extractor::SymbolType::Import => "import",
                                 super::context_extractor::SymbolType::Module => "module",
                                 super::context_extractor::SymbolType::Package => "package",
+                                // New C++ specific symbol types
+                                super::context_extractor::SymbolType::Operator => "operator",
+                                super::context_extractor::SymbolType::TemplateFunction => "template_function",
+                                super::context_extractor::SymbolType::TemplateClass => "template_class",
+                                super::context_extractor::SymbolType::TemplateMethod => "template_method",
+                                super::context_extractor::SymbolType::ConstMethod => "const_method",
+                                super::context_extractor::SymbolType::InlineMethod => "inline_method",
+                                super::context_extractor::SymbolType::InlineFunction => "inline_function",
+                                super::context_extractor::SymbolType::Destructor => "destructor",
+                                super::context_extractor::SymbolType::FunctionPointer => "function_pointer",
+                                super::context_extractor::SymbolType::Parameter => "parameter",
+                                super::context_extractor::SymbolType::VirtualMethod => "virtual_method",
+                                super::context_extractor::SymbolType::PureVirtualMethod => "pure_virtual_method",
+                                super::context_extractor::SymbolType::FriendFunction => "friend_function",
+                                super::context_extractor::SymbolType::StaticMethod => "static_method",
+                                super::context_extractor::SymbolType::TemplateSpecialization => "template_specialization",
+                                super::context_extractor::SymbolType::InlineClassMethod => "inline_class_method",
                             },
                         })
                     }).collect();

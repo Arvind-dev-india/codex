@@ -21,7 +21,23 @@ pub enum SymbolType {
     Import,
     Module,
     Package,
-    // Add more symbol types as needed
+    // New C++ specific symbol types
+    Operator,
+    TemplateFunction,
+    TemplateClass,
+    TemplateMethod,
+    ConstMethod,
+    InlineMethod,
+    InlineFunction,
+    Destructor,
+    FunctionPointer,
+    Parameter,
+    VirtualMethod,
+    PureVirtualMethod,
+    FriendFunction,
+    StaticMethod,
+    TemplateSpecialization,
+    InlineClassMethod,
 }
 
 impl SymbolType {
@@ -40,6 +56,23 @@ impl SymbolType {
             SymbolType::Import => "import",
             SymbolType::Module => "module",
             SymbolType::Package => "package",
+            // New C++ specific symbol types
+            SymbolType::Operator => "operator",
+            SymbolType::TemplateFunction => "template_function",
+            SymbolType::TemplateClass => "template_class",
+            SymbolType::TemplateMethod => "template_method",
+            SymbolType::ConstMethod => "const_method",
+            SymbolType::InlineMethod => "inline_method",
+            SymbolType::InlineFunction => "inline_function",
+            SymbolType::Destructor => "destructor",
+            SymbolType::FunctionPointer => "function_pointer",
+            SymbolType::Parameter => "parameter",
+            SymbolType::VirtualMethod => "virtual_method",
+            SymbolType::PureVirtualMethod => "pure_virtual_method",
+            SymbolType::FriendFunction => "friend_function",
+            SymbolType::StaticMethod => "static_method",
+            SymbolType::TemplateSpecialization => "template_specialization",
+            SymbolType::InlineClassMethod => "inline_class_method",
         }
     }
 }
@@ -557,6 +590,23 @@ impl ContextExtractor {
             SymbolType::Import => "import",
             SymbolType::Module => "module",
             SymbolType::Package => "package",
+            // New C++ specific symbol types
+            SymbolType::Operator => "operator",
+            SymbolType::TemplateFunction => "template_function",
+            SymbolType::TemplateClass => "template_class",
+            SymbolType::TemplateMethod => "template_method",
+            SymbolType::ConstMethod => "const_method",
+            SymbolType::InlineMethod => "inline_method",
+            SymbolType::InlineFunction => "inline_function",
+            SymbolType::Destructor => "destructor",
+            SymbolType::FunctionPointer => "function_pointer",
+            SymbolType::Parameter => "parameter",
+            SymbolType::VirtualMethod => "virtual_method",
+            SymbolType::PureVirtualMethod => "pure_virtual_method",
+            SymbolType::FriendFunction => "friend_function",
+            SymbolType::StaticMethod => "static_method",
+            SymbolType::TemplateSpecialization => "template_specialization",
+            SymbolType::InlineClassMethod => "inline_class_method",
         };
         fqn_parts.push(type_str.to_string());
         

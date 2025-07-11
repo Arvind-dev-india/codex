@@ -20,8 +20,9 @@
     declarator: (identifier) @name.definition.function)) @definition.function
 
 ; Function declarations
-(function_declarator declarator: (identifier) @name.definition.function) @definition.function
-(function_declarator declarator: (field_identifier) @name.definition.function) @definition.function
+(declaration
+  declarator: (function_declarator
+    declarator: (identifier) @name.definition.function)) @definition.function
 
 ; Method definitions (functions within classes)
 (function_definition 
@@ -96,3 +97,36 @@
 (qualified_identifier 
   scope: (namespace_identifier) @name.reference.module 
   name: (identifier) @name.reference.identifier) @reference.identifier
+
+; ENHANCED FUNCTION DETECTION PATTERNS
+
+; Operator overloads
+(function_definition
+  declarator: (function_declarator
+    declarator: (operator_name) @name.definition.operator)) @definition.operator
+
+; Destructor definitions  
+(function_definition
+  declarator: (function_declarator
+    declarator: (destructor_name) @name.definition.destructor)) @definition.destructor
+
+; Additional function declarations in headers
+(declaration
+  declarator: (function_declarator
+    declarator: (identifier) @name.definition.function)) @definition.function
+
+; Method declarations in class bodies
+(field_declaration
+  declarator: (function_declarator
+    declarator: (field_identifier) @name.definition.method)) @definition.method
+
+; Constructor declarations
+(field_declaration
+  declarator: (function_declarator
+    declarator: (field_identifier) @name.definition.constructor)) @definition.constructor
+
+; Static method declarations
+(field_declaration
+  specifiers: (storage_class_specifier)
+  declarator: (function_declarator
+    declarator: (field_identifier) @name.definition.method)) @definition.method
