@@ -20,26 +20,8 @@
     declarator: (identifier) @name.definition.function)) @definition.function
 
 ; Function declarations
-(declaration
-  declarator: (function_declarator
-    declarator: (identifier) @name.definition.function)) @definition.function
-
-; Function declarations with init_declarator
-(declaration
-  declarator: (init_declarator
-    declarator: (function_declarator
-      declarator: (identifier) @name.definition.function))) @definition.function
-
-; Function declarations in parameter lists
-(parameter_declaration
-  declarator: (function_declarator
-    declarator: (identifier) @name.definition.function)) @definition.function
-
-; Function pointer declarations
-(declaration
-  declarator: (pointer_declarator
-    declarator: (function_declarator
-      declarator: (identifier) @name.definition.function))) @definition.function
+(function_declarator declarator: (identifier) @name.definition.function) @definition.function
+(function_declarator declarator: (field_identifier) @name.definition.function) @definition.function
 
 ; Method definitions (functions within classes)
 (function_definition 
@@ -114,67 +96,3 @@
 (qualified_identifier 
   scope: (namespace_identifier) @name.reference.module 
   name: (identifier) @name.reference.identifier) @reference.identifier
-
-; ENHANCED FUNCTION DETECTION PATTERNS
-
-; Operator overloads
-(function_definition
-  declarator: (function_declarator
-    declarator: (operator_name) @name.definition.operator)) @definition.operator
-
-; Destructor definitions  
-(function_definition
-  declarator: (function_declarator
-    declarator: (destructor_name) @name.definition.destructor)) @definition.destructor
-
-; Additional function declarations in headers
-(declaration
-  declarator: (function_declarator
-    declarator: (identifier) @name.definition.function)) @definition.function
-
-; Method declarations in class bodies
-(field_declaration
-  declarator: (function_declarator
-    declarator: (field_identifier) @name.definition.method)) @definition.method
-
-; Constructor declarations
-(field_declaration
-  declarator: (function_declarator
-    declarator: (field_identifier) @name.definition.constructor)) @definition.constructor
-
-; Static method declarations
-(field_declaration
-  type: (storage_class_specifier)
-  declarator: (function_declarator
-    declarator: (field_identifier) @name.definition.method)) @definition.method
-
-; Inline function definitions
-(function_definition
-  type: (storage_class_specifier)
-  declarator: (function_declarator
-    declarator: (identifier) @name.definition.function)) @definition.function
-
-; Virtual method declarations
-(field_declaration
-  type: (virtual_specifier)
-  declarator: (function_declarator
-    declarator: (field_identifier) @name.definition.method)) @definition.method
-
-; Pure virtual method declarations
-(field_declaration
-  type: (virtual_specifier)
-  declarator: (function_declarator
-    declarator: (field_identifier) @name.definition.method)
-  default_value: (number_literal)) @definition.method
-
-; Friend function declarations
-(friend_declaration
-  (function_definition
-    declarator: (function_declarator
-      declarator: (identifier) @name.definition.function))) @definition.function
-
-; Friend function declarations (declaration form)
-(friend_declaration
-  (declaration
-    declarator: (function_declarator
-      declarator: (identifier) @name.definition.function))) @definition.function
