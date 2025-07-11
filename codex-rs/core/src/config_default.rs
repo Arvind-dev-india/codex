@@ -43,6 +43,7 @@ impl Default for Config {
             hide_agent_reasoning: false,
             model_reasoning_effort: ReasoningEffort::default(),
             model_reasoning_summary: ReasoningSummary::default(),
+            model_supports_reasoning_summaries: false,
             azure_devops: None,
             kusto: None,
             recovery_services: None,
