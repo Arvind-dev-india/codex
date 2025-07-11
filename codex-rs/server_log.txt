@@ -1,5 +1,0 @@
-[2m2025-07-11T07:00:22.100433Z[0m [32m INFO[0m [2mcode_analysis_server[0m[2m:[0m Set working directory to: /home/arvkum/project/codex/codex-rs
-[2m2025-07-11T07:00:22.100574Z[0m [32m INFO[0m [2mcode_analysis_server::server[0m[2m:[0m Starting Code Analysis HTTP/SSE Server on port 3000
-[2m2025-07-11T07:00:22.101011Z[0m [32m INFO[0m [2mcode_analysis_server::code_analysis_bridge[0m[2m:[0m Initializing code graph for: /home/arvkum/project/codex/codex-rs
-[2m2025-07-11T07:00:23.036659Z[0m [32m INFO[0m [2mcode_analysis_server::code_analysis_bridge[0m[2m:[0m Code graph initialized successfully
-Error: Address already in use (os error 98)
