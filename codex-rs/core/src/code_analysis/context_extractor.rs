@@ -24,8 +24,28 @@ pub enum SymbolType {
     // Add more symbol types as needed
 }
 
+impl SymbolType {
+    /// Get string representation of symbol type
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SymbolType::Function => "function",
+            SymbolType::Method => "method",
+            SymbolType::Class => "class",
+            SymbolType::Struct => "struct",
+            SymbolType::Enum => "enum",
+            SymbolType::Interface => "interface",
+            SymbolType::Variable => "variable",
+            SymbolType::Constant => "constant",
+            SymbolType::Property => "property",
+            SymbolType::Import => "import",
+            SymbolType::Module => "module",
+            SymbolType::Package => "package",
+        }
+    }
+}
+
 /// Code symbol with its location and type
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CodeSymbol {
     pub name: String,
     pub symbol_type: SymbolType,

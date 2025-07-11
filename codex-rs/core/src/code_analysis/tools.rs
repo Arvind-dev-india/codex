@@ -296,9 +296,22 @@ pub fn handle_analyze_code(args: Value) -> Option<Result<Value, String>> {
             if super::graph_manager::is_graph_initialized() {
                 // Get symbols from the cached global graph
                 if let Some(symbols_map) = super::graph_manager::get_symbols() {
+                    // Normalize paths for comparison (handle both absolute and relative paths)
+                    let input_path_normalized = std::path::Path::new(&input.file_path)
+                        .canonicalize()
+                        .unwrap_or_else(|_| std::path::PathBuf::from(&input.file_path));
+                    
                     let file_symbols: Vec<SymbolInfo> = symbols_map
                         .values()
-                        .filter(|symbol| symbol.file_path == input.file_path)
+                        .filter(|symbol| {
+                            let symbol_path_normalized = std::path::Path::new(&symbol.file_path)
+                                .canonicalize()
+                                .unwrap_or_else(|_| std::path::PathBuf::from(&symbol.file_path));
+                            symbol_path_normalized == input_path_normalized || 
+                            symbol.file_path == input.file_path ||
+                            symbol.file_path.ends_with(&input.file_path) ||
+                            input.file_path.ends_with(&symbol.file_path)
+                        })
                         .map(|symbol| {
                             let symbol_type_str = match symbol.symbol_type {
                                 super::context_extractor::SymbolType::Function => "function",
@@ -1743,7 +1756,19 @@ pub fn handle_get_related_files_skeleton(args: Value) -> Option<Result<Value, St
 
 /// Handle the get_multiple_files_skeleton tool call
 pub fn handle_get_multiple_files_skeleton(args: Value) -> Option<Result<Value, String>> {
-    Some(get_multiple_files_skeleton_handler(args))
+    Some(match serde_json::from_value::<GetMultipleFilesSkeletonInput>(args) {
+        Ok(input) => {
+            match generate_file_skeletons(&input.file_paths, input.max_tokens) {
+                Ok(skeletons) => Ok(json!({
+                    "files": skeletons,
+                    "total_files": skeletons.len(),
+                    "max_tokens_used": input.max_tokens
+                })),
+                Err(e) => Err(format!("Failed to generate skeletons: {}", e))
+            }
+        },
+        Err(e) => Err(format!("Invalid arguments: {}", e))
+    })
 }
 
 /// Handle the get_symbol_subgraph tool call
@@ -2145,7 +2170,6 @@ fn generate_file_skeletons(files: &[String], max_tokens: usize) -> Result<Vec<Va
 /// Generate skeleton for a single file
 pub fn generate_single_file_skeleton(file_path: &str) -> Result<String, String> {
     use std::fs;
-    use std::collections::HashMap;
     
     tracing::debug!("Starting skeleton generation for: {}", file_path);
     
@@ -2196,66 +2220,70 @@ pub fn generate_single_file_skeleton(file_path: &str) -> Result<String, String> 
     let mut skeleton = String::new();
     let lines: Vec<&str> = content.lines().collect();
     
+    // Add file path context for LLM
+    skeleton.push_str(&format!("// File: {}\n", file_path));
+    skeleton.push_str(&format!("// Generated skeleton with {} symbols detected\n\n", symbols_in_file.len()));
+    
     // Add imports/includes at the top
-    for line in &lines {
+    for (i, line) in lines.iter().enumerate() {
         let trimmed = line.trim();
-        if trimmed.starts_with("import ") || trimmed.starts_with("from ") || 
-           trimmed.starts_with("#include") || trimmed.starts_with("using ") ||
-           trimmed.starts_with("package ") || trimmed.starts_with("mod ") ||
-           trimmed.starts_with("use ") {
-            skeleton.push_str(line);
-            skeleton.push('\n');
+        if trimmed.starts_with("use ") || trimmed.starts_with("import ") || 
+           trimmed.starts_with("from ") || trimmed.starts_with("#include") ||
+           trimmed.starts_with("using ") || trimmed.starts_with("mod ") {
+            skeleton.push_str(&format!("{}  // Line {}\n", line, i + 1));
         }
     }
     
-    skeleton.push('\n');
+    skeleton.push_str("\n");
     
-    // Group symbols by their hierarchy based on line ranges
+    // Group symbols by parent for hierarchical structure
+    let mut child_symbols: std::collections::HashMap<String, Vec<&super::context_extractor::CodeSymbol>> = std::collections::HashMap::new();
     let mut top_level_symbols = Vec::new();
-    let mut child_symbols: HashMap<String, Vec<_>> = HashMap::new();
     
-    // First, identify container symbols (classes, namespaces, etc.)
-    let container_symbols: Vec<_> = symbols_in_file.iter()
-        .filter(|s| matches!(s.symbol_type, 
-            super::context_extractor::SymbolType::Class | 
-            super::context_extractor::SymbolType::Struct |
-            super::context_extractor::SymbolType::Interface |
-            super::context_extractor::SymbolType::Module |
-            super::context_extractor::SymbolType::Package
-        ))
-        .collect();
-    
-    // For each symbol, determine if it's contained within a container symbol
     for symbol in &symbols_in_file {
-        let mut found_parent = false;
-        
-        // Check if this symbol is contained within any container symbol
-        for container in &container_symbols {
-            if container.name != symbol.name && // Don't make a symbol its own parent
-               symbol.start_line > container.start_line && 
-               symbol.end_line <= container.end_line {
-                // This symbol is contained within the container
-                child_symbols.entry(container.name.clone()).or_insert_with(Vec::new).push(symbol);
-                found_parent = true;
-                break;
-            }
-        }
-        
-        if !found_parent {
+        if let Some(parent) = &symbol.parent {
+            child_symbols.entry(parent.clone()).or_insert_with(Vec::new).push(symbol);
+        } else {
             top_level_symbols.push(symbol);
         }
     }
     
-    // Generate skeleton with proper hierarchy
+    // Generate skeleton for top-level symbols
     tracing::debug!("Generating skeleton for {} top-level symbols", top_level_symbols.len());
-    for (i, symbol) in top_level_symbols.iter().enumerate() {
-        if i % 50 == 0 {
-            tracing::debug!("Processing symbol {} of {}", i + 1, top_level_symbols.len());
+    
+    for symbol in &top_level_symbols {
+        if let Err(e) = generate_symbol_skeleton(&mut skeleton, symbol, &child_symbols, &lines, 0) {
+            tracing::warn!("Failed to generate skeleton for symbol {}: {}, using simple fallback", symbol.name, e);
+            // Add a simple fallback for this symbol
+            let signature = extract_symbol_signature(&lines, symbol).unwrap_or_else(|_| format!("// {}: {}", symbol.symbol_type.as_str(), symbol.name));
+            skeleton.push_str(&format!("// Lines {}-{}\n", symbol.start_line, symbol.end_line));
+            skeleton.push_str(&format!("{} {{\n", signature));
+            skeleton.push_str("    // ...\n");
+            skeleton.push_str("}\n\n");
         }
-        generate_symbol_skeleton(&mut skeleton, symbol, &child_symbols, &lines, 0)?;
     }
     
-    tracing::debug!("Skeleton generation completed for: {}", file_path);
+    // If we still have minimal content, add more symbols as simple entries
+    if skeleton.len() < 200 && symbols_in_file.len() > top_level_symbols.len() {
+        skeleton.push_str("\n// Additional symbols:\n");
+        for symbol in &symbols_in_file {
+            if !top_level_symbols.contains(&symbol) {
+                let signature = extract_symbol_signature(&lines, symbol).unwrap_or_else(|_| format!("// {}: {}", symbol.symbol_type.as_str(), symbol.name));
+                skeleton.push_str(&format!("// Lines {}-{}: {}\n", symbol.start_line, symbol.end_line, signature));
+            }
+        }
+    }
+    
+    // If we still have very minimal content (< 300 chars), use fallback generation
+    if skeleton.len() < 300 {
+        tracing::info!("Skeleton too minimal ({} chars), using enhanced fallback for {}", skeleton.len(), file_path);
+        let fallback_content = generate_fallback_skeleton(file_path, &content)?;
+        if fallback_content.len() > skeleton.len() {
+            skeleton = format!("// File: {}\n// Enhanced fallback skeleton (original had {} symbols)\n\n{}", 
+                             file_path, symbols_in_file.len(), fallback_content);
+        }
+    }
+    
     Ok(skeleton)
 }
 
@@ -2298,32 +2326,351 @@ fn generate_fallback_skeleton(file_path: &str, content: &str) -> Result<String, 
     let mut skeleton = String::new();
     let lines: Vec<&str> = content.lines().collect();
     
-    // Add imports/using statements
-    for line in &lines {
+    // Add file context
+    skeleton.push_str(&format!("// File: {}\n", file_path));
+    skeleton.push_str("// Fallback skeleton generation (no symbols detected by parser)\n\n");
+    
+    // Add imports/using statements based on file type
+    let mut imports_added = false;
+    for (i, line) in lines.iter().enumerate() {
         let trimmed = line.trim();
-        if trimmed.starts_with("using ") || trimmed.starts_with("import ") {
-            skeleton.push_str(line);
-            skeleton.push('\n');
+        if trimmed.starts_with("global using ") || trimmed.starts_with("using ") || 
+           trimmed.starts_with("import ") || trimmed.starts_with("from ") || 
+           trimmed.starts_with("use ") || trimmed.starts_with("#include") || 
+           trimmed.starts_with("mod ") {
+            skeleton.push_str(&format!("{}  // Line {}\n", line, i + 1));
+            imports_added = true;
         }
     }
     
-    skeleton.push('\n');
+    if imports_added {
+        skeleton.push('\n');
+    }
     
-    // Parse the file directly with tree-sitter to extract structure
-    let mut parser = tree_sitter::Parser::new();
-    parser.set_language(&tree_sitter_c_sharp::LANGUAGE.into())
-        .map_err(|e| format!("Failed to set C# language: {}", e))?;
+    // Try to get symbols from the graph manager first (Tree-sitter parsed symbols)
+    if let Ok(graph_manager_guard) = super::graph_manager::get_graph_manager().read() {
+        if let Some(symbols_map) = graph_manager_guard.get_symbols() {
+            // Filter symbols for this specific file with path normalization
+            let input_path_normalized = std::path::Path::new(file_path)
+                .canonicalize()
+                .unwrap_or_else(|_| std::path::PathBuf::from(file_path));
+            
+            let file_symbols: Vec<_> = symbols_map.values()
+                .filter(|symbol| {
+                    let symbol_path_normalized = std::path::Path::new(&symbol.file_path)
+                        .canonicalize()
+                        .unwrap_or_else(|_| std::path::PathBuf::from(&symbol.file_path));
+                    symbol_path_normalized == input_path_normalized || 
+                    symbol.file_path == file_path ||
+                    symbol.file_path.ends_with(file_path) ||
+                    file_path.ends_with(&symbol.file_path)
+                })
+                .collect();
+            
+            if !file_symbols.is_empty() {
+                tracing::debug!("Found {} Tree-sitter symbols for {} from graph manager", file_symbols.len(), file_path);
+                
+                // Generate skeleton from Tree-sitter parsed symbols
+                if let Ok(tree_skeleton) = generate_skeleton_from_symbols(&file_symbols, content) {
+                    if !tree_skeleton.trim().is_empty() {
+                        skeleton.push_str("// Generated from Tree-sitter parsed symbols\n\n");
+                        skeleton.push_str(&tree_skeleton);
+                        return Ok(skeleton);
+                    }
+                }
+            } else {
+                tracing::debug!("No Tree-sitter symbols found for {} in graph manager, using fallback", file_path);
+            }
+        } else {
+            tracing::debug!("Graph manager has no symbols loaded, using fallback");
+        }
+    }
     
-    let tree = parser.parse(content, None)
-        .ok_or("Failed to parse file with tree-sitter")?;
+    // Try to parse with appropriate tree-sitter parser based on file extension
+    if let Some(language) = detect_language_from_path(file_path) {
+        if let Ok(tree_skeleton) = parse_with_tree_sitter(content, language) {
+            if !tree_skeleton.trim().is_empty() {
+                skeleton.push_str(&tree_skeleton);
+                return Ok(skeleton);
+            }
+        }
+    }
     
-    let root_node = tree.root_node();
+    // If tree-sitter parsing fails, use enhanced text-based extraction
+    let simple_structure = extract_simple_structure(content, file_path);
+    skeleton.push_str(&simple_structure);
     
-    // Extract basic structure
-    extract_node_skeleton(&mut skeleton, root_node, content, 0)?;
+    // If still minimal content, add more comprehensive fallback
+    if skeleton.len() < 200 {
+        skeleton.push_str("\n// Enhanced content extraction:\n");
+        for (i, line) in lines.iter().enumerate() {
+            let trimmed = line.trim();
+            if !trimmed.is_empty() && !trimmed.starts_with("//") && !trimmed.starts_with("/*") {
+                // Add significant non-comment lines
+                if trimmed.contains('{') || trimmed.contains('}') || 
+                   trimmed.contains('(') || trimmed.contains(';') {
+                    skeleton.push_str(&format!("// Line {}: {}\n", i + 1, trimmed));
+                }
+            }
+        }
+    }
     
     Ok(skeleton)
 }
+
+/// Detect programming language from file path
+fn detect_language_from_path(file_path: &str) -> Option<super::parser_pool::SupportedLanguage> {
+    use std::path::Path;
+    let path = Path::new(file_path);
+    super::parser_pool::SupportedLanguage::from_path(path)
+}
+
+/// Generate skeleton from Tree-sitter parsed symbols
+fn generate_skeleton_from_symbols(symbols: &[&super::context_extractor::CodeSymbol], content: &str) -> Result<String, String> {
+    let mut skeleton = String::new();
+    let lines: Vec<&str> = content.lines().collect();
+    
+    // Sort symbols by start line
+    let mut sorted_symbols: Vec<_> = symbols.iter().collect();
+    sorted_symbols.sort_by_key(|s| s.start_line);
+    
+    tracing::debug!("Generating skeleton from {} Tree-sitter symbols", sorted_symbols.len());
+    
+    // Group symbols by parent for hierarchical structure
+    let mut child_symbols: std::collections::HashMap<String, Vec<&super::context_extractor::CodeSymbol>> = std::collections::HashMap::new();
+    let mut top_level_symbols = Vec::new();
+    
+    for symbol in &sorted_symbols {
+        if let Some(parent) = &symbol.parent {
+            child_symbols.entry(parent.clone()).or_insert_with(Vec::new).push(symbol);
+        } else {
+            top_level_symbols.push(symbol);
+        }
+    }
+    
+    // Generate skeleton for top-level symbols
+    for symbol in &top_level_symbols {
+        generate_symbol_skeleton(&mut skeleton, symbol, &child_symbols, &lines, 0)?;
+    }
+    
+    // If we still have minimal content, add more symbols as simple entries
+    if skeleton.len() < 100 && sorted_symbols.len() > top_level_symbols.len() {
+        skeleton.push_str("\n// Additional symbols:\n");
+        for symbol in &sorted_symbols {
+            if !top_level_symbols.contains(&symbol) {
+                let signature = extract_symbol_signature(&lines, symbol).unwrap_or_else(|_| format!("// {}: {}", symbol.symbol_type.as_str(), symbol.name));
+                skeleton.push_str(&format!("// Lines {}-{}: {}\n", symbol.start_line, symbol.end_line, signature));
+            }
+        }
+    }
+    
+    Ok(skeleton)
+}
+
+/// Parse content with Tree-sitter and generate skeleton (fallback method)
+fn parse_with_tree_sitter(_content: &str, language: super::parser_pool::SupportedLanguage) -> Result<String, String> {
+    // This is a fallback method when symbols aren't in the graph manager
+    tracing::debug!("Using fallback Tree-sitter parsing for language: {:?}", language);
+    Err("Fallback Tree-sitter parsing not implemented - using text-based extraction".to_string())
+}
+
+/// Extract simple structure using text patterns when tree-sitter fails
+fn extract_simple_structure(content: &str, file_path: &str) -> String {
+    let mut skeleton = String::new();
+    let lines: Vec<&str> = content.lines().collect();
+    
+    skeleton.push_str(&format!("// Simple structure extraction for: {}\n\n", file_path));
+    
+    // Extract basic patterns based on language
+    if let Some(language) = detect_language_from_path(file_path) {
+        match language {
+            super::parser_pool::SupportedLanguage::Rust => extract_rust_patterns(&lines, &mut skeleton),
+            super::parser_pool::SupportedLanguage::Python => extract_python_patterns(&lines, &mut skeleton),
+            super::parser_pool::SupportedLanguage::CSharp => extract_csharp_patterns(&lines, &mut skeleton),
+            super::parser_pool::SupportedLanguage::JavaScript | super::parser_pool::SupportedLanguage::TypeScript => extract_js_ts_patterns(&lines, &mut skeleton),
+            _ => extract_generic_patterns(&lines, &mut skeleton),
+        }
+    } else {
+        extract_generic_patterns(&lines, &mut skeleton);
+    }
+    
+    skeleton
+}
+
+/// Extract Rust-specific patterns
+fn extract_rust_patterns(lines: &[&str], skeleton: &mut String) {
+    let mut in_impl = false;
+    let mut impl_indent = 0;
+    
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        let line_indent = line.len() - line.trim_start().len();
+        
+        // Reset impl context if we're back to top level
+        if in_impl && line_indent <= impl_indent && !trimmed.is_empty() && !trimmed.starts_with("//") {
+            in_impl = false;
+        }
+        
+        if trimmed.starts_with("pub struct ") || trimmed.starts_with("struct ") {
+            skeleton.push_str(&format!("// Line {}: {}\n", i + 1, trimmed));
+            let struct_def = if trimmed.ends_with('{') {
+                trimmed.trim_end_matches('{').trim()
+            } else { trimmed };
+            skeleton.push_str(&format!("{} {{\n    // ...\n}}\n\n", struct_def));
+            
+        } else if trimmed.starts_with("impl ") {
+            skeleton.push_str(&format!("// Line {}: {}\n", i + 1, trimmed));
+            let impl_def = if trimmed.ends_with('{') {
+                trimmed.trim_end_matches('{').trim()
+            } else { trimmed };
+            skeleton.push_str(&format!("{} {{\n", impl_def));
+            in_impl = true;
+            impl_indent = line_indent;
+            
+            // Look ahead for methods in this impl
+            let mut method_count = 0;
+            for j in (i + 1)..std::cmp::min(i + 20, lines.len()) {
+                let next_line = lines[j].trim();
+                let next_indent = lines[j].len() - lines[j].trim_start().len();
+                
+                if next_indent <= line_indent && !next_line.is_empty() && !next_line.starts_with("//") {
+                    break; // End of impl
+                }
+                
+                if (next_line.starts_with("pub fn ") || next_line.starts_with("fn ")) && next_indent > line_indent {
+                    method_count += 1;
+                    if method_count <= 3 { // Show first 3 methods
+                        let method_sig = if next_line.contains('{') {
+                            next_line.split('{').next().unwrap_or(next_line).trim()
+                        } else { next_line };
+                        skeleton.push_str(&format!("    // {}\n", method_sig));
+                    }
+                }
+            }
+            skeleton.push_str("    // ...\n}\n\n");
+            
+        } else if (trimmed.starts_with("pub fn ") || trimmed.starts_with("fn ")) && !in_impl {
+            skeleton.push_str(&format!("// Line {}: {}\n", i + 1, trimmed));
+            let fn_sig = if trimmed.contains('{') {
+                trimmed.split('{').next().unwrap_or(trimmed).trim()
+            } else { trimmed };
+            skeleton.push_str(&format!("{} {{\n    // ...\n}}\n\n", fn_sig));
+            
+        } else if trimmed.starts_with("pub enum ") || trimmed.starts_with("enum ") {
+            skeleton.push_str(&format!("// Line {}: {}\n", i + 1, trimmed));
+            let enum_def = if trimmed.ends_with('{') {
+                trimmed.trim_end_matches('{').trim()
+            } else { trimmed };
+            skeleton.push_str(&format!("{} {{\n    // ...\n}}\n\n", enum_def));
+        }
+    }
+}
+
+/// Extract Python-specific patterns
+fn extract_python_patterns(lines: &[&str], skeleton: &mut String) {
+    let mut in_class = false;
+    let mut class_indent = 0;
+    
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        let line_indent = line.len() - line.trim_start().len();
+        
+        // Reset class context if we're back to top level
+        if in_class && line_indent <= class_indent && !trimmed.is_empty() && !trimmed.starts_with("#") {
+            in_class = false;
+        }
+        
+        if trimmed.starts_with("class ") && trimmed.contains(":") {
+            skeleton.push_str(&format!("# Line {}: {}\n", i + 1, trimmed));
+            let class_def = trimmed.trim_end_matches(":").trim();
+            skeleton.push_str(&format!("{}:\n", class_def));
+            in_class = true;
+            class_indent = line_indent;
+            
+            // Look ahead for methods in this class
+            let mut method_count = 0;
+            for j in (i + 1)..std::cmp::min(i + 20, lines.len()) {
+                let next_line = lines[j].trim();
+                let next_indent = lines[j].len() - lines[j].trim_start().len();
+                
+                if next_indent <= line_indent && !next_line.is_empty() && !next_line.starts_with("#") {
+                    break; // End of class
+                }
+                
+                if next_line.starts_with("def ") && next_indent > line_indent {
+                    method_count += 1;
+                    if method_count <= 3 { // Show first 3 methods
+                        skeleton.push_str(&format!("    # Method: {}\n", next_line));
+                    }
+                }
+            }
+            skeleton.push_str("    # ...\n\n");
+            
+        } else if trimmed.starts_with("def ") && trimmed.contains(":") && !in_class {
+            skeleton.push_str(&format!("# Line {}: {}\n", i + 1, trimmed));
+            skeleton.push_str(&format!("{}:\n    # ...\n\n", trimmed.trim_end_matches(":")));
+        } else if trimmed.starts_with("async def ") && trimmed.contains(":") {
+            skeleton.push_str(&format!("# Line {}: {}\n", i + 1, trimmed));
+            skeleton.push_str(&format!("{}:\n    # ...\n\n", trimmed.trim_end_matches(":")));
+        }
+    }
+}
+
+/// Extract C#-specific patterns
+fn extract_csharp_patterns(lines: &[&str], skeleton: &mut String) {
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if (trimmed.starts_with("public class ") || trimmed.starts_with("class ") || 
+            trimmed.starts_with("private class ") || trimmed.starts_with("internal class ")) && 
+           (trimmed.contains("{") || lines.get(i + 1).map_or(false, |next| next.trim() == "{")) {
+            skeleton.push_str(&format!("// Line {}: {}\n", i + 1, trimmed));
+            skeleton.push_str(&format!("{} {{\n    // ...\n}}\n\n", trimmed.trim_end_matches(" {")));
+        } else if (trimmed.starts_with("public ") || trimmed.starts_with("private ") || 
+                  trimmed.starts_with("protected ") || trimmed.starts_with("internal ")) &&
+                 (trimmed.contains(" void ") || trimmed.contains(" int ") || trimmed.contains(" string ")) &&
+                 trimmed.contains("(") {
+            skeleton.push_str(&format!("// Line {}: {}\n", i + 1, trimmed));
+            skeleton.push_str(&format!("{} {{\n    // ...\n}}\n\n", trimmed.trim_end_matches(" {")));
+        }
+    }
+}
+
+
+/// Extract JavaScript/TypeScript-specific patterns
+fn extract_js_ts_patterns(lines: &[&str], skeleton: &mut String) {
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("export class ") || trimmed.starts_with("class ") {
+            skeleton.push_str(&format!("// Line {}: {}\n", i + 1, trimmed));
+            skeleton.push_str(&format!("{} {{\n    // ...\n}}\n\n", trimmed.trim_end_matches(" {")));
+        } else if trimmed.starts_with("export interface ") || trimmed.starts_with("interface ") {
+            skeleton.push_str(&format!("// Line {}: {}\n", i + 1, trimmed));
+            skeleton.push_str(&format!("{} {{\n    // ...\n}}\n\n", trimmed.trim_end_matches(" {")));
+        } else if trimmed.starts_with("export type ") || trimmed.starts_with("type ") {
+            skeleton.push_str(&format!("// Line {}: {}\n", i + 1, trimmed));
+        } else if (trimmed.starts_with("function ") || trimmed.starts_with("export function ") ||
+                  trimmed.starts_with("async function ") || trimmed.starts_with("export default function ")) &&
+                 trimmed.contains("(") {
+            skeleton.push_str(&format!("// Line {}: {}\n", i + 1, trimmed));
+            skeleton.push_str(&format!("{} {{\n    // ...\n}}\n\n", trimmed.trim_end_matches(" {")));
+        }
+    }
+}
+
+/// Extract generic patterns for unknown languages
+fn extract_generic_patterns(lines: &[&str], skeleton: &mut String) {
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        // Look for function-like patterns
+        if (trimmed.contains("function") || trimmed.contains("def ") || 
+            trimmed.contains("class ") || trimmed.contains("struct ")) &&
+           trimmed.contains("(") {
+            skeleton.push_str(&format!("// Line {}: {}\n", i + 1, trimmed));
+        }
+    }
+    skeleton.push_str("\n// ... (generic extraction - limited pattern recognition)\n");
+}
+
 
 /// Extract skeleton from tree-sitter nodes
 fn extract_node_skeleton(skeleton: &mut String, node: tree_sitter::Node, content: &str, depth: usize) -> Result<(), String> {
