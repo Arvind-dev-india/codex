@@ -126,18 +126,18 @@
   name: (identifier) @name.reference.using
 ) @reference.using
 
-(using_directive
-  name: (qualified_name) @name.reference.using
-) @reference.using
+;(using_directive
+;  name: (qualified_name) @name.reference.using
+;) @reference.using
 
-; Global using declarations
-(global_using_directive
-  name: (identifier) @name.reference.using
-) @reference.using
-
-(global_using_directive
-  name: (qualified_name) @name.reference.using
-) @reference.using
+; ; Global using declarations (C# 10+)
+; (global_using_directive
+;   name: (identifier) @name.reference.using
+; ) @reference.using
+; 
+; (global_using_directive
+;   name: (qualified_name) @name.reference.using
+; ) @reference.using
 
 ; Namespace declarations
 (namespace_declaration

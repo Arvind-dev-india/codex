@@ -32,6 +32,14 @@ pub enum GraphStatus {
     },
 }
 
+/// Debug function to dump graph state
+pub fn dump_graph_state() -> Result<(), String> {
+    let manager = get_graph_manager();
+    let manager = manager.read()
+        .map_err(|e| format!("Failed to acquire read lock: {}", e))?;
+    manager.dump_graph_state()
+}
+
 /// File metadata for change detection
 #[derive(Debug, Clone)]
 struct FileMetadata {
@@ -63,6 +71,36 @@ impl CodeGraphManager {
             initialized: false,
             status: GraphStatus::NotStarted,
         }
+    }
+
+    /// Debug method to dump graph state
+    pub fn dump_graph_state(&self) -> Result<(), String> {
+        if let Some(ref mapper) = self.repo_mapper {
+            tracing::info!("Graph state dump:");
+            tracing::info!("  Root path: {:?}", self.root_path);
+            tracing::info!("  Initialized: {}", self.initialized);
+            tracing::info!("  Status: {:?}", self.status);
+
+            let symbols = mapper.get_all_symbols();
+            tracing::info!("  Total symbols: {}", symbols.len());
+
+            // Get file count
+            let mut unique_files = std::collections::HashSet::new();
+            for symbol in symbols.values() {
+                unique_files.insert(&symbol.file_path);
+            }
+            tracing::info!("  Unique files with symbols: {}", unique_files.len());
+
+            // Show first few files
+            for (i, file) in unique_files.iter().enumerate() {
+                if i < 5 {
+                    tracing::info!("    File {}: '{}'", i, file);
+                }
+            }
+        } else {
+            tracing::info!("Graph not initialized");
+        }
+        Ok(())
     }
 
     /// Initialize or update the code graph for a given root path

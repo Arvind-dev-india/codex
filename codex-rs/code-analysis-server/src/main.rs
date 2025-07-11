@@ -33,7 +33,7 @@ async fn main() -> Result<()> {
     
     // Configure logging based on verbosity
     let log_level = if args.verbose { "debug" } else { "info" };
-    std::env::set_var("RUST_LOG", format!("code_analysis_server={}", log_level));
+    std::env::set_var("RUST_LOG", format!("code_analysis_server={},codex_core={}", log_level, log_level));
     
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -45,6 +45,14 @@ async fn main() -> Result<()> {
         std::env::set_current_dir(project_dir)?;
         tracing::info!("Set working directory to: {}", project_dir.display());
     }
+    
+    // Log current directory
+    let current_dir = std::env::current_dir()?;
+    tracing::info!("Current working directory: {}", current_dir.display());
+    
+    // Initialize code graph and wait for it to complete before starting server
+    tracing::info!("Initializing code graph (this may take a moment)...");
+    code_analysis_bridge::init_code_graph_and_wait(None).await?;
     
     // Run the server
     if args.sse || args.port > 0 {

@@ -40,6 +40,7 @@ pub enum SymbolType {
     InlineClassMethod,
 }
 
+
 impl SymbolType {
     /// Get string representation of symbol type
     pub fn as_str(&self) -> &'static str {
@@ -135,6 +136,63 @@ impl ContextExtractor {
         }
     }
 
+    /// Debug method to dump all cached paths and symbols to a file
+    pub fn dump_cache_to_file(&self, filename: &str) -> Result<(), String> {
+        use std::io::Write;
+
+        let mut content = String::new();
+
+        // Dump file_symbols mapping
+        content.push_str("=== FILE_SYMBOLS MAPPING ===\n");
+        content.push_str(&format!("Total files: {}\n\n", self.file_symbols.len()));
+
+        let mut file_paths: Vec<_> = self.file_symbols.keys().collect();
+        file_paths.sort();
+
+        for file_path in file_paths {
+            if let Some(symbol_fqns) = self.file_symbols.get(file_path) {
+                content.push_str(&format!("File: '{}'\n", file_path));
+                content.push_str(&format!("  Symbol count: {}\n", symbol_fqns.len()));
+                content.push_str("  Symbols:\n");
+
+                let mut sorted_fqns: Vec<_> = symbol_fqns.iter().collect();
+                sorted_fqns.sort();
+
+                for fqn in sorted_fqns.iter().take(5) {  // Show first 5 symbols
+                    if let Some(symbol) = self.symbols.get(*fqn) {
+                        content.push_str(&format!("    - {} ({})\n", symbol.name, symbol.symbol_type.as_str()));
+                    }
+                }
+                if symbol_fqns.len() > 5 {
+                    content.push_str(&format!("    ... and {} more\n", symbol_fqns.len() - 5));
+                }
+                content.push_str("\n");
+            }
+        }
+
+        // Dump all unique file paths from symbols
+        content.push_str("\n=== UNIQUE FILE PATHS FROM SYMBOLS ===\n");
+        let mut unique_paths: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for symbol in self.symbols.values() {
+            unique_paths.insert(symbol.file_path.clone());
+        }
+        let mut sorted_unique: Vec<_> = unique_paths.into_iter().collect();
+        sorted_unique.sort();
+
+        content.push_str(&format!("Total unique paths: {}\n\n", sorted_unique.len()));
+        for path in sorted_unique {
+            content.push_str(&format!("  '{}'\n", path));
+        }
+
+        // Write to file
+        let mut file = std::fs::File::create(filename)
+            .map_err(|e| format!("Failed to create dump file: {}", e))?;
+        file.write_all(content.as_bytes())
+            .map_err(|e| format!("Failed to write dump file: {}", e))?;
+
+        Ok(())
+    }
+
     /// Extract symbols from a file
     pub fn extract_symbols_from_file(&mut self, file_path: &str) -> Result<(), String> {
         // Read the file content
@@ -166,9 +224,11 @@ impl ContextExtractor {
     
     /// Extract symbols from a file using incremental parsing if possible
     pub fn extract_symbols_from_file_incremental(&mut self, file_path: &str) -> Result<(), String> {
-        // Convert relative path to absolute for file reading, but keep relative for storage
+        // Normalize the file path first for consistent storage
+        let normalized_path = Self::normalize_path_for_storage(file_path);
+
+        // Convert to absolute path for file reading
         let absolute_path_for_reading = if std::path::Path::new(file_path).is_relative() {
-            // Convert relative to absolute for file system operations
             std::env::current_dir()
                 .map_err(|e| format!("Failed to get current directory: {}", e))?
                 .join(file_path)
@@ -177,13 +237,13 @@ impl ContextExtractor {
         } else {
             file_path.to_string()
         };
-        
+
         // Parse the file using absolute path for reading
         let mut parsed_file = get_parser_pool().parse_file_if_needed(&absolute_path_for_reading)?;
-        
-        // BUT: Override the path in parsed_file to use relative path for consistent storage
-        parsed_file.path = file_path.to_string();
-        
+
+        // Override the path in parsed_file to use normalized path for consistent storage
+        parsed_file.path = normalized_path.clone();
+
         // Extract symbols based on the language
         self.extract_symbols_from_parsed_file(&parsed_file)
     }
@@ -527,48 +587,80 @@ impl ContextExtractor {
     
     /// Get symbols for a specific file with optional project root for better path normalization
     pub fn get_symbols_for_file_with_root(&self, file_path: &str, project_root: Option<&std::path::Path>) -> Vec<&CodeSymbol> {
-        tracing::info!("CACHE DEBUG: Looking for symbols for file: {}", file_path);
-        
-        // First try exact match
-        if let Some(symbol_fqns) = self.file_symbols.get(file_path) {
-            tracing::info!("CACHE DEBUG: Found exact match for {}, {} symbols", file_path, symbol_fqns.len());
+        // Dump cache on first call for debugging
+        static DUMPED: std::sync::Once = std::sync::Once::new();
+        DUMPED.call_once(|| {
+            if let Err(e) = self.dump_cache_to_file("/tmp/codex_symbol_cache.txt") {
+                tracing::error!("Failed to dump cache: {}", e);
+            } else {
+                tracing::info!("Dumped symbol cache to /tmp/codex_symbol_cache.txt");
+            }
+        });
+
+        tracing::info!("Looking for symbols for file: '{}'", file_path);
+        tracing::info!("  Project root: {:?}", project_root);
+
+        // Log all cached paths for debugging
+        if self.file_symbols.is_empty() {
+            tracing::warn!("  No files in symbol cache!");
+        } else {
+            tracing::debug!("  Files in cache: {}", self.file_symbols.len());
+            // Log first few paths
+            for (i, path) in self.file_symbols.keys().enumerate() {
+                if i < 3 {
+                    tracing::info!("    Cached path {}: '{}'", i, path);
+                }
+            }
+        }
+
+        // Normalize the input path
+        let normalized_input = Self::normalize_path_for_storage(file_path);
+        tracing::info!("  Normalized input: '{}'", normalized_input);
+
+        // First try exact match with normalized path
+        if let Some(symbol_fqns) = self.file_symbols.get(&normalized_input) {
+            tracing::info!("  ✓ Found exact match for normalized path, {} symbols", symbol_fqns.len());
             return symbol_fqns.iter()
                 .filter_map(|fqn| self.symbols.get(fqn))
                 .collect();
         }
-        
-        // Debug: show what paths are actually stored
-        tracing::info!("CACHE DEBUG: No exact match for {}. Stored paths:", file_path);
-        for stored_path in self.file_symbols.keys().take(5) {
-            tracing::debug!("  - {}", stored_path);
+
+        // Try with the original path as well
+        if let Some(symbol_fqns) = self.file_symbols.get(file_path) {
+            tracing::info!("  ✓ Found exact match for original path, {} symbols", symbol_fqns.len());
+            return symbol_fqns.iter()
+                .filter_map(|fqn| self.symbols.get(fqn))
+                .collect();
         }
-        
-        // Normalize the input path to handle relative vs absolute path mismatches
-        let normalized_input = Self::normalize_path_for_storage(file_path);
-        
-        // Search through all file entries to find a match
-        for (stored_path, symbol_fqns) in &self.file_symbols {
-            // Since we now normalize during storage, stored_path should already be normalized
-            // Try multiple matching strategies
-            let is_match = 
-                // Exact match with normalized paths
-                stored_path == &normalized_input ||
-                // Either path ends with the other (handles different relative path roots)
-                stored_path.ends_with(&normalized_input) ||
-                normalized_input.ends_with(stored_path) ||
-                // Try with original paths for backward compatibility
-                stored_path.ends_with(file_path) ||
-                file_path.ends_with(stored_path);
-            
-            if is_match {
-                tracing::debug!("Found path match: {} -> {}, {} symbols", file_path, stored_path, symbol_fqns.len());
+
+        // If we have a project root, try to normalize against it
+        if let Some(root) = project_root {
+            let normalized_with_root = Self::normalize_path_for_lookup_with_root(file_path, Some(root));
+            tracing::info!("  Normalized with root: '{}'", normalized_with_root);
+            if let Some(symbol_fqns) = self.file_symbols.get(&normalized_with_root) {
+                tracing::info!("  ✓ Found match with project root normalization, {} symbols", symbol_fqns.len());
                 return symbol_fqns.iter()
                     .filter_map(|fqn| self.symbols.get(fqn))
                     .collect();
             }
         }
-        
-        tracing::debug!("No symbols found for file: {}", file_path);
+
+        // Last resort: iterate through all stored paths to find a match
+        tracing::info!("  Trying fuzzy matching...");
+        for (stored_path, symbol_fqns) in &self.file_symbols {
+            // Check various matching strategies
+            if stored_path.ends_with(&normalized_input) ||
+               normalized_input.ends_with(stored_path) ||
+               stored_path.ends_with(file_path) ||
+               file_path.ends_with(stored_path) {
+                tracing::info!("  ✓ Found fuzzy match: '{}' -> '{}', {} symbols", file_path, stored_path, symbol_fqns.len());
+                return symbol_fqns.iter()
+                    .filter_map(|fqn| self.symbols.get(fqn))
+                    .collect();
+            }
+        }
+
+        tracing::warn!("  ✗ No symbols found for file: '{}'", file_path);
         Vec::new()
     }
     

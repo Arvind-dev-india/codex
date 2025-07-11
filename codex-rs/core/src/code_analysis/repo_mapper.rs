@@ -99,6 +99,32 @@ impl RepoMapper {
         // First, collect all files to process
         let mut files_to_process = Vec::new();
         self.collect_files(&root_path, &mut files_to_process)?;
+
+        // Log statistics about files found
+        let mut file_extensions: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for file in &files_to_process {
+            if let Some(ext) = std::path::Path::new(file).extension().and_then(|e| e.to_str()) {
+                *file_extensions.entry(ext.to_string()).or_insert(0) += 1;
+            }
+        }
+
+        tracing::info!("Found {} files to process:", files_to_process.len());
+        for (ext, count) in &file_extensions {
+            tracing::info!("  .{}: {} files", ext, count);
+        }
+
+        // Log a few example file paths to verify correct paths
+        if files_to_process.len() > 0 {
+            tracing::info!("Example file paths:");
+            for (i, file) in files_to_process.iter().enumerate() {
+                if i < 5 || file.contains("test_files") {
+                    tracing::info!("  {}", file);
+                }
+                if i > 20 && !file.contains("test_files") {
+                    break;
+                }
+            }
+        }
         
         // For very large repositories, we'll use a custom thread pool
         let max_threads = if files_to_process.len() > 1000 {
@@ -233,32 +259,33 @@ impl RepoMapper {
         // Get symbols and references from the file extractor
         let symbols = file_extractor.get_symbols();
         let references = file_extractor.get_references();
-        
+
+        // Normalize the file path for consistent storage
+        let normalized_path = Self::normalize_file_path(file_path, &self.root_path)?;
+
         // Add symbols to our main context extractor
         for (fqn, symbol) in symbols {
             self.context_extractor.add_symbol(fqn.clone(), symbol.clone());
         }
-        
+
         // Add references to our main context extractor  
         for reference in references {
             self.context_extractor.add_reference(reference.clone());
         }
-        
-        // Create a file node
-        let relative_path = Self::normalize_file_path(file_path, &self.root_path)?;
 
+        // Create a file node with normalized path
         let file_node = CodeNode {
-            id: format!("file:{}", relative_path),
-            name: relative_path.clone(),
+            id: format!("file:{}", normalized_path),
+            name: normalized_path.clone(),
             node_type: CodeNodeType::File,
-            file_path: relative_path,
+            file_path: normalized_path.clone(),
             start_line: 0,
             end_line: 0,
         };
 
-        self.file_nodes.insert(file_path.to_string(), file_node);
-        self.processed_files.insert(file_path.to_string());
-        
+        self.file_nodes.insert(normalized_path.clone(), file_node);
+        self.processed_files.insert(normalized_path);
+
         Ok(())
     }
 

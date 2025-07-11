@@ -12,6 +12,7 @@ use codex_core::code_analysis::{
 };
 use serde_json::Value;
 use tracing::{info, error};
+use std::path::Path;
 
 /// Initialize the code graph for the current directory
 pub fn init_code_graph() -> Result<()> {
@@ -29,6 +30,48 @@ pub fn init_code_graph() -> Result<()> {
     match graph_manager::ensure_graph_for_path(&current_dir) {
         Ok(_) => {
             info!("Code graph initialized successfully");
+            Ok(())
+        },
+        Err(e) => {
+            error!("Failed to initialize code graph: {}", e);
+            Err(anyhow::anyhow!("Failed to initialize code graph: {}", e))
+        }
+    }
+}
+
+/// Initialize the code graph for a specific directory and wait for completion
+pub async fn init_code_graph_and_wait(project_dir: Option<&Path>) -> Result<()> {
+    let target_dir = if let Some(dir) = project_dir {
+        dir.to_path_buf()
+    } else {
+        std::env::current_dir()?
+    };
+    
+    info!("Initializing code graph for: {}", target_dir.display());
+    
+    // Force synchronous initialization to ensure it completes
+    match graph_manager::initialize_graph_async(&target_dir).await {
+        Ok(_) => {
+            info!("Code graph initialized successfully");
+            
+            // Log some statistics about what was parsed
+            if let Some(symbols) = graph_manager::get_symbols() {
+                info!("Total symbols found: {}", symbols.len());
+                
+                // Count files by extension
+                let mut file_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+                for symbol in symbols.values() {
+                    if let Some(ext) = std::path::Path::new(&symbol.file_path).extension() {
+                        *file_counts.entry(ext.to_string_lossy().to_string()).or_insert(0) += 1;
+                    }
+                }
+                
+                info!("Files with symbols by extension:");
+                for (ext, count) in file_counts {
+                    info!("  .{}: {} files", ext, count);
+                }
+            }
+            
             Ok(())
         },
         Err(e) => {

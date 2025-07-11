@@ -169,7 +169,7 @@ def analyze_skeleton_quality(skeleton, original_analysis, file_path, language):
         "skeleton_lines": skeleton_lines,
         "original_lines": original_lines,
         "compression_ratio": (skeleton_lines / original_lines * 100) if original_lines > 0 else 0,
-        "tree_sitter_used": "Generated from Tree-sitter parsed symbols" in skeleton,
+        "tree_sitter_used": "Generated skeleton with" in skeleton and "symbols detected" in skeleton,
         "fallback_used": "fallback skeleton" in skeleton.lower(),
     }
     
@@ -198,6 +198,7 @@ def analyze_skeleton_quality(skeleton, original_analysis, file_path, language):
             "namespaces": (quality["elements"]["namespaces"] / max(original_analysis.get("namespaces", 1), 1)) * 100,
             "classes": (quality["elements"]["classes"] / max(original_analysis.get("classes", 1), 1)) * 100,
             "methods": (quality["elements"]["methods"] / max(original_analysis.get("methods", 1), 1)) * 100,
+            "using_statements": (quality["elements"]["using_statements"] / max(original_analysis.get("using_statements", 1), 1)) * 100,
         }
     elif language == "C++":
         quality["elements"] = {

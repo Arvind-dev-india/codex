@@ -144,25 +144,25 @@
 
 ; Static method declarations
 (field_declaration
-  specifiers: (storage_class_specifier)
+  type: (storage_class_specifier)
   declarator: (function_declarator
     declarator: (field_identifier) @name.definition.method)) @definition.method
 
 ; Inline function definitions
 (function_definition
-  specifiers: (storage_class_specifier)
+  type: (storage_class_specifier)
   declarator: (function_declarator
     declarator: (identifier) @name.definition.function)) @definition.function
 
 ; Virtual method declarations
 (field_declaration
-  specifiers: (virtual_specifier)
+  type: (virtual_specifier)
   declarator: (function_declarator
     declarator: (field_identifier) @name.definition.method)) @definition.method
 
 ; Pure virtual method declarations
 (field_declaration
-  specifiers: (virtual_specifier)
+  type: (virtual_specifier)
   declarator: (function_declarator
     declarator: (field_identifier) @name.definition.method)
   default_value: (number_literal)) @definition.method
