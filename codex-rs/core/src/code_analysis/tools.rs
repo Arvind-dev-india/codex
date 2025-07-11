@@ -294,24 +294,19 @@ pub fn handle_analyze_code(args: Value) -> Option<Result<Value, String>> {
             
             // Use the pre-initialized global graph (no need to rebuild)
             if super::graph_manager::is_graph_initialized() {
-                // Get symbols from the cached global graph
-                if let Some(symbols_map) = super::graph_manager::get_symbols() {
-                    // Normalize paths for comparison (handle both absolute and relative paths)
-                    let input_path_normalized = std::path::Path::new(&input.file_path)
-                        .canonicalize()
-                        .unwrap_or_else(|_| std::path::PathBuf::from(&input.file_path));
+                // Use the SAME efficient cache as skeleton generation
+                let manager = super::graph_manager::get_graph_manager();
+                let manager = match manager.read() {
+                    Ok(m) => m,
+                    Err(e) => return Some(Err(format!("Failed to acquire read lock: {}", e))),
+                };
+                
+                if let Some(repo_mapper) = manager.get_repo_mapper() {
+                    // Use efficient O(1) file-based symbol lookup (same as skeleton generation)
+                    let symbols_in_file = repo_mapper.get_symbols_for_file(&input.file_path);
                     
-                    let file_symbols: Vec<SymbolInfo> = symbols_map
-                        .values()
-                        .filter(|symbol| {
-                            let symbol_path_normalized = std::path::Path::new(&symbol.file_path)
-                                .canonicalize()
-                                .unwrap_or_else(|_| std::path::PathBuf::from(&symbol.file_path));
-                            symbol_path_normalized == input_path_normalized || 
-                            symbol.file_path == input.file_path ||
-                            symbol.file_path.ends_with(&input.file_path) ||
-                            input.file_path.ends_with(&symbol.file_path)
-                        })
+                    let file_symbols: Vec<SymbolInfo> = symbols_in_file
+                        .iter()
                         .map(|symbol| {
                             let symbol_type_str = match symbol.symbol_type {
                                 super::context_extractor::SymbolType::Function => "function",
@@ -362,6 +357,8 @@ pub fn handle_analyze_code(args: Value) -> Option<Result<Value, String>> {
                             "symbols": file_symbols,
                         })));
                     }
+                } else {
+                    return Some(Err("Repository mapper not available".to_string()));
                 }
             }
             
@@ -2243,13 +2240,13 @@ pub fn generate_single_file_skeleton(file_path: &str) -> Result<String, String> 
     
     tracing::debug!("Got repo mapper, searching for symbols in file");
     
-    // OPTIMIZATION: Use O(1) file-based symbol lookup from graph manager's cache
+    // REVERT: Use the original efficient O(1) file-based symbol lookup
     let symbols_in_file: Vec<_> = repo_mapper.get_symbols_for_file(file_path)
         .into_iter()
         .cloned()
         .collect();
     
-    tracing::debug!("Found {} symbols for file {} using O(1) lookup", symbols_in_file.len(), file_path);
+    tracing::info!("SKELETON DEBUG: Found {} symbols for file {} using O(1) lookup", symbols_in_file.len(), file_path);
     
     // Check if we found any symbols
     if symbols_in_file.is_empty() {
@@ -2886,4 +2883,5 @@ fn truncate_skeleton(skeleton: &str, max_tokens: usize) -> String {
         truncated
     }
 }
+
 

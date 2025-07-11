@@ -136,7 +136,13 @@ impl RepoMapper {
                 if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
                     if SupportedLanguage::from_extension(ext).is_some() {
                         let file_path = path.to_str().unwrap_or("").to_string();
-                        files.push(file_path);
+                        // Normalize to relative path immediately during collection
+                        if let Ok(relative_path) = Self::normalize_file_path(&file_path, &self.root_path) {
+                            files.push(relative_path);
+                        } else {
+                            // Fallback: use original path if normalization fails
+                            files.push(file_path);
+                        }
                     }
                 }
             }
@@ -168,7 +174,14 @@ impl RepoMapper {
                     // Create a new context extractor for this file
                     let mut context_extractor = super::context_extractor::create_context_extractor();
                     
-                    match context_extractor.extract_symbols_from_file_incremental(file_path) {
+                    // Ensure we're working with relative paths for consistent caching
+                    let normalized_file_path = if std::path::Path::new(file_path).is_absolute() {
+                        Self::normalize_file_path(file_path, &self.root_path).unwrap_or_else(|_| file_path.clone())
+                    } else {
+                        file_path.clone()
+                    };
+                    
+                    match context_extractor.extract_symbols_from_file_incremental(&normalized_file_path) {
                         Ok(()) => {
                             let mut count = successful_count.lock().unwrap();
                             *count += 1;
@@ -232,12 +245,7 @@ impl RepoMapper {
         }
         
         // Create a file node
-        let relative_path = Path::new(file_path)
-            .strip_prefix(&self.root_path)
-            .map_err(|_| format!("Failed to get relative path for {}", file_path))?
-            .to_str()
-            .unwrap_or("")
-            .to_string();
+        let relative_path = Self::normalize_file_path(file_path, &self.root_path)?;
 
         let file_node = CodeNode {
             id: format!("file:{}", relative_path),
@@ -305,12 +313,7 @@ impl RepoMapper {
         }
 
         // Create a node for the file
-        let relative_path = Path::new(file_path)
-            .strip_prefix(&self.root_path)
-            .map_err(|_| format!("Failed to get relative path for {}", file_path))?
-            .to_str()
-            .unwrap_or("")
-            .to_string();
+        let relative_path = Self::normalize_file_path(file_path, &self.root_path)?;
 
         let file_node = CodeNode {
             id: format!("file:{}", relative_path),
@@ -649,7 +652,7 @@ impl RepoMapper {
     
     /// Get symbols for a specific file - O(1) lookup using cached index
     pub fn get_symbols_for_file(&self, file_path: &str) -> Vec<&CodeSymbol> {
-        self.context_extractor.get_symbols_for_file(file_path)
+        self.context_extractor.get_symbols_for_file_with_root(file_path, Some(&self.root_path))
     }
     
     /// Get mapping from symbol names to FQNs
@@ -681,6 +684,26 @@ impl RepoMapper {
             self.files_failed_to_parse,
             &self.failed_files,
         )
+    }
+    
+    /// Normalize file path to always use relative paths with forward slashes
+    fn normalize_file_path(file_path: &str, root_path: &Path) -> Result<String, String> {
+        let path = Path::new(file_path);
+        
+        // If already relative, normalize separators
+        if path.is_relative() {
+            return Ok(file_path.replace('\\', "/"));
+        }
+        
+        // For absolute paths, try to make relative to root
+        let relative_path = path
+            .strip_prefix(root_path)
+            .map_err(|_| format!("Failed to get relative path for {}", file_path))?
+            .to_str()
+            .unwrap_or("")
+            .replace('\\', "/");
+            
+        Ok(relative_path)
     }
 }
 

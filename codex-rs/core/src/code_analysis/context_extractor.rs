@@ -166,8 +166,23 @@ impl ContextExtractor {
     
     /// Extract symbols from a file using incremental parsing if possible
     pub fn extract_symbols_from_file_incremental(&mut self, file_path: &str) -> Result<(), String> {
-        // Parse the file if needed
-        let parsed_file = get_parser_pool().parse_file_if_needed(file_path)?;
+        // Convert relative path to absolute for file reading, but keep relative for storage
+        let absolute_path_for_reading = if std::path::Path::new(file_path).is_relative() {
+            // Convert relative to absolute for file system operations
+            std::env::current_dir()
+                .map_err(|e| format!("Failed to get current directory: {}", e))?
+                .join(file_path)
+                .to_string_lossy()
+                .to_string()
+        } else {
+            file_path.to_string()
+        };
+        
+        // Parse the file using absolute path for reading
+        let mut parsed_file = get_parser_pool().parse_file_if_needed(&absolute_path_for_reading)?;
+        
+        // BUT: Override the path in parsed_file to use relative path for consistent storage
+        parsed_file.path = file_path.to_string();
         
         // Extract symbols based on the language
         self.extract_symbols_from_parsed_file(&parsed_file)
@@ -284,6 +299,9 @@ impl ContextExtractor {
             "package" => SymbolType::Package,
             "import" => SymbolType::Import,
             "type" => SymbolType::Class, // Map type definitions to class for now
+            "operator" => SymbolType::Operator,
+            "destructor" => SymbolType::Destructor,
+            "constructor" => SymbolType::Method, // Map constructors to methods for simplicity
             _ => {
                 tracing::debug!("Unknown symbol type: {}", symbol_type_str);
                 return Ok(());
@@ -320,8 +338,9 @@ impl ContextExtractor {
             .or_insert_with(Vec::new)
             .push(fqn.clone());
             
-        // Update file_symbols map
-        self.file_symbols.entry(parsed_file.path.clone())
+        // Update file_symbols map - normalize the path for consistent storage
+        let normalized_file_path = Self::normalize_path_for_storage(&parsed_file.path);
+        self.file_symbols.entry(normalized_file_path)
             .or_insert_with(HashSet::new)
             .insert(fqn);
             
@@ -345,6 +364,11 @@ impl ContextExtractor {
             "send" => ReferenceType::Call,
             "import" => ReferenceType::Import,
             "usage" => ReferenceType::Usage,
+            "using" => ReferenceType::Import,
+            "constructor" => ReferenceType::Call,
+            "field" => ReferenceType::Usage,
+            "identifier" => ReferenceType::Usage,
+            "module" => ReferenceType::Usage,
             _ => {
                 tracing::debug!("Unknown reference type: {}", ref_type_str);
                 return Ok(());
@@ -498,13 +522,135 @@ impl ContextExtractor {
     
     /// Get symbols for a specific file - O(1) lookup using cached file_symbols index
     pub fn get_symbols_for_file(&self, file_path: &str) -> Vec<&CodeSymbol> {
+        self.get_symbols_for_file_with_root(file_path, None)
+    }
+    
+    /// Get symbols for a specific file with optional project root for better path normalization
+    pub fn get_symbols_for_file_with_root(&self, file_path: &str, project_root: Option<&std::path::Path>) -> Vec<&CodeSymbol> {
+        tracing::info!("CACHE DEBUG: Looking for symbols for file: {}", file_path);
+        
+        // First try exact match
         if let Some(symbol_fqns) = self.file_symbols.get(file_path) {
-            symbol_fqns.iter()
+            tracing::info!("CACHE DEBUG: Found exact match for {}, {} symbols", file_path, symbol_fqns.len());
+            return symbol_fqns.iter()
                 .filter_map(|fqn| self.symbols.get(fqn))
-                .collect()
-        } else {
-            Vec::new()
+                .collect();
         }
+        
+        // Debug: show what paths are actually stored
+        tracing::info!("CACHE DEBUG: No exact match for {}. Stored paths:", file_path);
+        for stored_path in self.file_symbols.keys().take(5) {
+            tracing::debug!("  - {}", stored_path);
+        }
+        
+        // Normalize the input path to handle relative vs absolute path mismatches
+        let normalized_input = Self::normalize_path_for_storage(file_path);
+        
+        // Search through all file entries to find a match
+        for (stored_path, symbol_fqns) in &self.file_symbols {
+            // Since we now normalize during storage, stored_path should already be normalized
+            // Try multiple matching strategies
+            let is_match = 
+                // Exact match with normalized paths
+                stored_path == &normalized_input ||
+                // Either path ends with the other (handles different relative path roots)
+                stored_path.ends_with(&normalized_input) ||
+                normalized_input.ends_with(stored_path) ||
+                // Try with original paths for backward compatibility
+                stored_path.ends_with(file_path) ||
+                file_path.ends_with(stored_path);
+            
+            if is_match {
+                tracing::debug!("Found path match: {} -> {}, {} symbols", file_path, stored_path, symbol_fqns.len());
+                return symbol_fqns.iter()
+                    .filter_map(|fqn| self.symbols.get(fqn))
+                    .collect();
+            }
+        }
+        
+        tracing::debug!("No symbols found for file: {}", file_path);
+        Vec::new()
+    }
+    
+    /// Normalize a file path for consistent lookup by converting to relative path from project root
+    fn normalize_path_for_lookup(file_path: &str) -> String {
+        Self::normalize_path_for_lookup_with_root(file_path, None)
+    }
+    
+    /// Normalize a file path for consistent lookup with optional project root
+    fn normalize_path_for_lookup_with_root(file_path: &str, project_root: Option<&std::path::Path>) -> String {
+        use std::path::Path;
+        
+        let path = Path::new(file_path);
+        
+        // If it's already a relative path, use it as-is
+        if path.is_relative() {
+            return file_path.replace('\\', "/");
+        }
+        
+        // For absolute paths, normalize separators first
+        let path_str = file_path.replace('\\', "/");
+        
+        // Try to use provided project root first
+        if let Some(root) = project_root {
+            let root_str = root.to_string_lossy().replace('\\', "/");
+            if path_str.starts_with(&root_str) {
+                let relative_part = &path_str[root_str.len()..];
+                let relative_part = relative_part.trim_start_matches('/');
+                if !relative_part.is_empty() {
+                    return relative_part.to_string();
+                }
+            }
+        }
+        
+        // Fallback: try to get current working directory to make paths relative
+        if let Ok(current_dir) = std::env::current_dir() {
+            let current_dir_str = current_dir.to_string_lossy().replace('\\', "/");
+            
+            // If the path starts with current directory, make it relative
+            if path_str.starts_with(&current_dir_str) {
+                let relative_part = &path_str[current_dir_str.len()..];
+                let relative_part = relative_part.trim_start_matches('/');
+                if !relative_part.is_empty() {
+                    return relative_part.to_string();
+                }
+            }
+        }
+        
+        // Fallback: use the original normalized path
+        path_str
+    }
+    
+    /// Normalize a file path for consistent storage - always store as relative paths
+    fn normalize_path_for_storage(file_path: &str) -> String {
+        use std::path::Path;
+        
+        let path = Path::new(file_path);
+        
+        // If it's already a relative path, use it as-is
+        if path.is_relative() {
+            return file_path.replace('\\', "/");
+        }
+        
+        // For absolute paths, normalize separators first
+        let path_str = file_path.replace('\\', "/");
+        
+        // Try to get current working directory to make paths relative
+        if let Ok(current_dir) = std::env::current_dir() {
+            let current_dir_str = current_dir.to_string_lossy().replace('\\', "/");
+            
+            // If the path starts with current directory, make it relative
+            if path_str.starts_with(&current_dir_str) {
+                let relative_part = &path_str[current_dir_str.len()..];
+                let relative_part = relative_part.trim_start_matches('/');
+                if !relative_part.is_empty() {
+                    return relative_part.to_string();
+                }
+            }
+        }
+        
+        // Fallback: use the original normalized path
+        path_str
     }
     
     /// Get mapping from symbol names to their FQNs
@@ -519,8 +665,9 @@ impl ContextExtractor {
             .or_insert_with(Vec::new)
             .push(fqn.clone());
             
-        // Update file_symbols map
-        self.file_symbols.entry(symbol.file_path.clone())
+        // Update file_symbols map - normalize the path for consistent storage
+        let normalized_file_path = Self::normalize_path_for_storage(&symbol.file_path);
+        self.file_symbols.entry(normalized_file_path)
             .or_insert_with(HashSet::new)
             .insert(fqn.clone());
             

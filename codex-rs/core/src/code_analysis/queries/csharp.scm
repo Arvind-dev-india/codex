@@ -121,18 +121,43 @@
 ; Pattern matching
 (is_pattern_expression) @reference.pattern
 
-; Using declarations - commented out as not supported by current Tree-sitter C# parser
-; (using_declaration) @reference.using
+; Using declarations
+(using_directive
+  name: (identifier) @name.reference.using
+) @reference.using
+
+(using_directive
+  name: (qualified_name) @name.reference.using
+) @reference.using
+
+; Global using declarations
+(global_using_directive
+  name: (identifier) @name.reference.using
+) @reference.using
+
+(global_using_directive
+  name: (qualified_name) @name.reference.using
+) @reference.using
 
 ; Namespace declarations
 (namespace_declaration
  name: (identifier) @name.definition.module
 ) @definition.module
 
-; File scoped namespace (C# 10+) - commented out as may not be supported by current Tree-sitter C# parser
-; (file_scoped_namespace_declaration
-;  name: (identifier) @name.definition.module
-; ) @definition.module
+; Qualified namespace declarations (e.g., namespace A.B.C)
+(namespace_declaration
+ name: (qualified_name) @name.definition.module
+) @definition.module
+
+; File scoped namespace (C# 10+)
+(file_scoped_namespace_declaration
+ name: (identifier) @name.definition.module
+) @definition.module
+
+; File scoped qualified namespace
+(file_scoped_namespace_declaration
+ name: (qualified_name) @name.definition.module
+) @definition.module
 
 ; Attribute usage
 (attribute

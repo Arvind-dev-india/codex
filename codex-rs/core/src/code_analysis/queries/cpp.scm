@@ -24,6 +24,23 @@
   declarator: (function_declarator
     declarator: (identifier) @name.definition.function)) @definition.function
 
+; Function declarations with init_declarator
+(declaration
+  declarator: (init_declarator
+    declarator: (function_declarator
+      declarator: (identifier) @name.definition.function))) @definition.function
+
+; Function declarations in parameter lists
+(parameter_declaration
+  declarator: (function_declarator
+    declarator: (identifier) @name.definition.function)) @definition.function
+
+; Function pointer declarations
+(declaration
+  declarator: (pointer_declarator
+    declarator: (function_declarator
+      declarator: (identifier) @name.definition.function))) @definition.function
+
 ; Method definitions (functions within classes)
 (function_definition 
   declarator: (function_declarator 
@@ -130,3 +147,34 @@
   specifiers: (storage_class_specifier)
   declarator: (function_declarator
     declarator: (field_identifier) @name.definition.method)) @definition.method
+
+; Inline function definitions
+(function_definition
+  specifiers: (storage_class_specifier)
+  declarator: (function_declarator
+    declarator: (identifier) @name.definition.function)) @definition.function
+
+; Virtual method declarations
+(field_declaration
+  specifiers: (virtual_specifier)
+  declarator: (function_declarator
+    declarator: (field_identifier) @name.definition.method)) @definition.method
+
+; Pure virtual method declarations
+(field_declaration
+  specifiers: (virtual_specifier)
+  declarator: (function_declarator
+    declarator: (field_identifier) @name.definition.method)
+  default_value: (number_literal)) @definition.method
+
+; Friend function declarations
+(friend_declaration
+  (function_definition
+    declarator: (function_declarator
+      declarator: (identifier) @name.definition.function))) @definition.function
+
+; Friend function declarations (declaration form)
+(friend_declaration
+  (declaration
+    declarator: (function_declarator
+      declarator: (identifier) @name.definition.function))) @definition.function

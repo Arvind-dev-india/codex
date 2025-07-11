@@ -13,18 +13,19 @@ import os
 from pathlib import Path
 
 def start_server():
-    """Start the code analysis server"""
-    print("Starting code analysis server...")
-    project_dir = os.getcwd()
-    cmd = [
-        "./target/release/code-analysis-server",
-        "--sse",
-        "--project-dir", project_dir
-    ]
-    
-    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    time.sleep(5)  # Give time for graph building
-    return process
+    """Check if MCP server is running (don't start a new one)"""
+    print("Checking if MCP server is running...")
+    try:
+        response = requests.get("http://localhost:3000/test", timeout=5)
+        if response.status_code == 200:
+            print("MCP server is running")
+            return None  # No process to manage
+        else:
+            raise Exception("Server not responding correctly")
+    except Exception as e:
+        print(f"MCP server not running: {e}")
+        print("Please start the server with: ./target/release/code-analysis-server --sse --project-dir /home/arvkum/projects/codex/")
+        return None
 
 def get_all_test_files():
     """Get all test files organized by language"""
@@ -34,18 +35,18 @@ def get_all_test_files():
         "Python": []
     }
     
-    # Find all test files using absolute paths
-    base_dir = os.getcwd()
-    for root, dirs, files in os.walk("test_files"):
+    # Find all test files using relative paths (matching server project-dir)
+    # Server was started with project-dir /home/arvkum/projects/codex/
+    # So we need paths relative to that root
+    for root, dirs, files in os.walk("codex-rs/test_files"):
         for file in files:
             rel_path = os.path.join(root, file)
-            abs_path = os.path.abspath(rel_path)
             if file.endswith('.cs'):
-                test_files["C#"].append(abs_path)
+                test_files["C#"].append(rel_path)
             elif file.endswith(('.cpp', '.h')):
-                test_files["C++"].append(abs_path)
+                test_files["C++"].append(rel_path)
             elif file.endswith('.py'):
-                test_files["Python"].append(abs_path)
+                test_files["Python"].append(rel_path)
     
     # Sort files for consistent output
     for lang in test_files:
@@ -324,12 +325,16 @@ def run_comprehensive_test(verbose=True):
         return all_results
         
     finally:
-        if verbose:
-            print("\n🛑 Stopping server...")
-        server_process.terminate()
-        server_process.wait()
-        if verbose:
-            print("✅ Server stopped")
+        if server_process is not None:
+            if verbose:
+                print("\nStopping server...")
+            server_process.terminate()
+            server_process.wait()
+            if verbose:
+                print("Server stopped")
+        else:
+            if verbose:
+                print("\nUsing existing MCP server")
 
 def print_summary(all_results):
     """Print comprehensive summary"""
