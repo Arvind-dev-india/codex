@@ -1233,75 +1233,81 @@ pub fn handle_analyze_code(args: Value) -> Option<Result<Value, String>> {
 pub fn handle_find_symbol_references(args: Value) -> Option<Result<Value, String>> {
     Some(match serde_json::from_value::<FindSymbolReferencesInput>(args) {
         Ok(input) => {
-            // Determine the search directory
-            let search_dir = if input.directory.is_empty() {
-                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
-            } else {
-                std::path::PathBuf::from(&input.directory)
-            };
+            tracing::debug!("Finding references for symbol: {}", input.symbol_name);
             
             // Use the pre-initialized global graph (no need to rebuild)
             if super::graph_manager::is_graph_initialized() {
                 // Use the cached global graph to find references
                 let references = super::graph_manager::find_symbol_references(&input.symbol_name);
+                tracing::debug!("Found {} references using graph manager", references.len());
                     
-                    let reference_infos: Vec<_> = references.iter().map(|r| {
-                        json!({
-                            "file": r.reference_file,
-                            "line": r.reference_line,
-                            "column": r.reference_col,
-                            "reference_type": match r.reference_type {
-                                super::context_extractor::ReferenceType::Call => "call",
-                                super::context_extractor::ReferenceType::Declaration => "declaration",
-                                super::context_extractor::ReferenceType::Implementation => "implementation",
-                                super::context_extractor::ReferenceType::Import => "import",
-                                super::context_extractor::ReferenceType::Inheritance => "inheritance",
-                                super::context_extractor::ReferenceType::Usage => "usage",
-                            },
-                        })
-                    }).collect();
+                let reference_infos: Vec<_> = references.iter().map(|r| {
+                    json!({
+                        "file": r.reference_file,
+                        "line": r.reference_line,
+                        "column": r.reference_col,
+                        "reference_type": match r.reference_type {
+                            super::context_extractor::ReferenceType::Call => "call",
+                            super::context_extractor::ReferenceType::Declaration => "declaration",
+                            super::context_extractor::ReferenceType::Implementation => "implementation",
+                            super::context_extractor::ReferenceType::Import => "import",
+                            super::context_extractor::ReferenceType::Inheritance => "inheritance",
+                            super::context_extractor::ReferenceType::Usage => "usage",
+                        },
+                    })
+                }).collect();
                     
                 Ok(json!({
                     "references": reference_infos
                 }))
             } else {
-                    // Fall back to regex-based search if Tree-sitter fails
-                    let mut references = Vec::new();
-                    
-                    // Search for files in the directory
-                    if let Ok(entries) = std::fs::read_dir(&search_dir) {
-                        for entry in entries.flatten() {
-                            if let Ok(metadata) = entry.metadata() {
-                                if metadata.is_dir() {
-                                    // Recursively search subdirectories
-                                    search_directory_for_references(&entry.path(), &input.symbol_name, &mut references);
-                                } else if let Some(extension) = entry.path().extension() {
-                                    if let Some(ext_str) = extension.to_str() {
-                                        if ["rs", "py", "js", "ts", "java", "cpp", "c", "cs", "go", "h", "hpp", "cc", "cxx"].contains(&ext_str) {
-                                            search_file_for_references(&entry.path(), &input.symbol_name, &mut references);
-                                        }
+                tracing::warn!("Graph not initialized, falling back to text-based search");
+                // Determine the search directory
+                let search_dir = if input.directory.is_empty() {
+                    std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+                } else {
+                    std::path::PathBuf::from(&input.directory)
+                };
+                
+                // Fall back to regex-based search if Tree-sitter fails
+                let mut references = Vec::new();
+                
+                // Search for files in the directory
+                if let Ok(entries) = std::fs::read_dir(&search_dir) {
+                    for entry in entries.flatten() {
+                        if let Ok(metadata) = entry.metadata() {
+                            if metadata.is_dir() {
+                                // Recursively search subdirectories
+                                search_directory_for_references(&entry.path(), &input.symbol_name, &mut references);
+                            } else if let Some(extension) = entry.path().extension() {
+                                if let Some(ext_str) = extension.to_str() {
+                                    if ["rs", "py", "js", "ts", "java", "cpp", "c", "cs", "go", "h", "hpp", "cc", "cxx"].contains(&ext_str) {
+                                        search_file_for_references(&entry.path(), &input.symbol_name, &mut references);
                                     }
                                 }
                             }
                         }
                     }
-                    
-                    // Also search the src directory if it exists
-                    let src_dir = search_dir.join("src");
-                    if src_dir.exists() {
-                        search_directory_for_references(&src_dir, &input.symbol_name, &mut references);
-                    }
-                    
-                    Ok(json!({
-                        "references": references.into_iter().map(|r| {
-                            json!({
-                                "file": r.file_path,
-                                "line": r.line,
-                                "column": r.column,
-                                "reference_type": r.reference_type,
-                            })
-                        }).collect::<Vec<_>>()
-                    }))
+                }
+                
+                // Also search the src directory if it exists
+                let src_dir = search_dir.join("src");
+                if src_dir.exists() {
+                    search_directory_for_references(&src_dir, &input.symbol_name, &mut references);
+                }
+                
+                tracing::debug!("Found {} references using text search", references.len());
+                
+                Ok(json!({
+                    "references": references.into_iter().map(|r| {
+                        json!({
+                            "file": r.file_path,
+                            "line": r.line,
+                            "column": r.column,
+                            "reference_type": r.reference_type,
+                        })
+                    }).collect::<Vec<_>>()
+                }))
             }
         },
         Err(e) => Err(format!("Invalid arguments: {}", e)),
@@ -2813,6 +2819,15 @@ fn generate_symbol_skeleton(
     lines: &[&str],
     indent_level: usize,
 ) -> Result<(), String> {
+    // Prevent stack overflow by limiting recursion depth
+    const MAX_RECURSION_DEPTH: usize = 10;
+    if indent_level > MAX_RECURSION_DEPTH {
+        tracing::warn!("Maximum recursion depth ({}) reached for symbol {}, truncating", MAX_RECURSION_DEPTH, symbol.name);
+        let indent = "    ".repeat(indent_level);
+        skeleton.push_str(&format!("{}// ... (max depth reached) ...\n", indent));
+        return Ok(());
+    }
+    
     let indent = "    ".repeat(indent_level);
     
     // Extract and add the symbol signature with line numbers
@@ -2833,8 +2848,13 @@ fn generate_symbol_skeleton(
         // Has children, add them nested inside
         skeleton.push_str(" {\n");
         
-        // Add child symbols with increased indentation
-        for child in children {
+        // Add child symbols with increased indentation, but limit the number to prevent excessive output
+        let max_children = if indent_level > 5 { 5 } else { 20 }; // Reduce children at deeper levels
+        for (i, child) in children.iter().enumerate() {
+            if i >= max_children {
+                skeleton.push_str(&format!("{}    // ... ({} more children) ...\n", indent, children.len() - i));
+                break;
+            }
             generate_symbol_skeleton(skeleton, child, child_symbols, lines, indent_level + 1)?;
         }
         
