@@ -112,6 +112,12 @@ impl RepoMapper {
         for (ext, count) in &file_extensions {
             tracing::info!("  .{}: {} files", ext, count);
         }
+        
+        // Show timing estimate for large repositories
+        if files_to_process.len() > 1000 {
+            let estimated_seconds = (files_to_process.len() as f64 * 0.02).ceil() as u64; // Rough estimate: 20ms per file
+            tracing::info!("Processing {} files (estimated time: {}s)...", files_to_process.len(), estimated_seconds);
+        }
 
         // Log a few example file paths to verify correct paths
         if files_to_process.len() > 0 {

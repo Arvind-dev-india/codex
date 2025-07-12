@@ -73,6 +73,13 @@ struct SseEvent {
 
 /// Run the MCP server using stdin/stdout
 pub async fn run_server() -> Result<()> {
+    // Default implementation without graph ready notification
+    let graph_ready = std::sync::Arc::new(tokio::sync::Notify::new());
+    graph_ready.notify_waiters(); // Immediately ready for backward compatibility
+    run_server_with_graph_ready(graph_ready).await
+}
+
+pub async fn run_server_with_graph_ready(graph_ready: std::sync::Arc<tokio::sync::Notify>) -> Result<()> {
     info!("Starting Code Analysis MCP Server");
     
     // Set up channels for message passing
@@ -103,7 +110,7 @@ pub async fn run_server() -> Result<()> {
 
     // Task: process incoming messages
     let processor_handle = tokio::spawn({
-        let mut processor = MessageProcessor::new(outgoing_tx.clone());
+        let mut processor = MessageProcessor::new_with_graph_ready(outgoing_tx.clone(), graph_ready.clone());
         async move {
             while let Some(msg) = incoming_rx.recv().await {
                 processor.process_message(msg).await;

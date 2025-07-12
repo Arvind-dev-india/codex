@@ -11,6 +11,7 @@ use crate::code_analysis_bridge;
 pub struct MessageProcessor {
     outgoing: mpsc::Sender<JSONRPCMessage>,
     initialized: bool,
+    graph_ready: Option<std::sync::Arc<tokio::sync::Notify>>,
 }
 
 impl MessageProcessor {
@@ -25,6 +26,7 @@ impl MessageProcessor {
         Self {
             outgoing,
             initialized: false,
+            graph_ready: None,
         }
     }
 
@@ -141,6 +143,14 @@ impl MessageProcessor {
         info!("Tool call: {} with args: {:?}", params.name, params.arguments);
         
         let arguments = params.arguments.unwrap_or(json!({}));
+        
+        // Wait for graph initialization if needed
+        if let Some(graph_ready) = &self.graph_ready {
+            tracing::info!("Waiting for code graph initialization before processing tool call: {}", params.name);
+            graph_ready.notified().await;
+            tracing::info!("Code graph ready, processing tool call: {}", params.name);
+        }
+        
         let result = match params.name.as_str() {
             "analyze_code" => {
                 match code_analysis_bridge::call_analyze_code(arguments) {
@@ -304,6 +314,17 @@ impl MessageProcessor {
 
         if let Err(e) = self.outgoing.send(error).await {
             error!("Failed to send error: {e}");
+        }
+    }
+    
+    pub fn new_with_graph_ready(
+        outgoing: mpsc::Sender<JSONRPCMessage>, 
+        graph_ready: std::sync::Arc<tokio::sync::Notify>
+    ) -> Self {
+        Self {
+            outgoing,
+            initialized: false,
+            graph_ready: Some(graph_ready),
         }
     }
 }

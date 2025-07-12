@@ -51,8 +51,22 @@ async fn main() -> Result<()> {
     tracing::info!("Current working directory: {}", current_dir.display());
     
     // Initialize code graph and wait for it to complete before starting server
-    tracing::info!("Initializing code graph (this may take a moment)...");
-    code_analysis_bridge::init_code_graph_and_wait(None).await?;
+    tracing::info!("Starting server with async graph initialization...");
+    
+    // Create a shared state to track graph initialization
+    let graph_ready = std::sync::Arc::new(tokio::sync::Notify::new());
+    let graph_ready_clone = graph_ready.clone();
+    
+    // Spawn graph initialization in background
+    tokio::spawn(async move {
+        tracing::info!("Initializing code graph in background...");
+        if let Err(e) = code_analysis_bridge::init_code_graph_and_wait(None).await {
+            tracing::error!("Failed to initialize code graph: {}", e);
+        } else {
+            tracing::info!("Code graph is ready for use");
+            graph_ready_clone.notify_waiters(); // Signal that graph is ready
+        }
+    });
     
     // Run the server
     if args.sse || args.port > 0 {
@@ -61,7 +75,7 @@ async fn main() -> Result<()> {
         server::run_http_server(port).await?;
     } else {
         // Standard MCP mode (stdin/stdout)
-        server::run_server().await?;
+        server::run_server_with_graph_ready(graph_ready).await?;
     }
     
     Ok(())
