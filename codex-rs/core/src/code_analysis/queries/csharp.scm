@@ -126,11 +126,12 @@
   name: (identifier) @name.reference.using
 ) @reference.using
 
-;(using_directive
-;  name: (qualified_name) @name.reference.using
-;) @reference.using
+; Qualified name using directive - commented out due to "Impossible pattern" error
+; (using_directive
+;   name: (qualified_name) @name.reference.using
+; ) @reference.using
 
-; ; Global using declarations (C# 10+)
+; Global using declarations (C# 10+) - commented out as not supported by current tree-sitter C# grammar
 ; (global_using_directive
 ;   name: (identifier) @name.reference.using
 ; ) @reference.using

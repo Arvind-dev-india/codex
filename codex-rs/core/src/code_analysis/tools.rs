@@ -2339,14 +2339,15 @@ pub fn generate_single_file_skeleton(file_path: &str) -> Result<String, String> 
         }
     }
     
-    // If we still have very minimal content (< 300 chars), use fallback generation
-    if skeleton.len() < 300 {
-        tracing::info!("Skeleton too minimal ({} chars), using enhanced fallback for {}", skeleton.len(), file_path);
+    // Only use fallback if we have absolutely no content (empty skeleton)
+    // Remove the arbitrary 300-character threshold that was causing false fallbacks
+    if skeleton.trim().is_empty() {
+        tracing::info!("Skeleton is empty, using fallback for {}", file_path);
         let fallback_content = generate_fallback_skeleton(file_path, &content)?;
-        if fallback_content.len() > skeleton.len() {
-            skeleton = format!("// File: {}\n// Enhanced fallback skeleton (original had {} symbols)\n\n{}", 
-                             file_path, symbols_in_file.len(), fallback_content);
-        }
+        skeleton = format!("// File: {}\n// Fallback skeleton (tree-sitter generated empty result)\n\n{}", 
+                         file_path, fallback_content);
+    } else {
+        tracing::debug!("Generated skeleton with {} characters for {}", skeleton.len(), file_path);
     }
     
     Ok(skeleton)
