@@ -230,7 +230,7 @@ pub struct GetMultipleFilesSkeletonInput {
 }
 
 fn default_max_tokens() -> usize {
-    4000
+    8000  // Increased from 4000 to provide more meaningful content
 }
 
 fn default_skeleton_max_depth() -> usize {
@@ -1812,12 +1812,36 @@ pub fn handle_get_related_files_skeleton(args: Value) -> Option<Result<Value, St
 pub fn handle_get_multiple_files_skeleton(args: Value) -> Option<Result<Value, String>> {
     Some(match serde_json::from_value::<GetMultipleFilesSkeletonInput>(args) {
         Ok(input) => {
-            match generate_file_skeletons(&input.file_paths, input.max_tokens) {
-                Ok(skeletons) => Ok(json!({
-                    "files": skeletons,
-                    "total_files": skeletons.len(),
-                    "max_tokens_used": input.max_tokens
-                })),
+            // Filter out non-existent files and generate skeletons for valid ones
+            let mut valid_files = Vec::new();
+            let mut invalid_files = Vec::new();
+            
+            for file_path in &input.file_paths {
+                if std::path::Path::new(file_path).exists() {
+                    valid_files.push(file_path.clone());
+                } else {
+                    invalid_files.push(file_path.clone());
+                }
+            }
+            
+            if valid_files.is_empty() {
+                return Some(Err(format!("No valid files found. Invalid files: {:?}", invalid_files)));
+            }
+            
+            match generate_file_skeletons(&valid_files, input.max_tokens) {
+                Ok(skeletons) => {
+                    let mut result = json!({
+                        "files": skeletons,
+                        "total_files": skeletons.len(),
+                        "max_tokens_used": input.max_tokens
+                    });
+                    
+                    if !invalid_files.is_empty() {
+                        result["warnings"] = json!(format!("Skipped invalid files: {:?}", invalid_files));
+                    }
+                    
+                    Ok(result)
+                },
                 Err(e) => Err(format!("Failed to generate skeletons: {}", e))
             }
         },
