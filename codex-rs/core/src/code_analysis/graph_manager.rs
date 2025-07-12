@@ -46,6 +46,7 @@ struct FileMetadata {
     _path: PathBuf,
     last_modified: SystemTime,
     size: u64,
+    content_hash: u64,
 }
 
 /// Global code graph manager
@@ -170,23 +171,40 @@ impl CodeGraphManager {
     /// Detect which files have changed since last scan
     fn detect_file_changes(&self, root_path: &Path) -> Result<Vec<PathBuf>, String> {
         let mut changed_files = Vec::new();
+        let mut current_files = std::collections::HashSet::new();
         
         // Scan for supported files
         self.scan_for_files(root_path, &mut |file_path| {
+            current_files.insert(file_path.clone());
+            
             let metadata = std::fs::metadata(&file_path)
                 .map_err(|e| format!("Failed to get metadata for {}: {}", file_path.display(), e))?;
+            
+            // Calculate content hash for more accurate change detection
+            let content_hash = match std::fs::read_to_string(&file_path) {
+                Ok(content) => {
+                    use std::collections::hash_map::DefaultHasher;
+                    use std::hash::{Hash, Hasher};
+                    let mut hasher = DefaultHasher::new();
+                    content.hash(&mut hasher);
+                    hasher.finish()
+                }
+                Err(_) => 0, // Fallback to 0 if can't read content
+            };
             
             let current_metadata = FileMetadata {
                 _path: file_path.clone(),
                 last_modified: metadata.modified()
                     .map_err(|e| format!("Failed to get modified time for {}: {}", file_path.display(), e))?,
                 size: metadata.len(),
+                content_hash,
             };
             
             // Check if file is new or changed
             if let Some(old_metadata) = self.file_metadata.get(&file_path) {
                 if old_metadata.last_modified != current_metadata.last_modified ||
-                   old_metadata.size != current_metadata.size {
+                   old_metadata.size != current_metadata.size ||
+                   old_metadata.content_hash != current_metadata.content_hash {
                     changed_files.push(file_path);
                 }
             } else {
@@ -196,6 +214,15 @@ impl CodeGraphManager {
             
             Ok(())
         })?;
+
+        // Find deleted files (files in metadata but not in current scan)
+        let deleted_files: Vec<PathBuf> = self.file_metadata.keys()
+            .filter(|path| !current_files.contains(*path))
+            .cloned()
+            .collect();
+        
+        // Add deleted files to changed list for cleanup
+        changed_files.extend(deleted_files);
 
         Ok(changed_files)
     }
@@ -208,11 +235,24 @@ impl CodeGraphManager {
             let metadata = std::fs::metadata(&file_path)
                 .map_err(|e| format!("Failed to get metadata for {}: {}", file_path.display(), e))?;
             
+            // Calculate content hash for accurate change detection
+            let content_hash = match std::fs::read_to_string(&file_path) {
+                Ok(content) => {
+                    use std::collections::hash_map::DefaultHasher;
+                    use std::hash::{Hash, Hasher};
+                    let mut hasher = DefaultHasher::new();
+                    content.hash(&mut hasher);
+                    hasher.finish()
+                }
+                Err(_) => 0, // Fallback to 0 if can't read content
+            };
+            
             let file_metadata = FileMetadata {
                 _path: file_path.clone(),
                 last_modified: metadata.modified()
                     .map_err(|e| format!("Failed to get modified time for {}: {}", file_path.display(), e))?,
                 size: metadata.len(),
+                content_hash,
             };
             
             new_metadata.insert(file_path, file_metadata);

@@ -369,7 +369,8 @@ impl ContextExtractor {
         };
         
         let name = name_capture.text.clone();
-        let parent = None; // TODO: Extract parent information from context
+        // Extract parent information from context by finding containing symbols
+        let parent = self.find_parent_symbol(&parsed_file.path, def_capture.start_point.0 + 1);
         let mut fqn = self.generate_fqn(&name, &symbol_type, &parsed_file.path, &parent);
         
         // For methods, add line number to ensure uniqueness (handles interface/abstract/override methods)
@@ -927,6 +928,51 @@ impl ContextExtractor {
         
         // Return the most specific (smallest range) symbol
         Some(containing_symbols[0])
+    }
+
+    /// Find parent symbol for a symbol at a specific line (for relationship extraction)
+    fn find_parent_symbol(&self, file_path: &str, line: usize) -> Option<String> {
+        // Find all symbols in the file that contain this line
+        let mut containing_symbols = Vec::new();
+        
+        if let Some(symbol_fqns) = self.file_symbols.get(file_path) {
+            for fqn in symbol_fqns {
+                if let Some(symbol) = self.symbols.get(fqn) {
+                    // Check if the line is within the symbol's range
+                    if line >= symbol.start_line && line <= symbol.end_line {
+                        containing_symbols.push(symbol);
+                    }
+                }
+            }
+        }
+        
+        if containing_symbols.is_empty() {
+            return None;
+        }
+        
+        // Sort by range size: larger range is more likely to be the parent
+        containing_symbols.sort_by(|a, b| {
+            let a_range = a.end_line - a.start_line;
+            let b_range = b.end_line - b.start_line;
+            b_range.cmp(&a_range) // Reverse order - largest first
+        });
+        
+        // Look for a class, struct, or module that could be the parent
+        for symbol in &containing_symbols {
+            match symbol.symbol_type {
+                SymbolType::Class | SymbolType::Struct | SymbolType::Module | SymbolType::Interface => {
+                    return Some(symbol.name.clone());
+                }
+                _ => continue,
+            }
+        }
+        
+        // If no class/struct/module found, return the largest containing symbol
+        if let Some(largest) = containing_symbols.first() {
+            Some(largest.name.clone())
+        } else {
+            None
+        }
     }
 }
 

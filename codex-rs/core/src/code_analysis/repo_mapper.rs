@@ -193,8 +193,8 @@ impl RepoMapper {
         let failed_count = Arc::new(Mutex::new(0usize));
         let failed_files = Arc::new(Mutex::new(Vec::<String>::new()));
         
-        // Process files in smaller batches to reduce memory pressure
-        let batch_size = if total_files > 1000 { 20 } else { 50 };
+        // Adaptive batch sizing based on file count and estimated file sizes
+        let batch_size = self.calculate_adaptive_batch_size(&files);
         let batches: Vec<_> = files.chunks(batch_size).collect();
         
         for (batch_idx, batch) in batches.iter().enumerate() {
@@ -366,15 +366,33 @@ impl RepoMapper {
     pub fn update_repository(&mut self) -> Result<(), String> {
         // Get a list of all files that have been modified since the last parse
         let mut modified_files = Vec::new();
+        let mut deleted_files = Vec::new();
         
-        for file_path in &self.processed_files {
+        // Check each processed file for changes or deletion
+        for file_path in &self.processed_files.clone() {
+            // Check if file still exists
+            if !std::path::Path::new(file_path).exists() {
+                deleted_files.push(file_path.clone());
+                continue;
+            }
+            
             let parser_pool = super::parser_pool::get_parser_pool();
             if parser_pool.needs_reparse(file_path)? {
                 modified_files.push(file_path.clone());
             }
         }
         
-        if modified_files.is_empty() {
+        // Clean up deleted files
+        for deleted_file in &deleted_files {
+            tracing::info!("Cleaning up deleted file: {}", deleted_file);
+            self.context_extractor.remove_symbols_for_file(deleted_file);
+            self.processed_files.remove(deleted_file);
+            self.file_nodes.remove(deleted_file);
+            // Remove from failed files list if present
+            self.failed_files.retain(|f| f != deleted_file);
+        }
+        
+        if modified_files.is_empty() && deleted_files.is_empty() {
             return Ok(());
         }
         
@@ -782,6 +800,44 @@ impl RepoMapper {
         )
     }
     
+    /// Calculate adaptive batch size based on file characteristics
+    fn calculate_adaptive_batch_size(&self, files: &[String]) -> usize {
+        let total_files = files.len();
+        
+        // Sample a few files to estimate average size
+        let sample_size = std::cmp::min(10, total_files);
+        let mut total_sample_size = 0u64;
+        let mut valid_samples = 0;
+        
+        for file_path in files.iter().take(sample_size) {
+            if let Ok(metadata) = std::fs::metadata(file_path) {
+                total_sample_size += metadata.len();
+                valid_samples += 1;
+            }
+        }
+        
+        let avg_file_size = if valid_samples > 0 {
+            total_sample_size / valid_samples as u64
+        } else {
+            50_000 // Default assumption: 50KB average
+        };
+        
+        // Adaptive batch sizing logic
+        match (total_files, avg_file_size) {
+            // Very large repositories with small files
+            (n, size) if n > 10_000 && size < 10_000 => 50,
+            // Large repositories with medium files  
+            (n, size) if n > 5_000 && size < 50_000 => 30,
+            // Large repositories with large files
+            (n, size) if n > 1_000 && size > 100_000 => 10,
+            // Medium repositories with very large files
+            (n, size) if n > 500 && size > 500_000 => 5,
+            // Small repositories or default case
+            (n, _) if n > 1_000 => 20,
+            _ => 50, // Default for small repositories
+        }
+    }
+
     /// Normalize file path to always use relative paths with forward slashes
     fn normalize_file_path(file_path: &str, root_path: &Path) -> Result<String, String> {
         let path = Path::new(file_path);
