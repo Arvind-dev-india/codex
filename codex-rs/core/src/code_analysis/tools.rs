@@ -233,6 +233,7 @@ fn default_max_tokens() -> usize {
     8000  // Increased from 4000 to provide more meaningful content
 }
 
+
 fn default_skeleton_max_depth() -> usize {
     3
 }
@@ -308,37 +309,7 @@ pub fn handle_analyze_code(args: Value) -> Option<Result<Value, String>> {
                     let file_symbols: Vec<SymbolInfo> = symbols_in_file
                         .iter()
                         .map(|symbol| {
-                            let symbol_type_str = match symbol.symbol_type {
-                                super::context_extractor::SymbolType::Function => "function",
-                                super::context_extractor::SymbolType::Method => "method",
-                                super::context_extractor::SymbolType::Class => "class",
-                                super::context_extractor::SymbolType::Struct => "struct",
-                                super::context_extractor::SymbolType::Enum => "enum",
-                                super::context_extractor::SymbolType::Interface => "interface",
-                                super::context_extractor::SymbolType::Variable => "variable",
-                                super::context_extractor::SymbolType::Constant => "constant",
-                                super::context_extractor::SymbolType::Property => "property",
-                                super::context_extractor::SymbolType::Import => "import",
-                                super::context_extractor::SymbolType::Module => "module",
-                                super::context_extractor::SymbolType::Package => "package",
-                                // New C++ specific symbol types
-                                super::context_extractor::SymbolType::Operator => "operator",
-                                super::context_extractor::SymbolType::TemplateFunction => "template_function",
-                                super::context_extractor::SymbolType::TemplateClass => "template_class",
-                                super::context_extractor::SymbolType::TemplateMethod => "template_method",
-                                super::context_extractor::SymbolType::ConstMethod => "const_method",
-                                super::context_extractor::SymbolType::InlineMethod => "inline_method",
-                                super::context_extractor::SymbolType::InlineFunction => "inline_function",
-                                super::context_extractor::SymbolType::Destructor => "destructor",
-                                super::context_extractor::SymbolType::FunctionPointer => "function_pointer",
-                                super::context_extractor::SymbolType::Parameter => "parameter",
-                                super::context_extractor::SymbolType::VirtualMethod => "virtual_method",
-                                super::context_extractor::SymbolType::PureVirtualMethod => "pure_virtual_method",
-                                super::context_extractor::SymbolType::FriendFunction => "friend_function",
-                                super::context_extractor::SymbolType::StaticMethod => "static_method",
-                                super::context_extractor::SymbolType::TemplateSpecialization => "template_specialization",
-                                super::context_extractor::SymbolType::InlineClassMethod => "inline_class_method",
-                            };
+                            let symbol_type_str = symbol.symbol_type.to_string();
                             
                             SymbolInfo {
                                 name: symbol.name.clone(),
@@ -1720,37 +1691,7 @@ pub fn handle_find_symbol_definitions(args: Value) -> Option<Result<Value, Strin
                             "file": d.file_path,
                             "start_line": d.start_line,
                             "end_line": d.end_line,
-                            "symbol_type": match d.symbol_type {
-                                super::context_extractor::SymbolType::Function => "function",
-                                super::context_extractor::SymbolType::Method => "method",
-                                super::context_extractor::SymbolType::Class => "class",
-                                super::context_extractor::SymbolType::Struct => "struct",
-                                super::context_extractor::SymbolType::Enum => "enum",
-                                super::context_extractor::SymbolType::Interface => "interface",
-                                super::context_extractor::SymbolType::Variable => "variable",
-                                super::context_extractor::SymbolType::Constant => "constant",
-                                super::context_extractor::SymbolType::Property => "property",
-                                super::context_extractor::SymbolType::Import => "import",
-                                super::context_extractor::SymbolType::Module => "module",
-                                super::context_extractor::SymbolType::Package => "package",
-                                // New C++ specific symbol types
-                                super::context_extractor::SymbolType::Operator => "operator",
-                                super::context_extractor::SymbolType::TemplateFunction => "template_function",
-                                super::context_extractor::SymbolType::TemplateClass => "template_class",
-                                super::context_extractor::SymbolType::TemplateMethod => "template_method",
-                                super::context_extractor::SymbolType::ConstMethod => "const_method",
-                                super::context_extractor::SymbolType::InlineMethod => "inline_method",
-                                super::context_extractor::SymbolType::InlineFunction => "inline_function",
-                                super::context_extractor::SymbolType::Destructor => "destructor",
-                                super::context_extractor::SymbolType::FunctionPointer => "function_pointer",
-                                super::context_extractor::SymbolType::Parameter => "parameter",
-                                super::context_extractor::SymbolType::VirtualMethod => "virtual_method",
-                                super::context_extractor::SymbolType::PureVirtualMethod => "pure_virtual_method",
-                                super::context_extractor::SymbolType::FriendFunction => "friend_function",
-                                super::context_extractor::SymbolType::StaticMethod => "static_method",
-                                super::context_extractor::SymbolType::TemplateSpecialization => "template_specialization",
-                                super::context_extractor::SymbolType::InlineClassMethod => "inline_class_method",
-                            },
+                            "symbol_type": d.symbol_type.to_string(),
                         })
                     }).collect();
                     
@@ -1938,7 +1879,7 @@ pub fn handle_get_symbol_subgraph(args: Value) -> Option<Result<Value, String>> 
 
 /// Wrapper function for analyze_code_handler to match the expected signature in tests
 pub fn analyze_code_handler(input: AnalyzeCodeInput) -> Result<Value, String> {
-    match handle_analyze_code(serde_json::to_value(input).unwrap()) {
+    match handle_analyze_code(serde_json::to_value(input).map_err(|e| format!("Serialization error: {}", e))?) {
         Some(result) => result,
         None => Err("Failed to handle analyze_code".to_string()),
     }
@@ -2273,11 +2214,7 @@ pub fn generate_single_file_skeleton(file_path: &str) -> Result<String, String> 
     
     tracing::debug!("File read successfully, {} bytes", content.len());
     
-    // FAST PATH: For very large files, use simple fallback immediately to prevent timeout
-    if content.len() > 500_000 { // 500KB threshold
-        tracing::warn!("File {} is very large ({} bytes), using fast fallback skeleton", file_path, content.len());
-        return generate_simple_fallback_skeleton(file_path);
-    }
+    // Always do full analysis - let tree-sitter handle large files efficiently
     
     let manager = super::graph_manager::get_graph_manager();
     let manager = manager.read().map_err(|e| format!("Failed to acquire read lock: {}", e))?;
@@ -2933,6 +2870,7 @@ fn extract_symbol_signature(lines: &[&str], symbol: &super::context_extractor::C
 fn approximate_tokens(text: &str) -> usize {
     (text.len() + 3) / 4
 }
+
 
 /// Truncate skeleton to fit token limit
 fn truncate_skeleton(skeleton: &str, max_tokens: usize) -> String {

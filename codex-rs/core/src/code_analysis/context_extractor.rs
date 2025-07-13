@@ -76,6 +76,11 @@ impl SymbolType {
             SymbolType::InlineClassMethod => "inline_class_method",
         }
     }
+
+    /// Convert to string (alias for as_str for consistency)
+    pub fn to_string(&self) -> &'static str {
+        self.as_str()
+    }
 }
 
 /// Code symbol with its location and type

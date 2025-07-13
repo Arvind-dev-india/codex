@@ -39,20 +39,23 @@ pub async fn handle_code_analysis_tool_call(
                     let path = Path::new(file_path);
                     if !path.exists() {
                         // Try to resolve the path relative to the current working directory
-                        if let Ok(current_dir) = std::env::current_dir() {
-                            let absolute_path = current_dir.join(file_path);
-                            if absolute_path.exists() {
-                                obj.insert("file_path".to_string(), json!(absolute_path.to_string_lossy().to_string()));
-                            } else {
-                                // Try without any prefixes (in case the path has unnecessary prefixes)
-                                let file_name = Path::new(file_path).file_name()
-                                    .and_then(|name| name.to_str())
-                                    .unwrap_or(file_path);
-                                
-                                // Search for the file in the current directory tree
-                                if let Some(found_path) = find_file_in_directory(&current_dir, file_name) {
-                                    obj.insert("file_path".to_string(), json!(found_path));
+                        match std::env::current_dir() {
+                            Ok(current_dir) => {
+                                let absolute_path = current_dir.join(file_path);
+                                if absolute_path.exists() {
+                                    obj.insert("file_path".to_string(), json!(absolute_path.to_string_lossy().to_string()));
+                                } else {
+                                    // Try without any prefixes (in case the path has unnecessary prefixes)
+                                    if let Some(file_name) = Path::new(file_path).file_name().and_then(|name| name.to_str()) {
+                                        // Search for the file in the current directory tree
+                                        if let Some(found_path) = find_file_in_directory(&current_dir, file_name) {
+                                            obj.insert("file_path".to_string(), json!(found_path));
+                                        }
+                                    }
                                 }
+                            }
+                            Err(e) => {
+                                tracing::warn!("Failed to get current directory: {}", e);
                             }
                         }
                     }
