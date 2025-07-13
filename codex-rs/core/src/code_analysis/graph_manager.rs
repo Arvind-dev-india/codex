@@ -182,7 +182,7 @@ impl CodeGraphManager {
             
             // Calculate content hash for more accurate change detection
             let content_hash = match std::fs::read(&file_path) {
-                Ok(bytes) => match String::from_utf8(bytes) {
+                Ok(bytes) => match String::from_utf8(bytes.clone()) {
                     Ok(content) => {
                         use std::collections::hash_map::DefaultHasher;
                         use std::hash::{Hash, Hasher};
@@ -191,17 +191,12 @@ impl CodeGraphManager {
                         hasher.finish()
                     }
                     Err(_) => {
-                        // For non-UTF-8 files, hash the raw bytes
-                        match std::fs::read(&file_path) {
-                            Ok(bytes) => {
-                                use std::collections::hash_map::DefaultHasher;
-                                use std::hash::{Hash, Hasher};
-                                let mut hasher = DefaultHasher::new();
-                                bytes.hash(&mut hasher);
-                                hasher.finish()
-                            }
-                            Err(_) => 0,
-                        }
+                        // For non-UTF-8 files, hash the raw bytes directly
+                        use std::collections::hash_map::DefaultHasher;
+                        use std::hash::{Hash, Hasher};
+                        let mut hasher = DefaultHasher::new();
+                        bytes.hash(&mut hasher);
+                        hasher.finish()
                     }
                 }
                 Err(_) => 0, // Fallback to 0 if can't read content
@@ -252,7 +247,7 @@ impl CodeGraphManager {
             
             // Calculate content hash for accurate change detection
             let content_hash = match std::fs::read(&file_path) {
-                Ok(bytes) => match String::from_utf8(bytes) {
+                Ok(bytes) => match String::from_utf8(bytes.clone()) {
                     Ok(content) => {
                         use std::collections::hash_map::DefaultHasher;
                         use std::hash::{Hash, Hasher};
@@ -261,17 +256,12 @@ impl CodeGraphManager {
                         hasher.finish()
                     }
                     Err(_) => {
-                        // For non-UTF-8 files, hash the raw bytes
-                        match std::fs::read(&file_path) {
-                            Ok(bytes) => {
-                                use std::collections::hash_map::DefaultHasher;
-                                use std::hash::{Hash, Hasher};
-                                let mut hasher = DefaultHasher::new();
-                                bytes.hash(&mut hasher);
-                                hasher.finish()
-                            }
-                            Err(_) => 0,
-                        }
+                        // For non-UTF-8 files, hash the raw bytes directly
+                        use std::collections::hash_map::DefaultHasher;
+                        use std::hash::{Hash, Hasher};
+                        let mut hasher = DefaultHasher::new();
+                        bytes.hash(&mut hasher);
+                        hasher.finish()
                     }
                 }
                 Err(_) => 0, // Fallback to 0 if can't read content

@@ -202,14 +202,12 @@ impl ContextExtractor {
     pub fn extract_symbols_from_file(&mut self, file_path: &str) -> Result<(), String> {
         // Read the file content with UTF-8 error handling
         let content = match fs::read(file_path) {
-            Ok(bytes) => match String::from_utf8(bytes) {
+            Ok(bytes) => match String::from_utf8(bytes.clone()) {
                 Ok(content) => content,
-                Err(_) => {
-                    // Try with lossy conversion for files with invalid UTF-8
-                    match fs::read(file_path) {
-                        Ok(bytes) => String::from_utf8_lossy(&bytes).to_string(),
-                        Err(e) => return Err(format!("Failed to read file {}: {}", file_path, e)),
-                    }
+                Err(utf8_error) => {
+                    // Log the UTF-8 error and try with lossy conversion
+                    tracing::debug!("UTF-8 decode error in file {}: {}, using lossy conversion", file_path, utf8_error);
+                    String::from_utf8_lossy(&bytes).to_string()
                 }
             },
             Err(e) => return Err(format!("Failed to read file {}: {}", file_path, e)),
@@ -259,8 +257,11 @@ impl ContextExtractor {
             Ok(file) => file,
             Err(e) => {
                 // Check if this is a UTF-8 error and handle gracefully
-                if e.contains("stream did not contain valid UTF-8") || e.contains("Failed to read file") {
-                    tracing::debug!("Skipping file due to encoding issues: {} ({})", file_path, e);
+                if e.contains("stream did not contain valid UTF-8") || 
+                   e.contains("Failed to read file") ||
+                   e.contains("invalid utf-8 sequence") ||
+                   e.contains("invalid UTF-8") {
+                    tracing::warn!("Skipping file due to encoding issues: {} ({})", file_path, e);
                     return Ok(()); // Skip this file instead of failing
                 } else {
                     return Err(e);
