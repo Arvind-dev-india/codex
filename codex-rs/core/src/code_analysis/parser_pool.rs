@@ -353,9 +353,20 @@ impl ParserPool {
     
     /// Parse a file from disk
     pub fn parse_file_from_disk(&self, path: &str) -> Result<ParsedFile, String> {
-        // Read the file content
-        let content = fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read file {}: {}", path, e))?;
+        // Read the file content with UTF-8 error handling
+        let content = match fs::read(path) {
+            Ok(bytes) => match String::from_utf8(bytes) {
+                Ok(content) => content,
+                Err(_) => {
+                    // Try with lossy conversion for files with invalid UTF-8
+                    match fs::read(path) {
+                        Ok(bytes) => String::from_utf8_lossy(&bytes).to_string(),
+                        Err(e) => return Err(format!("Failed to read file {}: {}", path, e)),
+                    }
+                }
+            },
+            Err(e) => return Err(format!("Failed to read file {}: {}", path, e)),
+        };
             
         // Parse the file
         self.parse_file(path, &content)

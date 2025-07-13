@@ -200,9 +200,20 @@ impl ContextExtractor {
 
     /// Extract symbols from a file
     pub fn extract_symbols_from_file(&mut self, file_path: &str) -> Result<(), String> {
-        // Read the file content
-        let content = fs::read_to_string(file_path)
-            .map_err(|e| format!("Failed to read file {}: {}", file_path, e))?;
+        // Read the file content with UTF-8 error handling
+        let content = match fs::read(file_path) {
+            Ok(bytes) => match String::from_utf8(bytes) {
+                Ok(content) => content,
+                Err(_) => {
+                    // Try with lossy conversion for files with invalid UTF-8
+                    match fs::read(file_path) {
+                        Ok(bytes) => String::from_utf8_lossy(&bytes).to_string(),
+                        Err(e) => return Err(format!("Failed to read file {}: {}", file_path, e)),
+                    }
+                }
+            },
+            Err(e) => return Err(format!("Failed to read file {}: {}", file_path, e)),
+        };
 
         // Parse the file
         let parsed_file = get_parser_pool().parse_file(file_path, &content)?;
@@ -244,7 +255,18 @@ impl ContextExtractor {
         };
 
         // Parse the file using absolute path for reading
-        let mut parsed_file = get_parser_pool().parse_file_if_needed(&absolute_path_for_reading)?;
+        let mut parsed_file = match get_parser_pool().parse_file_if_needed(&absolute_path_for_reading) {
+            Ok(file) => file,
+            Err(e) => {
+                // Check if this is a UTF-8 error and handle gracefully
+                if e.contains("stream did not contain valid UTF-8") || e.contains("Failed to read file") {
+                    tracing::debug!("Skipping file due to encoding issues: {} ({})", file_path, e);
+                    return Ok(()); // Skip this file instead of failing
+                } else {
+                    return Err(e);
+                }
+            }
+        };
 
         // Override the path in parsed_file to use normalized path for consistent storage
         parsed_file.path = normalized_path.clone();

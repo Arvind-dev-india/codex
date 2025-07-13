@@ -2209,8 +2209,19 @@ pub fn generate_single_file_skeleton(file_path: &str) -> Result<String, String> 
     
     tracing::debug!("Starting skeleton generation for: {}", file_path);
     
-    let content = fs::read_to_string(file_path)
-        .map_err(|e| format!("Failed to read file {}: {}", file_path, e))?;
+    let content = match fs::read(file_path) {
+        Ok(bytes) => match String::from_utf8(bytes) {
+            Ok(content) => content,
+            Err(_) => {
+                // Try with lossy conversion for files with invalid UTF-8
+                match fs::read(file_path) {
+                    Ok(bytes) => String::from_utf8_lossy(&bytes).to_string(),
+                    Err(e) => return Err(format!("Failed to read file {}: {}", file_path, e)),
+                }
+            }
+        },
+        Err(e) => return Err(format!("Failed to read file {}: {}", file_path, e)),
+    };
     
     tracing::debug!("File read successfully, {} bytes", content.len());
     
@@ -2326,8 +2337,19 @@ pub fn generate_single_file_skeleton(file_path: &str) -> Result<String, String> 
 fn generate_simple_fallback_skeleton(file_path: &str) -> Result<String, String> {
     use std::fs;
     
-    let content = fs::read_to_string(file_path)
-        .map_err(|e| format!("Failed to read file {}: {}", file_path, e))?;
+    let content = match fs::read(file_path) {
+        Ok(bytes) => match String::from_utf8(bytes) {
+            Ok(content) => content,
+            Err(_) => {
+                // Try with lossy conversion for files with invalid UTF-8
+                match fs::read(file_path) {
+                    Ok(bytes) => String::from_utf8_lossy(&bytes).to_string(),
+                    Err(e) => return Err(format!("Failed to read file {}: {}", file_path, e)),
+                }
+            }
+        },
+        Err(e) => return Err(format!("Failed to read file {}: {}", file_path, e)),
+    };
     
     let mut skeleton = String::new();
     let lines: Vec<&str> = content.lines().collect();
