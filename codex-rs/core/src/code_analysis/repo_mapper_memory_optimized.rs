@@ -24,7 +24,7 @@ impl RepoMapper {
         let root_path = self.get_root_path().to_path_buf();
         tracing::info!("Starting memory-optimized repository mapping for path: {}", root_path.display());
         
-        // Collect files to process with timing
+        // Collect files to process with timing (optimized)
         let file_discovery_start = std::time::Instant::now();
         let mut files_to_process = Vec::<PathBuf>::new();
         self.collect_files_public(&root_path, &mut files_to_process)?;
@@ -32,27 +32,59 @@ impl RepoMapper {
         
         tracing::info!("File discovery completed in {:.2}s", file_discovery_time.as_secs_f64());
         
+        // Pre-sort files by size for better load balancing (smaller files first)
+        files_to_process.sort_by_cached_key(|path| {
+            std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
+        });
+        
         tracing::info!("Found {} files to process", files_to_process.len());
         
-        // Process files in batches to control memory usage
-        let batch_size = 100; // Process 100 files at a time
+        // Process files in batches to control memory usage - optimized for speed
+        let cpu_count = rayon::current_num_threads();
+        let batch_size = std::cmp::min(300, std::cmp::max(cpu_count * 4, files_to_process.len() / 6)); // CPU-aware batch size
         let total_batches = (files_to_process.len() + batch_size - 1) / batch_size;
         
+        tracing::info!("Using batch size {} for {} CPU threads", batch_size, cpu_count);
+        
         for (batch_idx, batch) in files_to_process.chunks(batch_size).enumerate() {
+            let batch_start = std::time::Instant::now();
             tracing::info!("Processing batch {}/{} ({} files)", 
                           batch_idx + 1, total_batches, batch.len());
             
-            // Process batch sequentially to allow mutable access for references
-            let mut batch_results = Vec::new();
-            for file_path in batch {
-                let result = self.process_file_for_symbols(&file_path.to_string_lossy());
-                batch_results.push(result);
-            }
+            // Process batch in parallel for better performance
+            let batch_results: Vec<Result<(Vec<CodeSymbol>, Vec<super::context_extractor::SymbolReference>), String>> = batch
+                .par_iter()
+                .map(|file_path| {
+                    // Create isolated context extractor for this file
+                    let mut extractor = create_context_extractor();
+                    
+                    // Extract symbols
+                    match extractor.extract_symbols_from_file_incremental(&file_path.to_string_lossy()) {
+                        Ok(()) => {
+                            // Collect symbols and references
+                            let symbols: Vec<CodeSymbol> = extractor.get_symbols().values().cloned().collect();
+                            let references: Vec<super::context_extractor::SymbolReference> = extractor.get_references().to_vec();
+                            Ok((symbols, references))
+                        }
+                        Err(e) => Err(e)
+                    }
+                })
+                .collect();
             
-            // Store results in memory-optimized storage
+            let batch_time = batch_start.elapsed();
+            tracing::debug!("Batch {} processed in {:.2}s ({:.1} files/sec)", 
+                          batch_idx + 1, batch_time.as_secs_f64(), 
+                          batch.len() as f64 / batch_time.as_secs_f64());
+            
+            // Store results in memory-optimized storage and collect references
             for (file_idx, result) in batch_results.into_iter().enumerate() {
                 match result {
-                    Ok(symbols) => {
+                    Ok((symbols, references)) => {
+                        // Add references to main context extractor
+                        for reference in references {
+                            self.add_reference(reference);
+                        }
+                        
                         let file_path = &batch[file_idx];
                         
                         // Store symbols in memory-optimized storage
