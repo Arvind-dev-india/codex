@@ -924,6 +924,7 @@ dependencies = [
  "fs2",
  "futures",
  "landlock",
+ "lru",
  "maplit",
  "mcp-types",
  "mime_guess",

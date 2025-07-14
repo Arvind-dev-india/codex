@@ -800,6 +800,26 @@ impl RepoMapper {
         )
     }
     
+    /// Get root path (public accessor)
+    pub fn get_root_path(&self) -> &std::path::Path {
+        &self.root_path
+    }
+    
+    /// Increment parsed successfully counter (public method)
+    pub fn increment_parsed_successfully(&mut self) {
+        self.files_parsed_successfully += 1;
+    }
+    
+    /// Increment failed to parse counter (public method)
+    pub fn increment_failed_to_parse(&mut self) {
+        self.files_failed_to_parse += 1;
+    }
+    
+    /// Add failed file (public method)
+    pub fn add_failed_file(&mut self, file_path: String) {
+        self.failed_files.push(file_path);
+    }
+    
     /// Calculate adaptive batch size based on file characteristics
     fn calculate_adaptive_batch_size(&self, files: &[String]) -> usize {
         let total_files = files.len();

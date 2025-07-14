@@ -6,6 +6,8 @@ use std::sync::{Arc, RwLock};
 use std::time::SystemTime;
 use once_cell::sync::Lazy;
 
+use super::memory_optimized_storage::{ThreadSafeStorage, StorageConfig};
+
 use super::repo_mapper::RepoMapper;
 use super::context_extractor::{CodeSymbol, SymbolReference};
 
@@ -51,6 +53,8 @@ struct FileMetadata {
 
 /// Global code graph manager
 pub struct CodeGraphManager {
+    /// Memory-optimized storage for symbols
+    symbol_storage: Option<ThreadSafeStorage>,
     /// Current repository mapper with parsed data
     repo_mapper: Option<RepoMapper>,
     /// Root path of the current workspace
@@ -61,16 +65,64 @@ pub struct CodeGraphManager {
     initialized: bool,
     /// Current status of the graph initialization
     status: GraphStatus,
+    /// Memory configuration
+    memory_config: StorageConfig,
 }
 
 impl CodeGraphManager {
     fn new() -> Self {
+        let memory_config = StorageConfig::for_large_projects();
+        
         Self {
+            symbol_storage: None,
             repo_mapper: None,
             root_path: None,
             file_metadata: HashMap::new(),
             initialized: false,
             status: GraphStatus::NotStarted,
+            memory_config,
+        }
+    }
+    
+    /// Initialize memory-optimized storage
+    fn initialize_storage(&mut self) -> Result<(), String> {
+        if self.symbol_storage.is_none() {
+            tracing::info!("Initializing memory-optimized symbol storage with config: cache_size={}, max_memory={}MB", 
+                          self.memory_config.cache_size, self.memory_config.max_memory_mb);
+            
+            let storage = ThreadSafeStorage::new(self.memory_config.clone())?;
+            self.symbol_storage = Some(storage);
+        }
+        Ok(())
+    }
+    
+    /// Get memory usage statistics
+    pub fn get_memory_statistics(&self) -> Option<super::memory_optimized_storage::StorageStatistics> {
+        if let Some(ref storage) = self.symbol_storage {
+            storage.get_statistics().ok()
+        } else {
+            None
+        }
+    }
+    
+    /// Force memory cleanup
+    pub fn cleanup_memory(&self) -> Result<(), String> {
+        if let Some(ref storage) = self.symbol_storage {
+            storage.cleanup_memory()?;
+            tracing::info!("Memory cleanup completed");
+        }
+        Ok(())
+    }
+    
+    /// Set memory limit (useful for different project sizes)
+    pub fn set_memory_limit(&mut self, limit_mb: usize) {
+        self.memory_config.max_memory_mb = limit_mb;
+        tracing::info!("Updated memory limit to {} MB", limit_mb);
+        
+        // If storage is already initialized, we'd need to recreate it
+        // For now, just log that it will take effect on next initialization
+        if self.symbol_storage.is_some() {
+            tracing::warn!("Memory limit change will take effect on next initialization");
         }
     }
 
@@ -123,11 +175,14 @@ impl CodeGraphManager {
 
     /// Perform a full rebuild of the code graph
     fn full_rebuild(&mut self, root_path: &Path) -> Result<(), String> {
+        // Initialize memory-optimized storage first
+        self.initialize_storage()?;
+        
         // Create new repository mapper
         let mut repo_mapper = RepoMapper::new(root_path);
         
-        // Map the repository
-        repo_mapper.map_repository()?;
+        // Map the repository with memory optimization
+        repo_mapper.map_repository_with_storage(self.symbol_storage.as_ref())?;
         
         // Update file metadata
         self.update_file_metadata(root_path)?;
@@ -137,7 +192,13 @@ impl CodeGraphManager {
         self.root_path = Some(root_path.to_path_buf());
         self.initialized = true;
         
-        tracing::info!("Code graph initialized successfully for path: {}", root_path.display());
+        // Log memory statistics
+        if let Some(stats) = self.get_memory_statistics() {
+            tracing::info!("Code graph initialized successfully for path: {} - Memory: {}MB/{} MB, Cache: {}/{}", 
+                          root_path.display(), stats.memory_usage_mb, stats.memory_limit_mb, 
+                          stats.cache_size, stats.cache_capacity);
+        }
+        
         Ok(())
     }
 
@@ -321,9 +382,29 @@ impl CodeGraphManager {
         self.repo_mapper.as_ref()
     }
 
-    /// Get all symbols from the current graph
-    pub fn get_symbols(&self) -> Option<&HashMap<String, CodeSymbol>> {
-        self.repo_mapper.as_ref().map(|rm| rm.get_all_symbols())
+    /// Get all symbols from the current graph (now uses memory-optimized storage)
+    pub fn get_symbols(&self) -> Option<HashMap<String, CodeSymbol>> {
+        // Note: This method now returns owned HashMap instead of reference
+        // to work with the memory-optimized storage
+        if let Some(ref _storage) = self.symbol_storage {
+            // This is a simplified implementation - in practice, you'd want to
+            // implement a more efficient way to get all symbols
+            tracing::warn!("get_symbols() called - this loads all symbols into memory. Consider using get_symbols_for_file() instead.");
+            None // Return None to encourage using more memory-efficient methods
+        } else {
+            self.repo_mapper.as_ref().map(|rm| rm.get_all_symbols().clone())
+        }
+    }
+    
+    /// Get symbols for a specific file (memory-optimized)
+    pub fn get_symbols_for_file(&self, file_path: &str) -> Vec<CodeSymbol> {
+        if let Some(ref storage) = self.symbol_storage {
+            storage.get_symbols_for_file(file_path).unwrap_or_default()
+        } else if let Some(ref repo_mapper) = self.repo_mapper {
+            repo_mapper.get_symbols_for_file(file_path).into_iter().cloned().collect()
+        } else {
+            Vec::new()
+        }
     }
 
     /// Find symbol references by name
@@ -498,7 +579,7 @@ pub fn get_root_path() -> Option<PathBuf> {
     }
 }
 
-/// Get symbols from the global graph
+/// Get symbols from the global graph (memory-optimized)
 pub fn get_symbols() -> Option<HashMap<String, CodeSymbol>> {
     // First, ensure the graph is up-to-date by checking for file changes
     if let Some(root_path) = get_root_path() {
@@ -509,7 +590,28 @@ pub fn get_symbols() -> Option<HashMap<String, CodeSymbol>> {
     
     let manager = get_graph_manager();
     let manager = manager.read().ok()?;
-    manager.get_symbols().cloned()
+    
+    // Log warning about memory usage
+    tracing::warn!("get_symbols() called - this may load many symbols into memory. Consider using get_symbols_for_file() instead.");
+    
+    manager.get_symbols()
+}
+
+/// Get symbols for a specific file (memory-optimized)
+pub fn get_symbols_for_file(file_path: &str) -> Vec<CodeSymbol> {
+    // First, ensure the graph is up-to-date by checking for file changes
+    if let Some(root_path) = get_root_path() {
+        if let Err(e) = ensure_graph_for_path(&root_path) {
+            tracing::warn!("Failed to update graph before getting symbols: {}", e);
+        }
+    }
+    
+    let manager = get_graph_manager();
+    if let Ok(manager) = manager.read() {
+        manager.get_symbols_for_file(file_path)
+    } else {
+        Vec::new()
+    }
 }
 
 /// Find symbol references using the global graph

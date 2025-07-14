@@ -7,6 +7,9 @@ pub mod tools;
 pub mod integration;
 pub mod tool_handler;
 pub mod graph_manager;
+pub mod memory_optimized_storage;
+pub mod repo_mapper_memory_optimized;
+pub mod memory_optimization_example;
 
 pub use tools::register_code_analysis_tools;
 pub use integration::register_code_analysis_tools_with_openai;
