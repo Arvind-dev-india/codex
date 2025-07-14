@@ -16,12 +16,8 @@ pub struct MessageProcessor {
 
 impl MessageProcessor {
     pub fn new(outgoing: mpsc::Sender<JSONRPCMessage>) -> Self {
-        // Try to initialize the code graph in the background
-        tokio::spawn(async {
-            if let Err(e) = code_analysis_bridge::init_code_graph() {
-                error!("Failed to initialize code graph: {}", e);
-            }
-        });
+        // NOTE: Graph initialization is now handled by main.rs to avoid duplicate initialization
+        // The main.rs already calls init_code_graph_with_supplementary() in background
         
         Self {
             outgoing,

@@ -567,13 +567,25 @@ pub async fn initialize_graph_async(root_path: &Path) -> Result<(), String> {
     // Create and initialize the repository mapper in a blocking task
     let root_path_clone = root_path.to_path_buf();
     let result = tokio::task::spawn_blocking(move || {
+        // Initialize memory-optimized storage for this task
+        let storage_config = StorageConfig::for_large_projects();
+        let storage = ThreadSafeStorage::new(storage_config)?;
+        storage.initialize_for_project(&root_path_clone)?;
+        
         let mut repo_mapper = RepoMapper::new(&root_path_clone);
-        repo_mapper.map_repository()?;
-        Ok::<RepoMapper, String>(repo_mapper)
+        
+        // Use memory-optimized mapping
+        repo_mapper.map_repository_with_storage(Some(&storage))?;
+        
+        // CRITICAL: Build the graph after parsing symbols
+        // But we need to build it from the storage, not the empty context extractor
+        repo_mapper.build_graph_from_storage(&storage)?;
+        
+        Ok::<(RepoMapper, ThreadSafeStorage), String>((repo_mapper, storage))
     }).await.map_err(|e| format!("Task join error: {}", e))?;
     
     match result {
-        Ok(repo_mapper) => {
+        Ok((repo_mapper, storage)) => {
             // Now acquire the write lock and update the manager
             let manager = get_graph_manager();
             let mut manager = manager.write()
@@ -582,13 +594,16 @@ pub async fn initialize_graph_async(root_path: &Path) -> Result<(), String> {
             // Update file metadata
             manager.update_file_metadata(root_path)?;
             
-            // Get statistics
-            let symbols_count = repo_mapper.get_all_symbols().len();
+            // Get statistics from storage (not from repo_mapper which might be empty)
+            let symbols = storage.get_all_symbols()
+                .map_err(|e| format!("Failed to get symbols for stats: {}", e))?;
+            let symbols_count = symbols.len();
             let (_total_files, files_processed, _, _) = repo_mapper.get_parsing_statistics();
             let initialization_time_ms = start_time.elapsed().as_millis() as u64;
             
             // Store the new state
             manager.repo_mapper = Some(repo_mapper);
+            manager.symbol_storage = Some(storage); // Store the storage for later access
             manager.root_path = Some(root_path.to_path_buf());
             manager.initialized = true;
             manager.set_status(GraphStatus::Ready {

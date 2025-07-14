@@ -466,7 +466,7 @@ impl RepoMapper {
     }
 
     /// Build the graph from the extracted context
-    fn build_graph_from_context(&mut self) {
+    pub fn build_graph_from_context(&mut self) {
         // Create nodes for all symbols
         for (fqn, symbol) in self.context_extractor.get_symbols() {
             let node_type = match symbol.symbol_type {
@@ -800,6 +800,137 @@ impl RepoMapper {
     /// Add a reference to the context extractor (for memory-optimized processing)
     pub fn add_reference(&mut self, reference: SymbolReference) {
         self.context_extractor.add_reference(reference);
+    }
+    
+    /// Get access to the context extractor (for unresolved reference analysis)
+    pub fn get_context_extractor(&self) -> &ContextExtractor {
+        &self.context_extractor
+    }
+    
+    /// Build the graph from memory-optimized storage instead of context extractor
+    pub fn build_graph_from_storage(&mut self, storage: &super::memory_optimized_storage::ThreadSafeStorage) -> Result<(), String> {
+        tracing::info!("Building graph from memory-optimized storage...");
+        
+        // Get all symbols from storage
+        let symbols = storage.get_all_symbols()
+            .map_err(|e| format!("Failed to get symbols from storage: {}", e))?;
+        
+        tracing::info!("Retrieved {} symbols from storage for graph building", symbols.len());
+        
+        // CRITICAL: Update the context extractor's name_to_fqns map with symbols from storage
+        // This ensures references can find FQNs for symbols that were stored
+        for (fqn, symbol) in &symbols {
+            self.context_extractor.add_symbol(fqn.clone(), symbol.clone());
+        }
+        tracing::info!("Updated context extractor with {} symbols from storage", symbols.len());
+        
+        // Clear existing graph data
+        self.symbol_nodes.clear();
+        self.edges.clear();
+        
+        // Create nodes for all symbols
+        for (fqn, symbol) in &symbols {
+            let node_type = match symbol.symbol_type {
+                super::context_extractor::SymbolType::Function => CodeNodeType::Function,
+                super::context_extractor::SymbolType::Method => CodeNodeType::Method,
+                super::context_extractor::SymbolType::Class => CodeNodeType::Class,
+                super::context_extractor::SymbolType::Struct => CodeNodeType::Struct,
+                super::context_extractor::SymbolType::Module => CodeNodeType::Module,
+                _ => continue, // Skip other symbol types for now
+            };
+
+            let node = CodeNode {
+                id: format!("symbol:{}", fqn),
+                name: symbol.name.clone(),
+                node_type,
+                file_path: symbol.file_path.clone(),
+                start_line: symbol.start_line,
+                end_line: symbol.end_line,
+            };
+
+            self.symbol_nodes.insert(fqn.clone(), node);
+
+            // Create a "contains" edge from the file to the symbol
+            if let Some(file_node) = self.file_nodes.get(&symbol.file_path) {
+                self.edges.push(CodeEdge {
+                    source: file_node.id.clone(),
+                    target: format!("symbol:{}", fqn),
+                    edge_type: CodeEdgeType::Contains,
+                });
+            }
+        }
+
+        // CRITICAL: Re-resolve FQNs for references now that we have all symbols
+        // This fixes cross-project reference resolution
+        self.resolve_cross_project_fqns();
+        
+        // Create edges for all references (from context extractor)
+        let references = self.context_extractor.get_references();
+        tracing::info!("Creating edges from {} references", references.len());
+        for reference in references {
+            let edge_type = match reference.reference_type {
+                super::context_extractor::ReferenceType::Call => CodeEdgeType::Calls,
+                super::context_extractor::ReferenceType::Import => CodeEdgeType::Imports,
+                super::context_extractor::ReferenceType::Inheritance => CodeEdgeType::Inherits,
+                _ => CodeEdgeType::References,
+            };
+
+            // Find the source symbol node (the one containing the reference)
+            // Use the most specific symbol that contains the reference line
+            let source_node_id = if let Some(containing_symbol) = self.context_extractor
+                .find_most_specific_containing_symbol(&reference.reference_file, reference.reference_line) {
+                // Use the containing symbol as the source
+                format!("symbol:{}", containing_symbol.fqn)
+            } else {
+                // Fall back to file node if no containing symbol found
+                if let Some(file_node) = self.file_nodes.get(&reference.reference_file) {
+                    file_node.id.clone()
+                } else {
+                    continue;
+                }
+            };
+
+            // Find the target symbol node
+            let target_key = if !reference.symbol_fqn.is_empty() {
+                &reference.symbol_fqn
+            } else {
+                // Try to find the FQN from the name
+                if let Some(fqns) = self.context_extractor.get_name_to_fqns().get(&reference.symbol_name) {
+                    if !fqns.is_empty() {
+                        &fqns[0]
+                    } else {
+                        continue;
+                    }
+                } else {
+                    continue;
+                }
+            };
+            
+            if let Some(target_node) = self.symbol_nodes.get(target_key) {
+                self.edges.push(CodeEdge {
+                    source: source_node_id,
+                    target: target_node.id.clone(),
+                    edge_type,
+                });
+            }
+        }
+        
+        let total_nodes = self.file_nodes.len() + self.symbol_nodes.len();
+        let total_edges = self.edges.len();
+        tracing::info!("Graph building from storage completed: {} nodes, {} edges", total_nodes, total_edges);
+        
+        Ok(())
+    }
+    
+    /// Resolve cross-project FQNs for references that couldn't be resolved during initial parsing
+    fn resolve_cross_project_fqns(&mut self) {
+        let resolved_count = self.context_extractor.resolve_reference_fqns();
+        
+        if resolved_count > 0 {
+            tracing::info!("Resolved {} cross-project FQNs for edge creation", resolved_count);
+        } else {
+            tracing::warn!("No cross-project FQNs could be resolved - edges may be missing");
+        }
     }
     
     /// Print parsing statistics

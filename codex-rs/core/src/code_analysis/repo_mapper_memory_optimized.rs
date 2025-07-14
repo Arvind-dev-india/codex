@@ -24,9 +24,13 @@ impl RepoMapper {
         let root_path = self.get_root_path().to_path_buf();
         tracing::info!("Starting memory-optimized repository mapping for path: {}", root_path.display());
         
-        // Collect files to process
+        // Collect files to process with timing
+        let file_discovery_start = std::time::Instant::now();
         let mut files_to_process = Vec::<PathBuf>::new();
         self.collect_files_public(&root_path, &mut files_to_process)?;
+        let file_discovery_time = file_discovery_start.elapsed();
+        
+        tracing::info!("File discovery completed in {:.2}s", file_discovery_time.as_secs_f64());
         
         tracing::info!("Found {} files to process", files_to_process.len());
         
@@ -89,6 +93,9 @@ impl RepoMapper {
         tracing::info!("Memory-optimized repository mapping completed: {} files processed, {} failed", 
                       files_processed, files_failed);
         
+        // NOTE: Graph building is now handled separately via build_graph_from_storage()
+        // This avoids redundant work and ensures proper symbol-reference integration
+        
         Ok(())
     }
     
@@ -119,8 +126,11 @@ impl RepoMapper {
         // Extract symbols
         extractor.extract_symbols_from_file_incremental(file_path)?;
         
-        // Store references in the main context extractor for cross-project analysis
-        for reference in extractor.get_references() {
+        // Store references in the main context extractor for graph building
+        let references = extractor.get_references();
+        tracing::debug!("Adding {} references from {} to main context extractor", 
+                       references.len(), file_path);
+        for reference in references {
             self.add_reference(reference.clone());
         }
         
@@ -142,26 +152,50 @@ impl RepoMapper {
         self.collect_files_recursive(dir_path, files)
     }
     
-    /// Recursive file collection
+    /// Optimized recursive file collection with better performance
     fn collect_files_recursive(&self, dir_path: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
-        let entries = std::fs::read_dir(dir_path)
-            .map_err(|e| format!("Failed to read directory {}: {}", dir_path.display(), e))?;
-
-        for entry in entries {
-            let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
-            let path = entry.path();
-
-            if path.is_dir() {
-                // Skip hidden directories and common directories to ignore
-                let dir_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                if !dir_name.starts_with('.') && !["node_modules", "target", "dist", "build", "bin", "obj", ".git", ".vs", "packages"].contains(&dir_name) {
-                    self.collect_files_recursive(&path, files)?;
+        // Use a stack-based approach instead of recursion for better performance
+        let mut dirs_to_process = vec![dir_path.to_path_buf()];
+        
+        while let Some(current_dir) = dirs_to_process.pop() {
+            let entries = match std::fs::read_dir(&current_dir) {
+                Ok(entries) => entries,
+                Err(e) => {
+                    tracing::warn!("Failed to read directory {}: {}", current_dir.display(), e);
+                    continue;
                 }
-            } else if path.is_file() {
-                // Check if it's a supported file type
-                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                    if SupportedLanguage::from_extension(ext).is_some() {
-                        files.push(path);
+            };
+
+            for entry in entries {
+                let entry = match entry {
+                    Ok(entry) => entry,
+                    Err(e) => {
+                        tracing::debug!("Failed to read directory entry: {}", e);
+                        continue;
+                    }
+                };
+                
+                let path = entry.path();
+                
+                // Get file type in one call for efficiency
+                let file_type = match entry.file_type() {
+                    Ok(ft) => ft,
+                    Err(_) => continue,
+                };
+
+                if file_type.is_dir() {
+                    // Skip hidden directories and common directories to ignore
+                    let dir_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                    if !dir_name.starts_with('.') && 
+                       !["node_modules", "target", "dist", "build", "bin", "obj", ".git", ".vs", "packages", "Debug", "Release", ".vscode"].contains(&dir_name) {
+                        dirs_to_process.push(path);
+                    }
+                } else if file_type.is_file() {
+                    // Check if it's a supported file type
+                    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                        if SupportedLanguage::from_extension(ext).is_some() {
+                            files.push(path);
+                        }
                     }
                 }
             }

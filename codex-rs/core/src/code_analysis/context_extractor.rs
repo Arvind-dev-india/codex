@@ -485,24 +485,30 @@ impl ContextExtractor {
         // Try to find the FQN of the symbol being referenced
         let symbol_fqn = if let Some(fqns) = self.name_to_fqns.get(&symbol_name) {
             if !fqns.is_empty() {
+                tracing::debug!("Found FQN for reference '{}': {}", symbol_name, fqns[0]);
                 fqns[0].clone()
             } else {
+                tracing::debug!("Empty FQN list for reference '{}'", symbol_name);
                 String::new()
             }
         } else {
+            tracing::debug!("No FQN found for reference '{}' (unresolved reference)", symbol_name);
             String::new()
         };
         
         // Create a reference to the symbol
         let reference = SymbolReference {
-            symbol_name,
-            symbol_fqn,
+            symbol_name: symbol_name.clone(),
+            symbol_fqn: symbol_fqn.clone(),
             reference_file: parsed_file.path.clone(),
             // Convert from 0-based to 1-based line numbers for consistency
             reference_line: ref_capture.start_point.0 + 1,
             reference_col: ref_capture.start_point.1,
             reference_type,
         };
+        
+        tracing::debug!("Created reference: '{}' -> FQN: '{}' in file: {}", 
+                       symbol_name, symbol_fqn, parsed_file.path);
         
         // Add the reference
         self.references.push(reference);
@@ -816,10 +822,62 @@ impl ContextExtractor {
     pub fn add_reference(&mut self, reference: SymbolReference) {
         self.references.push(reference);
     }
+    
+    /// Update FQNs for references that couldn't be resolved during initial parsing
+    pub fn resolve_reference_fqns(&mut self) -> usize {
+        let mut resolved_count = 0;
+        
+        // Update references with resolved FQNs
+        for reference in &mut self.references {
+            if reference.symbol_fqn.is_empty() {
+                // Try to resolve the FQN now that we have all symbols
+                if let Some(fqns) = self.name_to_fqns.get(&reference.symbol_name) {
+                    if !fqns.is_empty() {
+                        reference.symbol_fqn = fqns[0].clone();
+                        resolved_count += 1;
+                        tracing::debug!("Resolved FQN: '{}' -> '{}'", 
+                                       reference.symbol_name, reference.symbol_fqn);
+                    }
+                }
+            }
+        }
+        
+        resolved_count
+    }
 
     /// Get all references
     pub fn get_references(&self) -> &[SymbolReference] {
         &self.references
+    }
+
+    /// Find references that have no corresponding definition in this project
+    /// This is crucial for cross-project analysis - only unresolved references need external resolution
+    pub fn find_unresolved_references(&self) -> Vec<&SymbolReference> {
+        self.references.iter()
+            .filter(|reference| {
+                // Check if this reference has NO corresponding definition in this project
+                // Try FQN first (most precise), then name lookup
+                if !reference.symbol_fqn.is_empty() {
+                    // If we have an FQN, check if we have a symbol with that exact FQN
+                    !self.symbols.contains_key(&reference.symbol_fqn)
+                } else {
+                    // If no FQN, check if we have any symbol with this name
+                    // A reference is unresolved if we have NO symbols with this name
+                    if let Some(fqns) = self.name_to_fqns.get(&reference.symbol_name) {
+                        // We have symbols with this name, so reference is resolved
+                        false
+                    } else {
+                        // No symbols with this name, so reference is unresolved
+                        true
+                    }
+                }
+            })
+            .collect()
+    }
+    
+    /// Clear references to save memory (useful for supplementary parsing where we only need symbols)
+    pub fn clear_references(&mut self) {
+        self.references.clear();
     }
 
     /// Find symbol by name (returns the first match if multiple exist)

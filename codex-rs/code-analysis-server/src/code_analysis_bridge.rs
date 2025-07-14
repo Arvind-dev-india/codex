@@ -110,12 +110,8 @@ pub async fn init_code_graph_with_supplementary(
 ) -> Result<()> {
     let root = root_path.unwrap_or_else(|| std::env::current_dir().unwrap());
     
-    // Force complete cleanup to prevent contamination from previous runs
-    info!("Cleaning up any previous state to prevent contamination...");
-    if let Err(e) = graph_manager::force_complete_cleanup() {
-        error!("Failed to cleanup previous state: {}", e);
-        // Continue anyway, but log the warning
-    }
+    // NOTE: Cleanup is now handled by main.rs before calling this function
+    // Removing duplicate cleanup to prevent wiping out previous work
     
     // Log supplementary project configuration for debugging
     info!("Supplementary project configuration:");
@@ -130,9 +126,20 @@ pub async fn init_code_graph_with_supplementary(
     // Setup detailed logging for supplementary projects
     let log_file_path = setup_supplementary_logging(&root)?;
     
-    // For now, initialize the main project graph first
-    // TODO: Extend graph_manager to support supplementary projects
-    match graph_manager::initialize_graph_async(&root).await {
+    // Start main project initialization and supplementary projects in parallel
+    info!("Initializing main project graph for: {}", root.display());
+    
+    // Create futures for parallel processing
+    let main_project_future = graph_manager::initialize_graph_async(&root);
+    let supplementary_future = if !supplementary_projects.is_empty() {
+        info!("Starting parallel processing of {} supplementary projects...", supplementary_projects.len());
+        Some(process_supplementary_projects(&supplementary_projects, &log_file_path))
+    } else {
+        None
+    };
+    
+    // Wait for main project to complete first (needed for cross-project analysis)
+    match main_project_future.await {
         Ok(_) => {
             let elapsed = start_time.elapsed();
             let elapsed_secs = elapsed.as_secs_f64();
@@ -143,12 +150,12 @@ pub async fn init_code_graph_with_supplementary(
             info!("Main project stats: {} nodes, {} edges, {} symbols", 
                   main_stats.nodes, main_stats.edges, main_stats.symbols);
             
-            // Process supplementary projects
-            if !supplementary_projects.is_empty() {
-                info!("Processing {} supplementary projects...", supplementary_projects.len());
+            // Wait for supplementary projects if they were started
+            if let Some(supplementary_future) = supplementary_future {
+                info!("Waiting for supplementary projects to complete...");
                 info!("Supplementary project debug log: {}", log_file_path.display());
                 
-                let supplementary_stats = process_supplementary_projects(&supplementary_projects, &log_file_path).await?;
+                let supplementary_stats = supplementary_future.await?;
                 
                 for project in &supplementary_projects {
                     info!("  - {} at {} (priority: {})", project.name, project.path, project.priority);
@@ -369,7 +376,7 @@ fn get_main_project_stats() -> ProjectStats {
     }
 }
 
-/// Process supplementary projects and return statistics
+/// Process supplementary projects in parallel and return statistics
 async fn process_supplementary_projects(
     projects: &[SupplementaryProjectConfig],
     log_file: &Path
@@ -378,22 +385,70 @@ async fn process_supplementary_projects(
     
     log_supplementary_projects_details(projects, log_file)?;
     
-    for (i, project) in projects.iter().enumerate() {
-        info!("Analyzing supplementary project {}/{}: {}", i + 1, projects.len(), project.name);
-        
-        let project_stats = analyze_supplementary_project(project, log_file).await?;
-        stats.total_nodes += project_stats.nodes;
-        stats.total_edges += project_stats.edges;
-        stats.total_symbols += project_stats.symbols;
-        stats.projects_processed += 1;
-        
-        info!("  {} stats: {} symbols, {} potential cross-project references", 
-              project.name, project_stats.symbols, project_stats.edges);
+    // Get unresolved references from main project (only these need cross-project resolution)
+    let main_unresolved_refs = get_main_project_unresolved_references();
+    info!("Found {} unresolved references in main project (out of {} total)", 
+          main_unresolved_refs.len(), get_main_project_total_references());
+    
+    if main_unresolved_refs.is_empty() {
+        info!("No unresolved references in main project - skipping cross-project analysis");
+        return Ok(stats);
     }
     
-    // For now, simulate cross-project edge detection
-    // In the real implementation, this would analyze actual symbol references
-    stats.cross_project_edges = estimate_cross_project_edges(&stats);
+    // Parse all supplementary projects in TRUE parallel (definitions only, no references)
+    info!("Parsing {} supplementary projects in parallel (definitions only)...", projects.len());
+    let mut supp_handles = Vec::new();
+    
+    for project in projects {
+        let project_clone = project.clone();
+        let handle = tokio::spawn(async move {
+            parse_supplementary_definitions_only(&project_clone).await
+        });
+        supp_handles.push(handle);
+    }
+    
+    // Wait for all parallel tasks to complete
+    let supp_results = futures::future::join_all(supp_handles).await;
+    
+    // Combine all supplementary symbols and collect statistics
+    let mut all_supp_symbols = std::collections::HashMap::new();
+    for (i, join_result) in supp_results.into_iter().enumerate() {
+        let project = &projects[i];
+        match join_result {
+            Ok(parse_result) => {
+                match parse_result {
+                    Ok(symbols) => {
+                        info!("  {} parsed: {} symbols", project.name, symbols.len());
+                        stats.total_symbols += symbols.len();
+                        stats.total_nodes += symbols.len();
+                        stats.projects_processed += 1;
+                        all_supp_symbols.extend(symbols);
+                    }
+                    Err(e) => {
+                        error!("Failed to parse supplementary project {}: {}", project.name, e);
+                    }
+                }
+            }
+            Err(e) => {
+                error!("Failed to spawn task for supplementary project {}: {}", project.name, e);
+            }
+        }
+    }
+    
+    if all_supp_symbols.is_empty() {
+        info!("No symbols found in supplementary projects");
+        return Ok(stats);
+    }
+    
+    // Efficient O(N) cross-project matching (only for unresolved references)
+    info!("Creating cross-project edges: {} unresolved refs vs {} supplementary symbols", 
+          main_unresolved_refs.len(), all_supp_symbols.len());
+    
+    let cross_edges = create_cross_project_edges_simple(&main_unresolved_refs, &all_supp_symbols, log_file)?;
+    stats.cross_project_edges = cross_edges.len();
+    stats.total_edges = cross_edges.len(); // Only count actual cross-project edges
+    
+    info!("Created {} actual cross-project edges", cross_edges.len());
     
     Ok(stats)
 }
@@ -543,6 +598,51 @@ fn is_meaningful_cross_project_reference(symbol_name: &str, symbol_type: &str) -
     }
 }
 
+/// Get unresolved references from main project (only these need cross-project resolution)
+fn get_main_project_unresolved_references() -> Vec<SimpleReference> {
+    match graph_manager::get_graph_manager().read() {
+        Ok(manager) => {
+            if let Some(repo_mapper) = manager.get_repo_mapper() {
+                // Get unresolved references from the context extractor
+                let context_extractor = repo_mapper.get_context_extractor();
+                let unresolved_refs = context_extractor.find_unresolved_references();
+                
+                let simple_references: Vec<SimpleReference> = unresolved_refs.iter().map(|reference| SimpleReference {
+                    symbol_name: reference.symbol_name.clone(),
+                    symbol_fqn: reference.symbol_fqn.clone(),
+                    reference_file: reference.reference_file.clone(),
+                    reference_line: reference.reference_line,
+                    reference_type: reference.reference_type.clone(),
+                }).collect();
+                
+                info!("Debug: Found {} unresolved references for cross-project analysis", simple_references.len());
+                simple_references
+            } else {
+                info!("Debug: No repo mapper available for unresolved reference retrieval");
+                Vec::new()
+            }
+        },
+        Err(e) => {
+            info!("Debug: Error accessing graph manager for unresolved references: {:?}", e);
+            Vec::new()
+        }
+    }
+}
+
+/// Get total number of references in main project (for statistics)
+fn get_main_project_total_references() -> usize {
+    match graph_manager::get_graph_manager().read() {
+        Ok(manager) => {
+            if let Some(repo_mapper) = manager.get_repo_mapper() {
+                repo_mapper.get_all_references().len()
+            } else {
+                0
+            }
+        },
+        Err(_) => 0
+    }
+}
+
 /// Get main project symbols
 fn get_main_project_symbols() -> Vec<SimpleSymbol> {
     match graph_manager::get_graph_manager().read() {
@@ -588,6 +688,61 @@ struct SimpleSymbol {
     file_path: String,
     symbol_type: String,
     fqn: String, // Add FQN for proper symbol matching
+}
+
+/// Parse supplementary project symbols (definitions only) for efficient cross-project analysis
+async fn parse_supplementary_definitions_only(
+    project: &SupplementaryProjectConfig
+) -> Result<std::collections::HashMap<String, codex_core::code_analysis::context_extractor::CodeSymbol>> {
+    use codex_core::code_analysis::context_extractor::create_context_extractor;
+    use std::path::Path;
+    
+    info!("Parsing definitions only from supplementary project: {}", project.name);
+    
+    let mut context_extractor = create_context_extractor();
+    let project_path = Path::new(&project.path);
+    
+    if !project_path.exists() {
+        info!("Supplementary project path does not exist: {}", project.path);
+        return Ok(std::collections::HashMap::new());
+    }
+    
+    // Collect files to process (same logic as main project)
+    let mut files_to_process = Vec::new();
+    collect_supplementary_files(project_path, &mut files_to_process, &project.languages)
+        .map_err(|e| anyhow::anyhow!("Failed to collect files: {}", e))?;
+    
+    info!("Found {} files to parse in supplementary project '{}'", files_to_process.len(), project.name);
+    
+    // Process files and extract symbols (definitions only - no references needed)
+    let mut processed_count = 0;
+    let mut failed_count = 0;
+    
+    for file_path in &files_to_process {
+        match context_extractor.extract_symbols_from_file_incremental(&file_path.to_string_lossy()) {
+            Ok(()) => {
+                processed_count += 1;
+                // NOTE: Only clear references for supplementary projects (not main project)
+                // Main project needs references for edge creation
+                context_extractor.clear_references();
+            }
+            Err(e) => {
+                failed_count += 1;
+                if failed_count <= 5 { // Log first few errors
+                    tracing::debug!("Failed to parse supplementary file {}: {}", file_path.display(), e);
+                }
+            }
+        }
+    }
+    
+    info!("Supplementary project '{}': parsed {}/{} files successfully (definitions only)", 
+          project.name, processed_count, files_to_process.len());
+    
+    // Return symbols as HashMap for efficient lookup
+    let symbols = context_extractor.get_symbols().clone();
+    info!("Extracted {} definitions from supplementary project '{}'", symbols.len(), project.name);
+    
+    Ok(symbols)
 }
 
 /// Parse supplementary project symbols using the same approach as main project
@@ -864,7 +1019,7 @@ fn symbol_references_other(referencing_symbol: &str, referenced_symbol: &str, ma
     false
 }
 
-/// Log actual cross-project edge
+/// Log actual cross-project edge with enhanced formatting
 fn log_actual_cross_project_edge(
     log_file: &Path,
     primary_project: &str,
@@ -882,16 +1037,25 @@ fn log_actual_cross_project_edge(
         .append(true)
         .open(log_file)?;
     
+    // Create a separate section for cross-project edges
     writeln!(file, 
-        "[{}] VALID_EDGE: {}:{}:{} --{}-> {}:{}:{} (passed filtering)",
+        "\n=== CROSS-PROJECT EDGE ===\n\
+        Time: {}\n\
+        Type: {}\n\
+        From: {} ({})\n\
+        To: {} ({})\n\
+        Main Project: {}\n\
+        Supplementary Project: {}\n\
+        Status: VALID (passed filtering)\n\
+        ===========================",
         chrono::Utc::now().format("%H:%M:%S"),
-        primary_project,
-        primary_file.split('/').last().unwrap_or(primary_file),
-        primary_symbol,
         edge_type,
-        secondary_project,
+        primary_symbol,
+        primary_file.split('/').last().unwrap_or(primary_file),
+        secondary_symbol,
         secondary_file.split('/').last().unwrap_or(secondary_file),
-        secondary_symbol
+        primary_project,
+        secondary_project
     )?;
     
     file.flush()?;
@@ -1073,4 +1237,85 @@ pub fn call_get_multiple_files_skeleton(args: Value) -> Result<Value> {
         Some(Err(e)) => Err(anyhow::anyhow!("Error in get_multiple_files_skeleton: {}", e)),
         None => Err(anyhow::anyhow!("Failed to handle get_multiple_files_skeleton")),
     }
+}
+
+/// Simple cross-project edge representation
+#[derive(Debug, Clone)]
+struct CrossProjectEdge {
+    main_file: String,
+    main_symbol: String,
+    main_line: usize,
+    supp_file: String,
+    supp_symbol: String,
+    edge_type: String,
+}
+
+/// Create cross-project edges efficiently using O(N) lookup
+fn create_cross_project_edges_simple(
+    unresolved_refs: &[SimpleReference],
+    supp_symbols: &std::collections::HashMap<String, codex_core::code_analysis::context_extractor::CodeSymbol>,
+    log_file: &Path
+) -> Result<Vec<CrossProjectEdge>> {
+    use std::collections::HashMap;
+    
+    if unresolved_refs.is_empty() || supp_symbols.is_empty() {
+        return Ok(Vec::new());
+    }
+    
+    // Build O(1) lookup index for supplementary symbols
+    let mut name_index: HashMap<&str, Vec<&codex_core::code_analysis::context_extractor::CodeSymbol>> = HashMap::new();
+    
+    for (_fqn, symbol) in supp_symbols {
+        name_index.entry(symbol.name.as_str()).or_default().push(symbol);
+    }
+    
+    info!("Built lookup index: {} name entries", name_index.len());
+    
+    // O(N) matching - only process unresolved references
+    let mut cross_edges = Vec::new();
+    let mut matches = 0;
+    let mut ambiguous_skipped = 0;
+    
+    for reference in unresolved_refs {
+        // Try name match (single match only to avoid ambiguity)
+        if let Some(candidates) = name_index.get(reference.symbol_name.as_str()) {
+            if candidates.len() == 1 {
+                let symbol = candidates[0];
+                
+                // Additional filtering to ensure meaningful cross-project reference
+                if is_meaningful_cross_project_reference(&reference.symbol_name, &format!("{:?}", symbol.symbol_type)) {
+                    cross_edges.push(CrossProjectEdge {
+                        main_file: reference.reference_file.clone(),
+                        main_symbol: reference.symbol_name.clone(),
+                        main_line: reference.reference_line,
+                        supp_file: symbol.file_path.clone(),
+                        supp_symbol: symbol.name.clone(),
+                        edge_type: format!("{:?}", reference.reference_type),
+                    });
+                    matches += 1;
+                    
+                    // Log to debug file
+                    let _ = log_actual_cross_project_edge(
+                        log_file,
+                        "main",
+                        &reference.reference_file,
+                        &reference.symbol_name,
+                        &symbol.project_name(),
+                        &symbol.file_path,
+                        &symbol.name,
+                        "NAME_MATCH"
+                    );
+                }
+            } else if candidates.len() > 1 {
+                ambiguous_skipped += 1;
+                tracing::debug!("Skipped ambiguous reference '{}' with {} candidates", 
+                              reference.symbol_name, candidates.len());
+            }
+        }
+    }
+    
+    info!("Cross-project matching results: {} matches, {} ambiguous skipped, {} total edges", 
+          matches, ambiguous_skipped, cross_edges.len());
+    
+    Ok(cross_edges)
 }
