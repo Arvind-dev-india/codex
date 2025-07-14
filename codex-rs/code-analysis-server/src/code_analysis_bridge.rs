@@ -385,24 +385,34 @@ async fn process_supplementary_projects(
     
     log_supplementary_projects_details(projects, log_file)?;
     
-    // Get unresolved references from main project (only these need cross-project resolution)
+    // Get unresolved references from main project with their FQNs
     let main_unresolved_refs = get_main_project_unresolved_references();
     info!("Found {} unresolved references in main project (out of {} total)", 
           main_unresolved_refs.len(), get_main_project_total_references());
+    
+    // Extract unique FQNs from unresolved references for efficient matching
+    let unresolved_fqns: std::collections::HashSet<String> = main_unresolved_refs
+        .iter()
+        .filter(|r| !r.symbol_fqn.is_empty())
+        .map(|r| r.symbol_fqn.clone())
+        .collect();
+    
+    info!("Extracted {} unique FQNs from unresolved references for efficient matching", unresolved_fqns.len());
     
     if main_unresolved_refs.is_empty() {
         info!("No unresolved references in main project - skipping cross-project analysis");
         return Ok(stats);
     }
     
-    // Parse all supplementary projects in TRUE parallel (definitions only, no references)
-    info!("Parsing {} supplementary projects in parallel (definitions only)...", projects.len());
+    // Parse supplementary projects efficiently - only look for symbols we actually need
+    info!("Parsing {} supplementary projects for FQN-based matching (definitions only)...", projects.len());
     let mut supp_handles = Vec::new();
     
     for project in projects {
         let project_clone = project.clone();
+        let unresolved_fqns_clone = unresolved_fqns.clone();
         let handle = tokio::spawn(async move {
-            parse_supplementary_definitions_only(&project_clone).await
+            parse_supplementary_definitions_fqn_targeted(&project_clone, &unresolved_fqns_clone).await
         });
         supp_handles.push(handle);
     }
@@ -418,7 +428,7 @@ async fn process_supplementary_projects(
             Ok(parse_result) => {
                 match parse_result {
                     Ok(symbols) => {
-                        info!("  {} parsed: {} symbols", project.name, symbols.len());
+                        info!("  {} parsed: {} targeted symbols (FQN-matched)", project.name, symbols.len());
                         stats.total_symbols += symbols.len();
                         stats.total_nodes += symbols.len();
                         stats.projects_processed += 1;
@@ -440,11 +450,11 @@ async fn process_supplementary_projects(
         return Ok(stats);
     }
     
-    // Efficient O(N) cross-project matching (only for unresolved references)
-    info!("Creating cross-project edges: {} unresolved refs vs {} supplementary symbols", 
+    // Efficient FQN-based cross-project matching (much faster than name matching)
+    info!("Creating cross-project edges: {} unresolved refs vs {} targeted supplementary symbols", 
           main_unresolved_refs.len(), all_supp_symbols.len());
     
-    let cross_edges = create_cross_project_edges_simple(&main_unresolved_refs, &all_supp_symbols, log_file)?;
+    let cross_edges = create_cross_project_edges_fqn_based(&main_unresolved_refs, &all_supp_symbols, log_file)?;
     stats.cross_project_edges = cross_edges.len();
     stats.total_edges = cross_edges.len(); // Only count actual cross-project edges
     
@@ -802,6 +812,117 @@ struct SimpleSymbol {
     fqn: String, // Add FQN for proper symbol matching
 }
 
+/// Parse supplementary project symbols targeting specific FQNs for maximum efficiency
+async fn parse_supplementary_definitions_fqn_targeted(
+    project: &SupplementaryProjectConfig,
+    target_fqns: &std::collections::HashSet<String>
+) -> Result<std::collections::HashMap<String, codex_core::code_analysis::context_extractor::CodeSymbol>> {
+    use codex_core::code_analysis::context_extractor::create_context_extractor;
+    use std::path::Path;
+    
+    info!("FQN-targeted parsing from supplementary project: {} (looking for {} specific FQNs)", 
+          project.name, target_fqns.len());
+    
+    let mut context_extractor = create_context_extractor();
+    let project_path = Path::new(&project.path);
+    
+    if !project_path.exists() {
+        info!("Supplementary project path does not exist: {}", project.path);
+        return Ok(std::collections::HashMap::new());
+    }
+    
+    // Collect files to process (same logic as main project)
+    let mut files_to_process = Vec::new();
+    collect_supplementary_files(project_path, &mut files_to_process, &project.languages)
+        .map_err(|e| anyhow::anyhow!("Failed to collect files: {}", e))?;
+    
+    info!("Found {} files to scan for {} target FQNs in supplementary project '{}'", 
+          files_to_process.len(), target_fqns.len(), project.name);
+    
+    // Process files in parallel batches for better performance (same as main project)
+    use rayon::prelude::*;
+    
+    let cpu_count = rayon::current_num_threads();
+    let batch_size = std::cmp::min(200, std::cmp::max(cpu_count * 3, files_to_process.len() / 4));
+    let total_batches = (files_to_process.len() + batch_size - 1) / batch_size;
+    
+    info!("Processing {} files in {} batches (batch size: {}) for FQN-targeted parsing in '{}'", 
+          files_to_process.len(), total_batches, batch_size, project.name);
+    
+    let mut processed_count = 0;
+    let mut failed_count = 0;
+    let mut matched_symbols = 0;
+    
+    for (batch_idx, batch) in files_to_process.chunks(batch_size).enumerate() {
+        let batch_start = std::time::Instant::now();
+        
+        // Process batch in parallel
+        let batch_results: Vec<Result<std::collections::HashMap<String, codex_core::code_analysis::context_extractor::CodeSymbol>, String>> = batch
+            .par_iter()
+            .map(|file_path| {
+                use codex_core::code_analysis::context_extractor::create_context_extractor;
+                
+                // Create isolated context extractor for this file
+                let mut extractor = create_context_extractor();
+                
+                // Extract symbols (definitions only)
+                match extractor.extract_symbols_from_file_incremental(&file_path.to_string_lossy()) {
+                    Ok(()) => {
+                        // Filter symbols to only include those with FQNs we're looking for
+                        let file_symbols = extractor.get_symbols();
+                        let mut targeted_symbols = std::collections::HashMap::new();
+                        
+                        for (fqn, symbol) in file_symbols {
+                            if target_fqns.contains(fqn) {
+                                targeted_symbols.insert(fqn.clone(), symbol.clone());
+                            }
+                        }
+                        
+                        Ok(targeted_symbols)
+                    }
+                    Err(e) => Err(e)
+                }
+            })
+            .collect();
+        
+        // Merge results from this batch
+        for result in batch_results {
+            match result {
+                Ok(file_symbols) => {
+                    processed_count += 1;
+                    let batch_matched = file_symbols.len();
+                    matched_symbols += batch_matched;
+                    
+                    // Merge symbols into main context extractor
+                    for (fqn, symbol) in file_symbols {
+                        context_extractor.add_symbol(fqn, symbol);
+                    }
+                }
+                Err(e) => {
+                    failed_count += 1;
+                    if failed_count <= 5 { // Log first few errors
+                        tracing::debug!("Failed to parse supplementary file: {}", e);
+                    }
+                }
+            }
+        }
+        
+        let batch_time = batch_start.elapsed();
+        tracing::debug!("FQN-targeted batch {}/{} processed in {:.2}s ({:.1} files/sec, {} symbols matched)", 
+                      batch_idx + 1, total_batches, batch_time.as_secs_f64(), 
+                      batch.len() as f64 / batch_time.as_secs_f64(), matched_symbols);
+    }
+    
+    info!("FQN-targeted supplementary project '{}': parsed {}/{} files successfully, found {} matching symbols", 
+          project.name, processed_count, files_to_process.len(), matched_symbols);
+    
+    // Return only the symbols that match our target FQNs
+    let symbols = context_extractor.get_symbols().clone();
+    info!("Extracted {} FQN-targeted definitions from supplementary project '{}'", symbols.len(), project.name);
+    
+    Ok(symbols)
+}
+
 /// Parse supplementary project symbols (definitions only) for efficient cross-project analysis
 async fn parse_supplementary_definitions_only(
     project: &SupplementaryProjectConfig
@@ -826,26 +947,65 @@ async fn parse_supplementary_definitions_only(
     
     info!("Found {} files to parse in supplementary project '{}'", files_to_process.len(), project.name);
     
-    // Process files and extract symbols (definitions only - no references needed)
+    // Process files in parallel batches for better performance (same as main project)
+    use rayon::prelude::*;
+    
+    let cpu_count = rayon::current_num_threads();
+    let batch_size = std::cmp::min(200, std::cmp::max(cpu_count * 3, files_to_process.len() / 4));
+    let total_batches = (files_to_process.len() + batch_size - 1) / batch_size;
+    
+    info!("Processing {} files in {} batches (batch size: {}) for supplementary project '{}'", 
+          files_to_process.len(), total_batches, batch_size, project.name);
+    
     let mut processed_count = 0;
     let mut failed_count = 0;
     
-    for file_path in &files_to_process {
-        match context_extractor.extract_symbols_from_file_incremental(&file_path.to_string_lossy()) {
-            Ok(()) => {
-                processed_count += 1;
-                // NOTE: Only clear references for supplementary projects (not main project)
-                // Main project needs references for edge creation
-                // This function is specifically for supplementary projects, so always clear references
-                context_extractor.clear_references();
-            }
-            Err(e) => {
-                failed_count += 1;
-                if failed_count <= 5 { // Log first few errors
-                    tracing::debug!("Failed to parse supplementary file {}: {}", file_path.display(), e);
+    for (batch_idx, batch) in files_to_process.chunks(batch_size).enumerate() {
+        let batch_start = std::time::Instant::now();
+        
+        // Process batch in parallel
+        let batch_results: Vec<Result<std::collections::HashMap<String, codex_core::code_analysis::context_extractor::CodeSymbol>, String>> = batch
+            .par_iter()
+            .map(|file_path| {
+                use codex_core::code_analysis::context_extractor::create_context_extractor;
+                
+                // Create isolated context extractor for this file
+                let mut extractor = create_context_extractor();
+                
+                // Extract symbols (definitions only)
+                match extractor.extract_symbols_from_file_incremental(&file_path.to_string_lossy()) {
+                    Ok(()) => {
+                        // Return symbols (no references needed for supplementary projects)
+                        Ok(extractor.get_symbols().clone())
+                    }
+                    Err(e) => Err(e)
+                }
+            })
+            .collect();
+        
+        // Merge results from this batch
+        for result in batch_results {
+            match result {
+                Ok(file_symbols) => {
+                    processed_count += 1;
+                    // Merge symbols into main context extractor
+                    for (fqn, symbol) in file_symbols {
+                        context_extractor.add_symbol(fqn, symbol);
+                    }
+                }
+                Err(e) => {
+                    failed_count += 1;
+                    if failed_count <= 5 { // Log first few errors
+                        tracing::debug!("Failed to parse supplementary file: {}", e);
+                    }
                 }
             }
         }
+        
+        let batch_time = batch_start.elapsed();
+        tracing::debug!("Supplementary batch {}/{} processed in {:.2}s ({:.1} files/sec)", 
+                      batch_idx + 1, total_batches, batch_time.as_secs_f64(), 
+                      batch.len() as f64 / batch_time.as_secs_f64());
     }
     
     info!("Supplementary project '{}': parsed {}/{} files successfully (definitions only)", 
@@ -1385,6 +1545,60 @@ struct CrossProjectEdge {
     supp_file: String,
     supp_symbol: String,
     edge_type: String,
+}
+
+/// Create cross-project edges using efficient FQN-based matching (much faster than name matching)
+fn create_cross_project_edges_fqn_based(
+    unresolved_refs: &[SimpleReference],
+    supp_symbols: &std::collections::HashMap<String, codex_core::code_analysis::context_extractor::CodeSymbol>,
+    log_file: &Path
+) -> Result<Vec<CrossProjectEdge>> {
+    if unresolved_refs.is_empty() || supp_symbols.is_empty() {
+        return Ok(Vec::new());
+    }
+    
+    info!("FQN-based cross-project matching: {} unresolved refs vs {} targeted symbols", 
+          unresolved_refs.len(), supp_symbols.len());
+    
+    let mut cross_edges = Vec::new();
+    let mut fqn_matches = 0;
+    let mut no_fqn_skipped = 0;
+    
+    for reference in unresolved_refs {
+        // Only process references that have FQNs (much more precise)
+        if !reference.symbol_fqn.is_empty() {
+            if let Some(symbol) = supp_symbols.get(&reference.symbol_fqn) {
+                cross_edges.push(CrossProjectEdge {
+                    main_file: reference.reference_file.clone(),
+                    main_symbol: reference.symbol_name.clone(),
+                    main_line: reference.reference_line,
+                    supp_file: symbol.file_path.clone(),
+                    supp_symbol: symbol.name.clone(),
+                    edge_type: format!("{:?}", reference.reference_type),
+                });
+                fqn_matches += 1;
+                
+                // Log to debug file
+                let _ = log_actual_cross_project_edge(
+                    log_file,
+                    "main",
+                    &reference.reference_file,
+                    &reference.symbol_name,
+                    &symbol.project_name(),
+                    &symbol.file_path,
+                    &symbol.name,
+                    "PRECISE_FQN_MATCH"
+                );
+            }
+        } else {
+            no_fqn_skipped += 1;
+        }
+    }
+    
+    info!("FQN-based matching results: {} precise FQN matches, {} skipped (no FQN), {} total edges", 
+          fqn_matches, no_fqn_skipped, cross_edges.len());
+    
+    Ok(cross_edges)
 }
 
 /// Create cross-project edges efficiently using FQN-based matching with strict filtering
