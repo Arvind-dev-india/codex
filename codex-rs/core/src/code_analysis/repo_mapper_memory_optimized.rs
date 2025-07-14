@@ -93,8 +93,8 @@ impl RepoMapper {
         tracing::info!("Memory-optimized repository mapping completed: {} files processed, {} failed", 
                       files_processed, files_failed);
         
-        // NOTE: Graph building is now handled separately via build_graph_from_storage()
-        // This avoids redundant work and ensures proper symbol-reference integration
+        // NOTE: Graph building is handled by graph_manager.rs after this function returns
+        // This avoids duplicate graph building and ensures proper symbol-reference integration
         
         Ok(())
     }

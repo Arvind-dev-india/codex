@@ -560,7 +560,7 @@ async fn find_actual_cross_project_references(
                 let supp_symbol = matching_symbols[0];
                 
                 // Additional filtering to ensure it's a meaningful cross-project reference
-                if is_meaningful_cross_project_reference(&reference.symbol_name, &supp_symbol.symbol_type) {
+                if is_high_confidence_symbol(&reference.symbol_name, &format!("{:?}", supp_symbol.symbol_type)) {
                     cross_project_edges += 1;
                     
                     log_actual_cross_project_edge(
@@ -582,20 +582,132 @@ async fn find_actual_cross_project_references(
     Ok(cross_project_edges)
 }
 
-/// Check if a reference represents a meaningful cross-project dependency
-fn is_meaningful_cross_project_reference(symbol_name: &str, symbol_type: &str) -> bool {
-    // Only consider references to classes, interfaces, services, etc. as meaningful
-    // Skip variables, constants, and other low-level symbols
+/// Check if a symbol should be indexed for high-confidence name matching
+fn is_high_confidence_symbol(symbol_name: &str, symbol_type: &str) -> bool {
+    // Only index symbols that are likely to be meaningful cross-project references
     match symbol_type {
-        "Class" | "Interface" | "Struct" | "Enum" | "Module" => true,
+        // Always include custom types (high confidence)
+        "Class" | "Interface" | "Struct" | "Enum" | "Module" => {
+            // Exclude very common/generic names
+            !is_generic_name(symbol_name)
+        },
+        // Include only specific functions/methods (medium confidence)
         "Function" | "Method" => {
-            // Only include functions/methods that look like APIs (not internal helpers)
+            // Must be public API-like and not generic
             !symbol_name.starts_with("_") && 
+            !is_generic_name(symbol_name) &&
             !symbol_name.to_lowercase().contains("helper") &&
-            !symbol_name.to_lowercase().contains("internal")
+            !symbol_name.to_lowercase().contains("internal") &&
+            symbol_name.len() > 3 && // Exclude very short names
+            !is_common_method_name(symbol_name)
         },
         _ => false,
     }
+}
+
+/// Check if a name is too generic for cross-project matching
+fn is_generic_name(name: &str) -> bool {
+    let generic_names = [
+        // Common collection methods
+        "Add", "Remove", "Contains", "ContainsKey", "ContainsValue", "Clear", "Count",
+        "Get", "Set", "Put", "Delete", "Insert", "Update", "Find", "Search",
+        "First", "Last", "Next", "Previous", "Current", "Reset", "Move",
+        "Copy", "CopyTo", "Clone", "Equals", "Compare", "CompareTo",
+        // Common object methods
+        "ToString", "GetHashCode", "GetType", "Dispose", "Finalize",
+        "MemberwiseClone", "ReferenceEquals", "GetEnumerator",
+        // Common property accessors
+        "GetValue", "SetValue", "HasValue", "IsEmpty", "IsNull", "IsValid",
+        // Common async/task methods
+        "Wait", "Start", "Stop", "Pause", "Resume", "Cancel", "Complete",
+        "Execute", "Run", "Process", "Handle", "Invoke", "Call",
+        // Common validation/conversion
+        "Validate", "Parse", "TryParse", "Convert", "Transform", "Map",
+        "Serialize", "Deserialize", "Encode", "Decode", "Format",
+    ];
+    
+    generic_names.contains(&name)
+}
+
+/// Check if a method name is too common for cross-project matching
+fn is_common_method_name(name: &str) -> bool {
+    let common_methods = [
+        "Add", "Remove", "Contains", "Get", "Set", "Put", "Delete", "Insert",
+        "Update", "Find", "Search", "Clear", "Reset", "Copy", "Move", "Save",
+        "Load", "Read", "Write", "Open", "Close", "Connect", "Disconnect",
+        "Send", "Receive", "Push", "Pop", "Peek", "Enqueue", "Dequeue",
+        "Lock", "Unlock", "Begin", "End", "Commit", "Rollback", "Flush",
+    ];
+    
+    common_methods.contains(&name)
+}
+
+/// Check if a reference is contextually related to a supplementary symbol
+fn is_contextually_related_cross_project_reference(
+    reference: &SimpleReference, 
+    symbol: &codex_core::code_analysis::context_extractor::CodeSymbol
+) -> bool {
+    // Additional context-based filtering for name matches
+    
+    // 1. Check if the symbol types are compatible
+    let ref_context = extract_reference_context(&reference.reference_file);
+    let symbol_context = extract_symbol_context(&symbol.file_path);
+    
+    // 2. Look for namespace/package similarity
+    if contexts_are_related(&ref_context, &symbol_context) {
+        return true;
+    }
+    
+    // 3. Check if it's a meaningful symbol type
+    match format!("{:?}", symbol.symbol_type).as_str() {
+        "Class" | "Interface" | "Struct" | "Enum" => {
+            // Custom types are more likely to be meaningful
+            symbol.name.len() > 3 && !is_generic_name(&symbol.name)
+        },
+        "Function" | "Method" => {
+            // Only very specific function names
+            symbol.name.len() > 5 && 
+            !is_common_method_name(&symbol.name) &&
+            !symbol.name.to_lowercase().contains("get") &&
+            !symbol.name.to_lowercase().contains("set")
+        },
+        _ => false,
+    }
+}
+
+/// Extract context information from a file path
+fn extract_reference_context(file_path: &str) -> String {
+    // Extract meaningful path components (namespace-like)
+    let path_parts: Vec<&str> = file_path.split('/').collect();
+    if path_parts.len() > 2 {
+        // Take the last 2-3 directory components
+        path_parts[path_parts.len().saturating_sub(3)..path_parts.len()-1].join("/")
+    } else {
+        file_path.to_string()
+    }
+}
+
+/// Extract context information from a symbol file path
+fn extract_symbol_context(file_path: &str) -> String {
+    extract_reference_context(file_path)
+}
+
+/// Check if two contexts are related (similar namespaces/packages)
+fn contexts_are_related(ref_context: &str, symbol_context: &str) -> bool {
+    // Look for common path components or similar naming patterns
+    let ref_parts: Vec<&str> = ref_context.split('/').collect();
+    let symbol_parts: Vec<&str> = symbol_context.split('/').collect();
+    
+    // Check for any common path components
+    for ref_part in &ref_parts {
+        for symbol_part in &symbol_parts {
+            if ref_part.eq_ignore_ascii_case(symbol_part) && ref_part.len() > 2 {
+                return true;
+            }
+        }
+    }
+    
+    false
 }
 
 /// Get unresolved references from main project (only these need cross-project resolution)
@@ -724,6 +836,7 @@ async fn parse_supplementary_definitions_only(
                 processed_count += 1;
                 // NOTE: Only clear references for supplementary projects (not main project)
                 // Main project needs references for edge creation
+                // This function is specifically for supplementary projects, so always clear references
                 context_extractor.clear_references();
             }
             Err(e) => {
@@ -1274,7 +1387,7 @@ struct CrossProjectEdge {
     edge_type: String,
 }
 
-/// Create cross-project edges efficiently using O(N) lookup
+/// Create cross-project edges efficiently using FQN-based matching with strict filtering
 fn create_cross_project_edges_simple(
     unresolved_refs: &[SimpleReference],
     supp_symbols: &std::collections::HashMap<String, codex_core::code_analysis::context_extractor::CodeSymbol>,
@@ -1286,60 +1399,107 @@ fn create_cross_project_edges_simple(
         return Ok(Vec::new());
     }
     
-    // Build O(1) lookup index for supplementary symbols
+    // Build FQN-based lookup index for supplementary symbols (primary)
+    let mut fqn_index: HashMap<&str, &codex_core::code_analysis::context_extractor::CodeSymbol> = HashMap::new();
+    // Build name-based lookup index only for high-confidence symbols (secondary)
     let mut name_index: HashMap<&str, Vec<&codex_core::code_analysis::context_extractor::CodeSymbol>> = HashMap::new();
     
-    for (_fqn, symbol) in supp_symbols {
-        name_index.entry(symbol.name.as_str()).or_default().push(symbol);
+    for (fqn, symbol) in supp_symbols {
+        // Always index by FQN for precise matching
+        fqn_index.insert(fqn.as_str(), symbol);
+        
+        // Only index by name for high-confidence symbols (classes, interfaces, custom types)
+        if is_high_confidence_symbol(&symbol.name, &format!("{:?}", symbol.symbol_type)) {
+            name_index.entry(symbol.name.as_str()).or_default().push(symbol);
+        }
     }
     
-    info!("Built lookup index: {} name entries", name_index.len());
+    info!("Built lookup indices: {} FQN entries, {} high-confidence name entries", 
+          fqn_index.len(), name_index.len());
     
-    // O(N) matching - only process unresolved references
+    // O(N) matching - prioritize FQN matches, then high-confidence name matches
     let mut cross_edges = Vec::new();
-    let mut matches = 0;
+    let mut fqn_matches = 0;
+    let mut name_matches = 0;
     let mut ambiguous_skipped = 0;
+    let mut low_confidence_skipped = 0;
     
     for reference in unresolved_refs {
-        // Try name match (single match only to avoid ambiguity)
-        if let Some(candidates) = name_index.get(reference.symbol_name.as_str()) {
-            if candidates.len() == 1 {
-                let symbol = candidates[0];
+        let mut matched = false;
+        
+        // 1. Try FQN match first (most precise)
+        if !reference.symbol_fqn.is_empty() {
+            if let Some(symbol) = fqn_index.get(reference.symbol_fqn.as_str()) {
+                cross_edges.push(CrossProjectEdge {
+                    main_file: reference.reference_file.clone(),
+                    main_symbol: reference.symbol_name.clone(),
+                    main_line: reference.reference_line,
+                    supp_file: symbol.file_path.clone(),
+                    supp_symbol: symbol.name.clone(),
+                    edge_type: format!("{:?}", reference.reference_type),
+                });
+                fqn_matches += 1;
+                matched = true;
                 
-                // Additional filtering to ensure meaningful cross-project reference
-                if is_meaningful_cross_project_reference(&reference.symbol_name, &format!("{:?}", symbol.symbol_type)) {
-                    cross_edges.push(CrossProjectEdge {
-                        main_file: reference.reference_file.clone(),
-                        main_symbol: reference.symbol_name.clone(),
-                        main_line: reference.reference_line,
-                        supp_file: symbol.file_path.clone(),
-                        supp_symbol: symbol.name.clone(),
-                        edge_type: format!("{:?}", reference.reference_type),
-                    });
-                    matches += 1;
+                // Log to debug file
+                let _ = log_actual_cross_project_edge(
+                    log_file,
+                    "main",
+                    &reference.reference_file,
+                    &reference.symbol_name,
+                    &symbol.project_name(),
+                    &symbol.file_path,
+                    &symbol.name,
+                    "FQN_MATCH"
+                );
+            }
+        }
+        
+        // 2. If no FQN match, try high-confidence name match (single match only)
+        if !matched {
+            if let Some(candidates) = name_index.get(reference.symbol_name.as_str()) {
+                if candidates.len() == 1 {
+                    let symbol = candidates[0];
                     
-                    // Log to debug file
-                    let _ = log_actual_cross_project_edge(
-                        log_file,
-                        "main",
-                        &reference.reference_file,
-                        &reference.symbol_name,
-                        &symbol.project_name(),
-                        &symbol.file_path,
-                        &symbol.name,
-                        "NAME_MATCH"
-                    );
+                    // Additional context-based filtering for name matches
+                    if is_contextually_related_cross_project_reference(reference, symbol) {
+                        cross_edges.push(CrossProjectEdge {
+                            main_file: reference.reference_file.clone(),
+                            main_symbol: reference.symbol_name.clone(),
+                            main_line: reference.reference_line,
+                            supp_file: symbol.file_path.clone(),
+                            supp_symbol: symbol.name.clone(),
+                            edge_type: format!("{:?}", reference.reference_type),
+                        });
+                        name_matches += 1;
+                        
+                        // Log to debug file
+                        let _ = log_actual_cross_project_edge(
+                            log_file,
+                            "main",
+                            &reference.reference_file,
+                            &reference.symbol_name,
+                            &symbol.project_name(),
+                            &symbol.file_path,
+                            &symbol.name,
+                            "HIGH_CONFIDENCE_NAME_MATCH"
+                        );
+                    } else {
+                        low_confidence_skipped += 1;
+                    }
+                } else if candidates.len() > 1 {
+                    ambiguous_skipped += 1;
+                    tracing::debug!("Skipped ambiguous reference '{}' with {} candidates", 
+                                  reference.symbol_name, candidates.len());
+                } else {
+                    low_confidence_skipped += 1;
                 }
-            } else if candidates.len() > 1 {
-                ambiguous_skipped += 1;
-                tracing::debug!("Skipped ambiguous reference '{}' with {} candidates", 
-                              reference.symbol_name, candidates.len());
             }
         }
     }
     
-    info!("Cross-project matching results: {} matches, {} ambiguous skipped, {} total edges", 
-          matches, ambiguous_skipped, cross_edges.len());
+    info!("Cross-project matching results: {} FQN matches, {} name matches, {} ambiguous skipped, {} low-confidence skipped, {} total edges", 
+          fqn_matches, name_matches, ambiguous_skipped, low_confidence_skipped, cross_edges.len());
     
     Ok(cross_edges)
 }
