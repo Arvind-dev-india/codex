@@ -47,6 +47,7 @@ impl Default for Config {
             azure_devops: None,
             kusto: None,
             recovery_services: None,
+            code_analysis: crate::config_types::CodeAnalysisConfig::default(),
             model_context_window: None,
             model_max_output_tokens: None,
         }

@@ -175,8 +175,16 @@ impl CodeGraphManager {
 
     /// Perform a full rebuild of the code graph
     fn full_rebuild(&mut self, root_path: &Path) -> Result<(), String> {
+        // Force complete cleanup of any existing state to prevent contamination
+        self.force_complete_cleanup()?;
+        
         // Initialize memory-optimized storage first
         self.initialize_storage()?;
+        
+        // Initialize storage for this specific project (clears old data)
+        if let Some(ref storage) = self.symbol_storage {
+            storage.initialize_for_project(root_path)?;
+        }
         
         // Create new repository mapper
         let mut repo_mapper = RepoMapper::new(root_path);
@@ -382,6 +390,11 @@ impl CodeGraphManager {
         self.repo_mapper.as_ref()
     }
 
+    /// Get the symbol storage (if initialized)
+    pub fn get_symbol_storage(&self) -> Option<&ThreadSafeStorage> {
+        self.symbol_storage.as_ref()
+    }
+
     /// Get all symbols from the current graph (now uses memory-optimized storage)
     pub fn get_symbols(&self) -> Option<HashMap<String, CodeSymbol>> {
         // Note: This method now returns owned HashMap instead of reference
@@ -439,6 +452,62 @@ impl CodeGraphManager {
     /// Update the status of the graph initialization
     pub fn set_status(&mut self, status: GraphStatus) {
         self.status = status;
+    }
+    
+    /// Force complete cleanup of all state to prevent contamination between runs
+    pub fn force_complete_cleanup(&mut self) -> Result<(), String> {
+        tracing::info!("Performing complete cleanup to prevent cross-run contamination");
+        
+        // Clear all storage
+        if let Some(ref storage) = self.symbol_storage {
+            storage.clear_all_data()?;
+        }
+        
+        // Clean up .codex directory files that might cause contamination
+        if let Some(ref root_path) = self.root_path {
+            let codex_dir = root_path.join(".codex");
+            if codex_dir.exists() {
+                // Clean up supplementary projects debug log
+                let debug_log_path = codex_dir.join("supplementary_projects_debug.log");
+                if debug_log_path.exists() {
+                    if let Err(e) = std::fs::remove_file(&debug_log_path) {
+                        tracing::warn!("Failed to remove old supplementary projects debug log: {}", e);
+                    } else {
+                        tracing::info!("Removed old supplementary projects debug log: {}", debug_log_path.display());
+                    }
+                }
+                
+                // Clean up any other potential contamination files
+                // Note: We don't remove the entire .codex directory as it might contain user data
+                let contamination_files = [
+                    "cross_project_edges.log",
+                    "symbol_cache.json", 
+                    "project_state.json"
+                ];
+                
+                for file_name in &contamination_files {
+                    let file_path = codex_dir.join(file_name);
+                    if file_path.exists() {
+                        if let Err(e) = std::fs::remove_file(&file_path) {
+                            tracing::warn!("Failed to remove contamination file {}: {}", file_path.display(), e);
+                        } else {
+                            tracing::info!("Removed contamination file: {}", file_path.display());
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Reset all state
+        self.symbol_storage = None;
+        self.repo_mapper = None;
+        self.root_path = None;
+        self.file_metadata.clear();
+        self.initialized = false;
+        self.status = GraphStatus::NotStarted;
+        
+        tracing::info!("Complete cleanup finished - all state cleared");
+        Ok(())
     }
 }
 
@@ -672,4 +741,12 @@ pub fn get_symbol_subgraph(symbol_name: &str, max_depth: usize) -> Option<super:
     } else {
         None
     }
+}
+
+/// Force complete cleanup of all state to prevent contamination between runs
+pub fn force_complete_cleanup() -> Result<(), String> {
+    let manager = get_graph_manager();
+    let mut manager = manager.write()
+        .map_err(|e| format!("Failed to acquire write lock: {}", e))?;
+    manager.force_complete_cleanup()
 }

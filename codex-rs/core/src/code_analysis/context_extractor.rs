@@ -95,6 +95,21 @@ pub struct CodeSymbol {
     pub end_col: usize,
     pub parent: Option<String>,
     pub fqn: String,
+    
+    /// Optional: Origin project name (None = main project)
+    pub origin_project: Option<String>,
+}
+
+impl CodeSymbol {
+    /// Check if this symbol is from a supplementary project
+    pub fn is_supplementary(&self) -> bool {
+        self.origin_project.is_some()
+    }
+    
+    /// Get the project name (main or supplementary project name)
+    pub fn project_name(&self) -> &str {
+        self.origin_project.as_deref().unwrap_or("main")
+    }
 }
 
 /// Reference to a code symbol
@@ -417,6 +432,7 @@ impl ContextExtractor {
             end_col: def_capture.end_point.1,
             parent,
             fqn: fqn.clone(),
+            origin_project: None, // Default to main project
         };
         
         // Add the symbol to the map using FQN as key

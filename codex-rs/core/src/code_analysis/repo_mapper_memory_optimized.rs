@@ -38,11 +38,12 @@ impl RepoMapper {
             tracing::info!("Processing batch {}/{} ({} files)", 
                           batch_idx + 1, total_batches, batch.len());
             
-            // Process batch in parallel
-            let batch_results: Vec<Result<Vec<CodeSymbol>, String>> = batch
-                .par_iter()
-                .map(|file_path| self.process_file_for_symbols(&file_path.to_string_lossy()))
-                .collect();
+            // Process batch sequentially to allow mutable access for references
+            let mut batch_results = Vec::new();
+            for file_path in batch {
+                let result = self.process_file_for_symbols(&file_path.to_string_lossy());
+                batch_results.push(result);
+            }
             
             // Store results in memory-optimized storage
             for (file_idx, result) in batch_results.into_iter().enumerate() {
@@ -92,7 +93,7 @@ impl RepoMapper {
     }
     
     /// Process a single file and extract symbols
-    fn process_file_for_symbols(&self, file_path: &str) -> Result<Vec<CodeSymbol>, String> {
+    fn process_file_for_symbols(&mut self, file_path: &str) -> Result<Vec<CodeSymbol>, String> {
         // Check if file is supported
         let path = std::path::Path::new(file_path);
         let extension = path.extension()
@@ -117,6 +118,11 @@ impl RepoMapper {
         
         // Extract symbols
         extractor.extract_symbols_from_file_incremental(file_path)?;
+        
+        // Store references in the main context extractor for cross-project analysis
+        for reference in extractor.get_references() {
+            self.add_reference(reference.clone());
+        }
         
         // Return symbols as vector
         let symbols: Vec<CodeSymbol> = extractor.get_symbols().values().cloned().collect();

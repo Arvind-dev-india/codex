@@ -26,6 +26,39 @@ pub use config_types_kusto::{KustoConfig, KustoDatabaseConfig};
 mod config_types_recovery_services;
 pub use config_types_recovery_services::{RecoveryServicesConfig, RecoveryServicesVaultConfig};
 
+/// Configuration for supplementary projects
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct SupplementaryProjectConfig {
+    /// Unique name for the project
+    pub name: String,
+    
+    /// Path to project root (absolute or relative to main project)
+    pub path: String,
+    
+    /// Whether this project is enabled
+    pub enabled: bool,
+    
+    /// Priority for symbol resolution (1-100, higher = preferred)
+    pub priority: u32,
+    
+    /// Optional: limit to specific languages (defaults to all supported)
+    /// Values: "rust", "javascript", "typescript", "python", "go", "cpp", "csharp", "java"
+    pub languages: Option<Vec<String>>,
+    
+    /// Optional description
+    pub description: Option<String>,
+}
+
+/// Code analysis configuration
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Default)]
+pub struct CodeAnalysisConfig {
+    /// Supplementary projects for definition fallback
+    pub supplementary_projects: Option<Vec<SupplementaryProjectConfig>>,
+    
+    /// Enable supplementary project fallback (default: true)
+    pub enable_supplementary_fallback: bool,
+}
+
 #[derive(Deserialize, Debug, Clone, PartialEq)]
 pub struct McpServerConfig {
     pub command: String,

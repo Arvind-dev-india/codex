@@ -64,9 +64,35 @@ impl StorageConfig {
         Self {
             cache_size: 20000,  // Larger cache for better hit rate
             max_memory_mb: 4096, // 4GB limit (much less than your 24GB)
-            storage_dir: std::env::temp_dir().join("codex_large_project_cache"),
+            storage_dir: Self::create_project_specific_cache_dir(),
             use_compression: true,
             cleanup_threshold: 0.75,
+        }
+    }
+    
+    /// Create project-specific cache directory to avoid cross-project contamination
+    fn create_project_specific_cache_dir() -> PathBuf {
+        let base_dir = std::env::temp_dir().join("codex_cache");
+        
+        // Use current working directory to create unique cache per project
+        if let Ok(current_dir) = std::env::current_dir() {
+            // Create hash of project path for unique directory name
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            
+            let mut hasher = DefaultHasher::new();
+            current_dir.hash(&mut hasher);
+            let project_hash = hasher.finish();
+            
+            let project_name = current_dir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown");
+            
+            base_dir.join(format!("{}_{:x}", project_name, project_hash))
+        } else {
+            // Fallback to generic directory
+            base_dir.join("default_project")
         }
     }
     
@@ -94,6 +120,7 @@ pub struct CachedSymbol {
     pub end_col: usize,
     pub parent: Option<String>,
     pub fqn: String,
+    pub origin_project: Option<String>,
 }
 
 impl From<&CodeSymbol> for CachedSymbol {
@@ -108,6 +135,7 @@ impl From<&CodeSymbol> for CachedSymbol {
             end_col: symbol.end_col,
             parent: symbol.parent.clone(),
             fqn: symbol.fqn.clone(),
+            origin_project: symbol.origin_project.clone(),
         }
     }
 }
@@ -142,6 +170,7 @@ impl Into<CodeSymbol> for CachedSymbol {
             end_col: self.end_col,
             parent: self.parent,
             fqn: self.fqn,
+            origin_project: self.origin_project,
         }
     }
 }
@@ -419,6 +448,36 @@ impl MemoryOptimizedStorage {
         );
     }
     
+    /// Get all symbols (warning: this loads all symbols into memory)
+    pub fn get_all_symbols(&mut self) -> Result<HashMap<String, CodeSymbol>, String> {
+        let mut all_symbols = HashMap::new();
+        
+        // First, get all symbols from hot cache
+        for (fqn, cached_symbol) in self.hot_cache.iter() {
+            all_symbols.insert(fqn.clone(), cached_symbol.clone().into());
+        }
+        
+        // Then, load all symbols from cold storage that aren't already in hot cache
+        for (fqn, file_path) in &self.cold_storage_index.clone() {
+            if !all_symbols.contains_key(fqn) {
+                match self.load_from_cold_storage(file_path) {
+                    Ok(cached_symbol) => {
+                        all_symbols.insert(fqn.clone(), cached_symbol.into());
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to load symbol {} from disk: {}", fqn, e);
+                    }
+                }
+            }
+        }
+        
+        tracing::info!("Loaded {} symbols from storage (hot: {}, cold: {})", 
+                      all_symbols.len(), self.hot_cache.len(), 
+                      self.cold_storage_index.len() - self.hot_cache.len());
+        
+        Ok(all_symbols)
+    }
+
     /// Force cleanup of old cold storage files
     pub fn cleanup_old_files(&mut self, max_age_hours: u64) -> Result<usize, String> {
         use std::time::{SystemTime, Duration};
@@ -445,6 +504,68 @@ impl MemoryOptimizedStorage {
         
         tracing::info!("Cleaned up {} old cache files", removed_count);
         Ok(removed_count)
+    }
+    
+    /// Clear all cached data (both memory and disk) - use when switching projects
+    pub fn clear_all_data(&mut self) -> Result<(), String> {
+        tracing::info!("Clearing all cached data for project isolation");
+        
+        // Clear memory cache
+        self.hot_cache.clear();
+        
+        // Remove all disk files
+        let mut removed_files = 0;
+        for (_, file_path) in &self.cold_storage_index {
+            if std::fs::remove_file(file_path).is_ok() {
+                removed_files += 1;
+            }
+        }
+        
+        // Clear indices
+        self.cold_storage_index.clear();
+        self.file_to_symbols.clear();
+        
+        // Reset statistics
+        self.stats = StorageStats::default();
+        
+        tracing::info!("Cleared all data: {} disk files removed, memory cache cleared", removed_files);
+        Ok(())
+    }
+    
+    /// Initialize for a new project (clears old data to prevent contamination)
+    pub fn initialize_for_project(&mut self, project_path: &Path) -> Result<(), String> {
+        tracing::info!("Initializing storage for new project: {}", project_path.display());
+        
+        // Always clear existing data to prevent cross-project contamination
+        // This is especially important when supplementary projects change between runs
+        self.clear_all_data()?;
+        
+        // Update storage directory to be project-specific
+        let project_hash = {
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut hasher = DefaultHasher::new();
+            project_path.hash(&mut hasher);
+            hasher.finish()
+        };
+        
+        let project_name = project_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+        
+        let new_storage_dir = std::env::temp_dir()
+            .join("codex_cache")
+            .join(format!("{}_{:x}", project_name, project_hash));
+        
+        // Create new project-specific directory
+        std::fs::create_dir_all(&new_storage_dir)
+            .map_err(|e| format!("Failed to create project storage directory: {}", e))?;
+        
+        self.storage_dir = new_storage_dir;
+        
+        tracing::info!("Project storage initialized: {:?}", self.storage_dir);
+        Ok(())
     }
 }
 
@@ -503,5 +624,26 @@ impl ThreadSafeStorage {
         let mut storage = self.storage.lock()
             .map_err(|e| format!("Failed to acquire lock: {}", e))?;
         storage.cleanup_memory()
+    }
+    
+    /// Clear all data for project isolation
+    pub fn clear_all_data(&self) -> Result<(), String> {
+        let mut storage = self.storage.lock()
+            .map_err(|e| format!("Failed to acquire lock: {}", e))?;
+        storage.clear_all_data()
+    }
+    
+    /// Initialize for a new project
+    pub fn initialize_for_project(&self, project_path: &Path) -> Result<(), String> {
+        let mut storage = self.storage.lock()
+            .map_err(|e| format!("Failed to acquire lock: {}", e))?;
+        storage.initialize_for_project(project_path)
+    }
+    
+    /// Get all symbols (warning: this loads all symbols into memory)
+    pub fn get_all_symbols(&self) -> Result<HashMap<String, CodeSymbol>, String> {
+        let mut storage = self.storage.lock()
+            .map_err(|e| format!("Failed to acquire lock: {}", e))?;
+        storage.get_all_symbols()
     }
 }

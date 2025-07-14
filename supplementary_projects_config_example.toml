@@ -1,0 +1,61 @@
+# Example configuration for supplementary projects in codex
+# Save this as ~/.codex/config.toml or use with --config flag
+
+# Main codex configuration
+model = "claude-3-5-sonnet-20241022"
+approval_policy = "ask"
+
+# Code analysis configuration with supplementary projects
+[code_analysis]
+# Enable cross-project analysis features
+enable_cross_project_analysis = true
+
+# Cache supplementary projects for better performance
+cache_supplementary_projects = true
+
+# Cache directory (optional, defaults to ~/.codex/cache/supplementary)
+cache_directory = "~/.codex/cache/supplementary"
+
+# Maximum cache age in hours (optional, defaults to 24)
+cache_max_age_hours = 24
+
+# Supplementary project definitions
+[[code_analysis.supplementary_projects]]
+name = "shared-contracts"
+path = "../shared-contracts"
+description = "Shared contract definitions and interfaces"
+enabled = true
+priority = 100  # Higher priority = preferred for symbol resolution
+# Optional: limit to specific languages (system already filters by supported types)
+languages = ["csharp", "typescript"]  # Only analyze C# and TypeScript files
+
+[[code_analysis.supplementary_projects]]
+name = "common-utilities"
+path = "/absolute/path/to/common-utilities"
+description = "Common utility libraries and helpers"
+enabled = true
+priority = 50
+# No language filter = analyze all supported types (rust, python, go, java, etc.)
+
+[[code_analysis.supplementary_projects]]
+name = "api-definitions"
+path = "~/projects/api-definitions"
+description = "REST API definitions and schemas"
+enabled = true
+priority = 75
+languages = ["typescript", "csharp"]  # Only analyze supported languages
+# Note: JSON/YAML files are not currently supported by the parser system
+
+# Optional: Performance tuning for supplementary projects
+[code_analysis.performance]
+# Maximum number of files to process per supplementary project
+max_files_per_project = 10000
+
+# Maximum memory usage for supplementary project cache (MB)
+max_cache_memory_mb = 512
+
+# Number of parallel threads for processing supplementary projects
+parallel_threads = 4
+
+# Timeout for processing a single supplementary project (seconds)
+project_timeout_seconds = 300

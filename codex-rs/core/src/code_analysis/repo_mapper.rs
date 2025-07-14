@@ -764,6 +764,24 @@ impl RepoMapper {
         self.context_extractor.get_symbols()
     }
     
+    /// Get all symbols with their FQNs from memory-optimized storage if available
+    pub fn get_all_symbols_from_storage(&self, storage: Option<&super::memory_optimized_storage::ThreadSafeStorage>) -> std::collections::HashMap<String, CodeSymbol> {
+        if let Some(storage) = storage {
+            // Get all symbols from memory-optimized storage
+            match storage.get_all_symbols() {
+                Ok(symbols) => symbols,
+                Err(e) => {
+                    tracing::warn!("Failed to get symbols from storage: {}", e);
+                    // Fallback to context extractor
+                    self.context_extractor.get_symbols().clone()
+                }
+            }
+        } else {
+            // No storage provided, use context extractor
+            self.context_extractor.get_symbols().clone()
+        }
+    }
+    
     /// Get symbols for a specific file - O(1) lookup using cached index
     pub fn get_symbols_for_file(&self, file_path: &str) -> Vec<&CodeSymbol> {
         self.context_extractor.get_symbols_for_file_with_root(file_path, Some(&self.root_path))
@@ -772,6 +790,16 @@ impl RepoMapper {
     /// Get mapping from symbol names to FQNs
     pub fn get_name_to_fqns(&self) -> &std::collections::HashMap<String, Vec<String>> {
         self.context_extractor.get_name_to_fqns()
+    }
+    
+    /// Get all symbol references
+    pub fn get_all_references(&self) -> &[SymbolReference] {
+        self.context_extractor.get_references()
+    }
+    
+    /// Add a reference to the context extractor (for memory-optimized processing)
+    pub fn add_reference(&mut self, reference: SymbolReference) {
+        self.context_extractor.add_reference(reference);
     }
     
     /// Print parsing statistics
