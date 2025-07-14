@@ -184,10 +184,9 @@ impl RepoMapper {
                 };
 
                 if file_type.is_dir() {
-                    // Skip hidden directories and common directories to ignore
+                    // Skip hidden directories and common directories to ignore (match feat/azure branch)
                     let dir_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                    if !dir_name.starts_with('.') && 
-                       !["node_modules", "target", "dist", "build", "bin", "obj", ".git", ".vs", "packages", "Debug", "Release", ".vscode"].contains(&dir_name) {
+                    if !dir_name.starts_with('.') && !["node_modules", "target", "dist"].contains(&dir_name) {
                         dirs_to_process.push(path);
                     }
                 } else if file_type.is_file() {

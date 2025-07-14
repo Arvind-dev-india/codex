@@ -1037,23 +1037,47 @@ fn log_actual_cross_project_edge(
         .append(true)
         .open(log_file)?;
     
-    // Create a separate section for cross-project edges
+    // Create a comprehensive section for cross-project edges with full details
     writeln!(file, 
         "\n=== CROSS-PROJECT EDGE ===\n\
         Time: {}\n\
         Type: {}\n\
-        From: {} ({})\n\
-        To: {} ({})\n\
-        Main Project: {}\n\
-        Supplementary Project: {}\n\
-        Status: VALID (passed filtering)\n\
+        \n\
+        FROM (Main Project):\n\
+        - Symbol: {}\n\
+        - File: {} ({})\n\
+        - Project: {}\n\
+        \n\
+        TO (Supplementary Project):\n\
+        - Symbol: {}\n\
+        - File: {} ({})\n\
+        - Project: {}\n\
+        \n\
+        RELATIONSHIP:\n\
+        - Edge Type: {}\n\
+        - Direction: {} -> {}\n\
+        - Status: VALID (passed filtering)\n\
+        \n\
+        DEBUG INFO:\n\
+        - Main Project Full Path: {}\n\
+        - Supplementary Full Path: {}\n\
+        - Cross-Project: {} -> {}\n\
         ===========================",
         chrono::Utc::now().format("%H:%M:%S"),
         edge_type,
         primary_symbol,
         primary_file.split('/').last().unwrap_or(primary_file),
+        primary_file,
+        primary_project,
         secondary_symbol,
         secondary_file.split('/').last().unwrap_or(secondary_file),
+        secondary_file,
+        secondary_project,
+        edge_type,
+        primary_symbol,
+        secondary_symbol,
+        primary_file,
+        secondary_file,
         primary_project,
         secondary_project
     )?;
