@@ -567,32 +567,100 @@ pub async fn initialize_graph_async(root_path: &Path) -> Result<(), String> {
     // Create and initialize the repository mapper in a blocking task
     let root_path_clone = root_path.to_path_buf();
     let result = tokio::task::spawn_blocking(move || {
+        let task_start = std::time::Instant::now();
+        tracing::info!("Starting spawn_blocking task for graph initialization");
+        
         // Initialize memory-optimized storage for this task
+        let storage_start = std::time::Instant::now();
         let storage_config = StorageConfig::for_large_projects();
         let storage = ThreadSafeStorage::new(storage_config)?;
         storage.initialize_for_project(&root_path_clone)?;
+        tracing::info!("Storage initialization completed in {:.2}s", storage_start.elapsed().as_secs_f64());
         
         let mut repo_mapper = RepoMapper::new(&root_path_clone);
         
         // Use memory-optimized mapping
+        let mapping_start = std::time::Instant::now();
         repo_mapper.map_repository_with_storage(Some(&storage))?;
+        tracing::info!("Repository mapping completed in {:.2}s", mapping_start.elapsed().as_secs_f64());
         
         // CRITICAL: Build the graph after parsing symbols
         // But we need to build it from the storage, not the empty context extractor
+        let graph_start = std::time::Instant::now();
         repo_mapper.build_graph_from_storage(&storage)?;
+        tracing::info!("Graph building completed in {:.2}s", graph_start.elapsed().as_secs_f64());
+        
+        let task_total = task_start.elapsed();
+        tracing::info!("spawn_blocking task completed in {:.2}s - about to return", task_total.as_secs_f64());
         
         Ok::<(RepoMapper, ThreadSafeStorage), String>((repo_mapper, storage))
     }).await.map_err(|e| format!("Task join error: {}", e))?;
     
+    tracing::info!("spawn_blocking task returned, processing results...");
+    
     match result {
         Ok((repo_mapper, storage)) => {
+            tracing::info!("spawn_blocking result received successfully");
+            
             // Now acquire the write lock and update the manager
+            let lock_start = std::time::Instant::now();
             let manager = get_graph_manager();
             let mut manager = manager.write()
                 .map_err(|e| format!("Failed to acquire write lock: {}", e))?;
+            tracing::info!("Write lock acquired in {:.2}s", lock_start.elapsed().as_secs_f64());
             
-            // Update file metadata
-            manager.update_file_metadata(root_path)?;
+            // Start file metadata update in background for incremental updates
+            let metadata_start = std::time::Instant::now();
+            tracing::info!("Starting background file metadata update for incremental change detection");
+            
+            // Clone data for background task
+            let root_path_bg = root_path.to_path_buf();
+            let manager_clone = Arc::clone(&get_graph_manager());
+            
+            // Start background metadata update (truly non-blocking and deferred)
+            let manager_weak = Arc::downgrade(&get_graph_manager());
+            tokio::spawn(async move {
+                // Defer metadata update to avoid blocking initialization
+                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                
+                let bg_start = std::time::Instant::now();
+                tracing::info!("Background metadata update started (deferred)");
+                
+                // Use weak reference to avoid keeping manager alive
+                if let Some(manager_arc) = manager_weak.upgrade() {
+                    // Run metadata update in background thread with timeout
+                    let result = tokio::time::timeout(
+                        tokio::time::Duration::from_secs(30),
+                        tokio::task::spawn_blocking(move || {
+                            if let Ok(mut manager) = manager_arc.write() {
+                                manager.update_file_metadata(&root_path_bg)
+                            } else {
+                                Err("Failed to acquire write lock for metadata".to_string())
+                            }
+                        })
+                    ).await;
+                    
+                    match result {
+                        Ok(Ok(Ok(()))) => {
+                            let bg_time = bg_start.elapsed();
+                            tracing::info!("Background file metadata update completed in {:.2}s", bg_time.as_secs_f64());
+                        }
+                        Ok(Ok(Err(e))) => {
+                            tracing::warn!("Background metadata update failed: {}", e);
+                        }
+                        Ok(Err(e)) => {
+                            tracing::warn!("Background metadata task failed: {}", e);
+                        }
+                        Err(_) => {
+                            tracing::warn!("Background metadata update timed out after 30s");
+                        }
+                    }
+                } else {
+                    tracing::debug!("Manager dropped, skipping background metadata update");
+                }
+            });
+            
+            tracing::info!("Background metadata update started in {:.2}s (non-blocking)", metadata_start.elapsed().as_secs_f64());
             
             // Get statistics from storage (not from repo_mapper which might be empty)
             let symbols = storage.get_all_symbols()

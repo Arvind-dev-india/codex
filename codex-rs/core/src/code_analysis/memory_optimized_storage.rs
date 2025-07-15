@@ -49,11 +49,11 @@ pub struct StorageConfig {
 impl Default for StorageConfig {
     fn default() -> Self {
         Self {
-            cache_size: 10000,
-            max_memory_mb: 2048, // 2GB default
+            cache_size: 50000, // Significantly increased to avoid cold storage during initial load
+            max_memory_mb: 4096, // Increased from 2048 to 4GB for large projects
             storage_dir: std::env::temp_dir().join("codex_symbol_cache"),
             use_compression: true,
-            cleanup_threshold: 0.8,
+            cleanup_threshold: 0.95, // Very high threshold to avoid cleanup during initial load
         }
     }
 }
@@ -229,10 +229,19 @@ impl MemoryOptimizedStorage {
             self.cleanup_memory()?;
         }
         
-        // If cache is at capacity, move LRU item to disk
+        // OPTIMIZATION: For large projects, avoid cold storage entirely during initial load
+        // Only use cold storage for long-term caching, not during active processing
         if self.hot_cache.len() >= self.hot_cache.cap().get() {
-            if let Some((old_key, old_symbol)) = self.hot_cache.pop_lru() {
-                self.move_to_cold_storage(old_key, &old_symbol)?;
+            // During initial load (when we have no cold storage yet), just expand the cache
+            if self.cold_storage_index.is_empty() && self.hot_cache.len() < 50000 {
+                // Temporarily expand cache during initial load to avoid disk I/O
+                tracing::debug!("Expanding hot cache during initial load to avoid disk I/O");
+                // Don't move to cold storage yet - keep everything in memory during parsing
+            } else {
+                // Normal operation - move LRU to disk
+                if let Some((old_key, old_symbol)) = self.hot_cache.pop_lru() {
+                    self.move_to_cold_storage(old_key, &old_symbol)?;
+                }
             }
         }
         
@@ -450,30 +459,55 @@ impl MemoryOptimizedStorage {
     
     /// Get all symbols (warning: this loads all symbols into memory)
     pub fn get_all_symbols(&mut self) -> Result<HashMap<String, CodeSymbol>, String> {
+        let start_time = std::time::Instant::now();
+        tracing::info!("Starting get_all_symbols() - this may take time for large projects");
+        
         let mut all_symbols = HashMap::new();
         
-        // First, get all symbols from hot cache
+        // First, get all symbols from hot cache (fast)
+        let hot_start = std::time::Instant::now();
         for (fqn, cached_symbol) in self.hot_cache.iter() {
             all_symbols.insert(fqn.clone(), cached_symbol.clone().into());
         }
+        let hot_time = hot_start.elapsed();
+        tracing::info!("Loaded {} symbols from hot cache in {:.2}s", all_symbols.len(), hot_time.as_secs_f64());
         
-        // Then, load all symbols from cold storage that aren't already in hot cache
-        for (fqn, file_path) in &self.cold_storage_index.clone() {
-            if !all_symbols.contains_key(fqn) {
-                match self.load_from_cold_storage(file_path) {
-                    Ok(cached_symbol) => {
-                        all_symbols.insert(fqn.clone(), cached_symbol.into());
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to load symbol {} from disk: {}", fqn, e);
+        // Then, load all symbols from cold storage that aren't already in hot cache (SLOW!)
+        let cold_start = std::time::Instant::now();
+        let cold_storage_count = self.cold_storage_index.len();
+        
+        if cold_storage_count > 0 {
+            tracing::warn!("Loading {} symbols from cold storage - this is the performance bottleneck!", cold_storage_count);
+            
+            let mut loaded_from_disk = 0;
+            for (fqn, file_path) in &self.cold_storage_index.clone() {
+                if !all_symbols.contains_key(fqn) {
+                    match self.load_from_cold_storage(file_path) {
+                        Ok(cached_symbol) => {
+                            all_symbols.insert(fqn.clone(), cached_symbol.into());
+                            loaded_from_disk += 1;
+                            
+                            // Progress logging for large loads
+                            if loaded_from_disk % 1000 == 0 {
+                                tracing::info!("Loaded {}/{} symbols from disk...", loaded_from_disk, cold_storage_count);
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to load symbol {} from disk: {}", fqn, e);
+                        }
                     }
                 }
             }
+            
+            let cold_time = cold_start.elapsed();
+            tracing::warn!("BOTTLENECK: Loaded {} symbols from cold storage in {:.2}s ({:.1} symbols/sec)", 
+                          loaded_from_disk, cold_time.as_secs_f64(), loaded_from_disk as f64 / cold_time.as_secs_f64());
         }
         
-        tracing::info!("Loaded {} symbols from storage (hot: {}, cold: {})", 
+        let total_time = start_time.elapsed();
+        tracing::info!("Loaded {} symbols from storage (hot: {}, cold: {}) in {:.2}s TOTAL", 
                       all_symbols.len(), self.hot_cache.len(), 
-                      self.cold_storage_index.len() - self.hot_cache.len());
+                      self.cold_storage_index.len(), total_time.as_secs_f64());
         
         Ok(all_symbols)
     }

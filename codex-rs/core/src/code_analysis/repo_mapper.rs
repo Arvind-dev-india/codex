@@ -862,11 +862,25 @@ impl RepoMapper {
 
         // CRITICAL: Re-resolve FQNs for references now that we have all symbols
         // This fixes cross-project reference resolution
+        let resolve_start = std::time::Instant::now();
         self.resolve_cross_project_fqns();
+        let resolve_time = resolve_start.elapsed();
+        tracing::info!("Cross-project FQN resolution completed in {:.2}s", resolve_time.as_secs_f64());
         
-        // Create edges for all references (from context extractor)
+        // Create edges for all references (from context extractor) - OPTIMIZED
         let references = self.context_extractor.get_references();
         tracing::info!("Creating edges from {} references", references.len());
+        
+        // Skip edge creation if too many references (performance optimization)
+        if references.len() > 100000 {
+            tracing::warn!("Too many references ({}), creating simplified graph for performance", references.len());
+            // Create only essential edges for very large projects
+            self.create_essential_edges_only(&symbols);
+            let total_nodes = self.file_nodes.len() + self.symbol_nodes.len();
+            let total_edges = self.edges.len();
+            tracing::info!("Simplified graph building completed: {} nodes, {} edges", total_nodes, total_edges);
+            return Ok(());
+        }
         for reference in references {
             let edge_type = match reference.reference_type {
                 super::context_extractor::ReferenceType::Call => CodeEdgeType::Calls,
@@ -1017,6 +1031,21 @@ impl RepoMapper {
         }
     }
 
+    /// Create essential edges only for very large projects (performance optimization)
+    fn create_essential_edges_only(&mut self, symbols: &std::collections::HashMap<String, CodeSymbol>) {
+        // Only create file-to-symbol containment edges for very large projects
+        for (fqn, symbol) in symbols {
+            if let Some(file_node) = self.file_nodes.get(&symbol.file_path) {
+                self.edges.push(CodeEdge {
+                    source: file_node.id.clone(),
+                    target: format!("symbol:{}", fqn),
+                    edge_type: CodeEdgeType::Contains,
+                });
+            }
+        }
+        tracing::info!("Created {} essential containment edges only", self.edges.len());
+    }
+    
     /// Normalize file path to always use relative paths with forward slashes
     fn normalize_file_path(file_path: &str, root_path: &Path) -> Result<String, String> {
         let path = Path::new(file_path);

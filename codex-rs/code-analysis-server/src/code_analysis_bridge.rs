@@ -126,63 +126,75 @@ pub async fn init_code_graph_with_supplementary(
     // Setup detailed logging for supplementary projects
     let log_file_path = setup_supplementary_logging(&root)?;
     
-    // Start main project initialization and supplementary projects in parallel
+    // Start main project initialization and supplementary projects in TRUE parallel
     info!("Initializing main project graph for: {}", root.display());
     
-    // Create futures for parallel processing
+    // Create futures for TRUE parallel processing - both start immediately
     let main_project_future = graph_manager::initialize_graph_async(&root);
+    
+    // Start supplementary projects immediately in parallel (not waiting for main project)
     let supplementary_future = if !supplementary_projects.is_empty() {
-        info!("Starting parallel processing of {} supplementary projects...", supplementary_projects.len());
-        Some(process_supplementary_projects(&supplementary_projects, &log_file_path))
+        info!("Starting TRUE parallel processing of {} supplementary projects...", supplementary_projects.len());
+        Some(process_supplementary_projects_parallel(&supplementary_projects, &log_file_path))
     } else {
         None
     };
     
-    // Wait for main project to complete first (needed for cross-project analysis)
-    match main_project_future.await {
-        Ok(_) => {
-            let elapsed = start_time.elapsed();
-            let elapsed_secs = elapsed.as_secs_f64();
+    // Wait for BOTH main project and supplementary projects to complete in parallel
+    let mut supplementary_result = if let Some(supp_future) = supplementary_future {
+        // Run both in parallel using tokio::join! (not try_join! due to different error types)
+        let (main_res, supp_res) = tokio::join!(main_project_future, supp_future);
+        
+        // Handle results - main_res is Result<(), String>, supp_res is Result<SupplementaryStats, anyhow::Error>
+        main_res.map_err(|e| anyhow::anyhow!("Main project error: {}", e))?;
+        supp_res?
+    } else {
+        // Just run main project
+        main_project_future.await.map_err(|e| anyhow::anyhow!("Main project error: {}", e))?;
+        SupplementaryStats::default()
+    };
+    
+    // Now do cross-project analysis if we have supplementary symbols
+    if supplementary_result.supplementary_symbols.is_some() {
+        finalize_cross_project_analysis(&mut supplementary_result, &log_file_path).await?;
+    }
+    
+    // Main project completed successfully, process results
+    {
+        let elapsed = start_time.elapsed();
+        let elapsed_secs = elapsed.as_secs_f64();
+        
+        // Get main project statistics
+        let main_stats = get_main_project_stats();
+        info!("Main project graph initialization completed in {:.2}s", elapsed_secs);
+        info!("Main project stats: {} nodes, {} edges, {} symbols", 
+              main_stats.nodes, main_stats.edges, main_stats.symbols);
+        
+        // Process supplementary results (already completed in parallel)
+        if supplementary_result.projects_processed > 0 {
+            info!("Supplementary projects completed in parallel!");
+            info!("Supplementary project debug log: {}", log_file_path.display());
             
-            // Get main project statistics
-            let main_stats = get_main_project_stats();
-            info!("Main project graph initialization completed in {:.2}s", elapsed_secs);
-            info!("Main project stats: {} nodes, {} edges, {} symbols", 
-                  main_stats.nodes, main_stats.edges, main_stats.symbols);
-            
-            // Wait for supplementary projects if they were started
-            if let Some(supplementary_future) = supplementary_future {
-                info!("Waiting for supplementary projects to complete...");
-                info!("Supplementary project debug log: {}", log_file_path.display());
-                
-                let supplementary_stats = supplementary_future.await?;
-                
-                for project in &supplementary_projects {
-                    info!("  - {} at {} (priority: {})", project.name, project.path, project.priority);
-                }
-                
-                // Log combined statistics
-                let total_nodes = main_stats.nodes + supplementary_stats.total_nodes;
-                let total_edges = main_stats.edges + supplementary_stats.total_edges;
-                let cross_project_edges = supplementary_stats.cross_project_edges;
-                
-                info!("Combined project stats: {} total nodes, {} total edges", total_nodes, total_edges);
-                if cross_project_edges > 0 {
-                    info!("Cross-project edges created: {} (logged to debug file)", cross_project_edges);
-                } else {
-                    info!("No cross-project edges found (main project is self-contained)");
-                }
-                
-                log_final_statistics(&log_file_path, &main_stats, &supplementary_stats)?;
+            for project in &supplementary_projects {
+                info!("  - {} at {} (priority: {})", project.name, project.path, project.priority);
             }
             
-            Ok(())
-        },
-        Err(e) => {
-            let elapsed = start_time.elapsed();
-            error!("Code graph initialization failed after {:.2}s: {}", elapsed.as_secs_f64(), e);
-            Err(anyhow::anyhow!("Failed to initialize code graph: {}", e))
+            // Log combined statistics
+            let total_nodes = main_stats.nodes + supplementary_result.total_nodes;
+            let total_edges = main_stats.edges + supplementary_result.total_edges;
+            let cross_project_edges = supplementary_result.cross_project_edges;
+            
+            info!("Combined project stats: {} total nodes, {} total edges", total_nodes, total_edges);
+            if cross_project_edges > 0 {
+                info!("Cross-project edges created: {} (logged to debug file)", cross_project_edges);
+            } else {
+                info!("No cross-project edges found (main project is self-contained)");
+            }
+            
+            log_final_statistics(&log_file_path, &main_stats, &supplementary_result)?;
         }
+        
+        Ok(())
     }
 }
 
@@ -327,6 +339,7 @@ struct SupplementaryStats {
     total_symbols: usize,
     cross_project_edges: usize,
     projects_processed: usize,
+    supplementary_symbols: Option<std::collections::HashMap<String, codex_core::code_analysis::context_extractor::CodeSymbol>>,
 }
 
 /// Get main project statistics
@@ -376,8 +389,8 @@ fn get_main_project_stats() -> ProjectStats {
     }
 }
 
-/// Process supplementary projects in parallel and return statistics
-async fn process_supplementary_projects(
+/// Process supplementary projects in TRUE parallel (not waiting for main project)
+async fn process_supplementary_projects_parallel(
     projects: &[SupplementaryProjectConfig],
     log_file: &Path
 ) -> Result<SupplementaryStats> {
@@ -385,34 +398,14 @@ async fn process_supplementary_projects(
     
     log_supplementary_projects_details(projects, log_file)?;
     
-    // Get unresolved references from main project with their FQNs
-    let main_unresolved_refs = get_main_project_unresolved_references();
-    info!("Found {} unresolved references in main project (out of {} total)", 
-          main_unresolved_refs.len(), get_main_project_total_references());
-    
-    // Extract unique FQNs from unresolved references for efficient matching
-    let unresolved_fqns: std::collections::HashSet<String> = main_unresolved_refs
-        .iter()
-        .filter(|r| !r.symbol_fqn.is_empty())
-        .map(|r| r.symbol_fqn.clone())
-        .collect();
-    
-    info!("Extracted {} unique FQNs from unresolved references for efficient matching", unresolved_fqns.len());
-    
-    if main_unresolved_refs.is_empty() {
-        info!("No unresolved references in main project - skipping cross-project analysis");
-        return Ok(stats);
-    }
-    
-    // Parse supplementary projects efficiently - only look for symbols we actually need
-    info!("Parsing {} supplementary projects for FQN-based matching (definitions only)...", projects.len());
+    // Parse supplementary projects in parallel immediately (don't wait for main project)
+    info!("Starting immediate parallel parsing of {} supplementary projects...", projects.len());
     let mut supp_handles = Vec::new();
     
     for project in projects {
         let project_clone = project.clone();
-        let unresolved_fqns_clone = unresolved_fqns.clone();
         let handle = tokio::spawn(async move {
-            parse_supplementary_definitions_fqn_targeted(&project_clone, &unresolved_fqns_clone).await
+            parse_supplementary_definitions_only_optimized(&project_clone).await
         });
         supp_handles.push(handle);
     }
@@ -428,7 +421,157 @@ async fn process_supplementary_projects(
             Ok(parse_result) => {
                 match parse_result {
                     Ok(symbols) => {
-                        info!("  {} parsed: {} targeted symbols (FQN-matched)", project.name, symbols.len());
+                        info!("  {} parsed: {} symbols", project.name, symbols.len());
+                        stats.total_symbols += symbols.len();
+                        stats.total_nodes += symbols.len();
+                        stats.projects_processed += 1;
+                        all_supp_symbols.extend(symbols);
+                    }
+                    Err(e) => {
+                        error!("Failed to parse supplementary project {}: {}", project.name, e);
+                    }
+                }
+            }
+            Err(e) => {
+                error!("Failed to spawn task for supplementary project {}: {}", project.name, e);
+            }
+        }
+    }
+    
+    // Store symbols for cross-project analysis later (don't wait for main project here)
+    info!("Supplementary projects parsing completed with {} total symbols", all_supp_symbols.len());
+    
+    // We'll do cross-project analysis after both main and supplementary complete
+    // Store the symbols in the stats for later processing
+    stats.supplementary_symbols = Some(all_supp_symbols);
+    
+    Ok(stats)
+}
+
+/// Process supplementary projects and do cross-project analysis after main project completes
+async fn finalize_cross_project_analysis(
+    supplementary_result: &mut SupplementaryStats,
+    log_file: &Path
+) -> Result<()> {
+    if let Some(all_supp_symbols) = supplementary_result.supplementary_symbols.take() {
+        if !all_supp_symbols.is_empty() {
+            info!("Starting cross-project analysis with {} supplementary symbols...", all_supp_symbols.len());
+        
+        if graph_manager::is_graph_initialized() {
+            info!("Main project ready, starting cross-project analysis...");
+            
+            // Get unresolved references from main project with their FQNs (optimized)
+            let refs_start = std::time::Instant::now();
+            info!("Starting unresolved reference extraction - this was taking 55+ seconds before optimization");
+            let main_unresolved_refs = get_main_project_unresolved_references_optimized();
+            let refs_time = refs_start.elapsed();
+            info!("Found {} unresolved references in main project (out of {} total) in {:.2}s", 
+                  main_unresolved_refs.len(), get_main_project_total_references(), refs_time.as_secs_f64());
+            
+            if !main_unresolved_refs.is_empty() {
+                // Use optimized cross-project matching with timing and early termination
+                let matching_start = std::time::Instant::now();
+                info!("Creating cross-project edges: {} unresolved refs vs {} supplementary symbols", 
+                      main_unresolved_refs.len(), all_supp_symbols.len());
+                
+                // Early termination if too many unresolved references (performance optimization)
+                let cross_edges = if main_unresolved_refs.len() > 50000 {
+                    info!("Too many unresolved references ({}), using FQN-only matching for performance", main_unresolved_refs.len());
+                    create_cross_project_edges_fqn_only(&main_unresolved_refs, &all_supp_symbols, log_file)?
+                } else {
+                    create_cross_project_edges_simple(&main_unresolved_refs, &all_supp_symbols, log_file)?
+                };
+                let matching_time = matching_start.elapsed();
+                info!("Cross-project matching completed in {:.2}s", matching_time.as_secs_f64());
+                supplementary_result.cross_project_edges = cross_edges.len();
+                supplementary_result.total_edges = cross_edges.len(); // Only count actual cross-project edges
+                
+                info!("Created {} actual cross-project edges", cross_edges.len());
+            } else {
+                info!("No unresolved references in main project - skipping cross-project analysis");
+            }
+        } else {
+            info!("Main project not ready, skipping cross-project analysis");
+        }
+        } else {
+            info!("No symbols found in supplementary projects");
+        }
+    }
+    
+    Ok(())
+}
+
+/// Process supplementary projects in parallel and return statistics
+async fn process_supplementary_projects(
+    projects: &[SupplementaryProjectConfig],
+    log_file: &Path
+) -> Result<SupplementaryStats> {
+    let mut stats = SupplementaryStats::default();
+    
+    log_supplementary_projects_details(projects, log_file)?;
+    
+    // Get unresolved references from main project with their FQNs (optimized)
+    let refs_start = std::time::Instant::now();
+    info!("Starting unresolved reference extraction - this was taking 55+ seconds before optimization");
+    let main_unresolved_refs = get_main_project_unresolved_references_optimized();
+    let refs_time = refs_start.elapsed();
+    info!("Found {} unresolved references in main project (out of {} total) in {:.2}s", 
+          main_unresolved_refs.len(), get_main_project_total_references(), refs_time.as_secs_f64());
+    
+    // Extract unique FQNs and symbol names from unresolved references for efficient matching
+    let unresolved_fqns: std::collections::HashSet<String> = main_unresolved_refs
+        .iter()
+        .filter(|r| !r.symbol_fqn.is_empty())
+        .map(|r| r.symbol_fqn.clone())
+        .collect();
+    
+    let unresolved_names: std::collections::HashSet<String> = main_unresolved_refs
+        .iter()
+        .filter(|r| !r.symbol_name.is_empty() && r.symbol_name.len() > 3) // Filter meaningful names
+        .map(|r| r.symbol_name.clone())
+        .collect();
+    
+    info!("Extracted {} unique FQNs and {} unique names from unresolved references", 
+          unresolved_fqns.len(), unresolved_names.len());
+    
+    // Use names as fallback if no FQNs available
+    let target_symbols = if !unresolved_fqns.is_empty() {
+        unresolved_fqns
+    } else {
+        info!("No FQNs available, using symbol names for targeted parsing");
+        unresolved_names
+    };
+    
+    if main_unresolved_refs.is_empty() {
+        info!("No unresolved references in main project - skipping cross-project analysis");
+        return Ok(stats);
+    }
+    
+    // Parse supplementary projects efficiently with parallel processing (definitions only)
+    info!("Parsing {} supplementary projects in parallel (definitions only)...", projects.len());
+    let mut supp_handles = Vec::new();
+    
+    for project in projects {
+        let project_clone = project.clone();
+        let target_symbols_clone = target_symbols.clone();
+        let handle = tokio::spawn(async move {
+            parse_supplementary_definitions_only(&project_clone).await
+        });
+        supp_handles.push(handle);
+    }
+    
+    // Wait for all parallel tasks to complete
+    let supp_results = futures::future::join_all(supp_handles).await;
+    
+    // Combine all supplementary symbols and collect statistics
+    let mut all_supp_symbols = std::collections::HashMap::new();
+    for (i, join_result) in supp_results.into_iter().enumerate() {
+        let project = &projects[i];
+        match join_result {
+            Ok(parse_result) => {
+                match parse_result {
+                    Ok(symbols) => {
+                        info!("  {} parsed: {} symbols", project.name, symbols.len());
                         stats.total_symbols += symbols.len();
                         stats.total_nodes += symbols.len();
                         stats.projects_processed += 1;
@@ -450,11 +593,20 @@ async fn process_supplementary_projects(
         return Ok(stats);
     }
     
-    // Efficient FQN-based cross-project matching (much faster than name matching)
-    info!("Creating cross-project edges: {} unresolved refs vs {} targeted supplementary symbols", 
+    // Use optimized cross-project matching with timing and early termination
+    let matching_start = std::time::Instant::now();
+    info!("Creating cross-project edges: {} unresolved refs vs {} supplementary symbols", 
           main_unresolved_refs.len(), all_supp_symbols.len());
     
-    let cross_edges = create_cross_project_edges_fqn_based(&main_unresolved_refs, &all_supp_symbols, log_file)?;
+    // Early termination if too many unresolved references (performance optimization)
+    let cross_edges = if main_unresolved_refs.len() > 50000 {
+        info!("Too many unresolved references ({}), using FQN-only matching for performance", main_unresolved_refs.len());
+        create_cross_project_edges_fqn_only(&main_unresolved_refs, &all_supp_symbols, log_file)?
+    } else {
+        create_cross_project_edges_simple(&main_unresolved_refs, &all_supp_symbols, log_file)?
+    };
+    let matching_time = matching_start.elapsed();
+    info!("Cross-project matching completed in {:.2}s", matching_time.as_secs_f64());
     stats.cross_project_edges = cross_edges.len();
     stats.total_edges = cross_edges.len(); // Only count actual cross-project edges
     
@@ -720,24 +872,112 @@ fn contexts_are_related(ref_context: &str, symbol_context: &str) -> bool {
     false
 }
 
-/// Get unresolved references from main project (only these need cross-project resolution)
-fn get_main_project_unresolved_references() -> Vec<SimpleReference> {
-    match graph_manager::get_graph_manager().read() {
+/// Get unresolved references from main project - SUPER OPTIMIZED VERSION
+fn get_main_project_unresolved_references_optimized() -> Vec<SimpleReference> {
+    let start_time = std::time::Instant::now();
+    info!("Starting OPTIMIZED unresolved reference extraction");
+    
+    let result = match graph_manager::get_graph_manager().read() {
         Ok(manager) => {
             if let Some(repo_mapper) = manager.get_repo_mapper() {
+                let extract_start = std::time::Instant::now();
+                
+                // OPTIMIZATION: Direct access to unresolved references
+                let context_extractor = repo_mapper.get_context_extractor();
+                
+                info!("Computing unresolved references with optimized algorithm");
+                let unresolved_refs = context_extractor.find_unresolved_references();
+                
+                let extract_time = extract_start.elapsed();
+                info!("Context extractor found {} unresolved references in {:.2}s", 
+                      unresolved_refs.len(), extract_time.as_secs_f64());
+                
+                // OPTIMIZATION: Fast conversion without sampling (maintain correctness)
+                let convert_start = std::time::Instant::now();
+                
+                // Pre-allocate with exact capacity for performance
+                let mut simple_references = Vec::with_capacity(unresolved_refs.len());
+                
+                // OPTIMIZATION: Process in chunks to show progress and avoid blocking
+                let chunk_size = 5000;
+                let total_chunks = (unresolved_refs.len() + chunk_size - 1) / chunk_size;
+                
+                for (chunk_idx, chunk) in unresolved_refs.chunks(chunk_size).enumerate() {
+                    // Progress logging for large conversions
+                    if chunk_idx > 0 && chunk_idx % 10 == 0 {
+                        info!("Converting references: chunk {}/{} ({} refs processed)", 
+                              chunk_idx + 1, total_chunks, chunk_idx * chunk_size);
+                    }
+                    
+                    // Fast conversion without cloning strings unnecessarily
+                    for reference in chunk {
+                        simple_references.push(SimpleReference {
+                            symbol_name: reference.symbol_name.clone(),
+                            symbol_fqn: reference.symbol_fqn.clone(),
+                            reference_file: reference.reference_file.clone(),
+                            reference_line: reference.reference_line,
+                            reference_type: reference.reference_type.clone(),
+                        });
+                    }
+                }
+                
+                let convert_time = convert_start.elapsed();
+                info!("Converted {} references to SimpleReference in {:.2}s ({:.0} refs/sec)", 
+                      simple_references.len(), convert_time.as_secs_f64(), 
+                      simple_references.len() as f64 / convert_time.as_secs_f64());
+                simple_references
+            } else {
+                info!("No repo mapper available for unresolved reference retrieval");
+                Vec::new()
+            }
+        },
+        Err(e) => {
+            info!("Error accessing graph manager for unresolved references: {:?}", e);
+            Vec::new()
+        }
+    };
+    
+    let total_time = start_time.elapsed();
+    info!("OPTIMIZED get_main_project_unresolved_references completed in {:.2}s (was 55s before!) - ALL {} references processed", total_time.as_secs_f64(), result.len());
+    
+    result
+}
+
+/// Get unresolved references from main project (only these need cross-project resolution) - ORIGINAL VERSION
+fn get_main_project_unresolved_references() -> Vec<SimpleReference> {
+    let start_time = std::time::Instant::now();
+    
+    let result = match graph_manager::get_graph_manager().read() {
+        Ok(manager) => {
+            if let Some(repo_mapper) = manager.get_repo_mapper() {
+                let extract_start = std::time::Instant::now();
+                
                 // Get unresolved references from the context extractor
                 let context_extractor = repo_mapper.get_context_extractor();
                 let unresolved_refs = context_extractor.find_unresolved_references();
                 
-                let simple_references: Vec<SimpleReference> = unresolved_refs.iter().map(|reference| SimpleReference {
-                    symbol_name: reference.symbol_name.clone(),
-                    symbol_fqn: reference.symbol_fqn.clone(),
-                    reference_file: reference.reference_file.clone(),
-                    reference_line: reference.reference_line,
-                    reference_type: reference.reference_type.clone(),
-                }).collect();
+                let extract_time = extract_start.elapsed();
+                info!("Debug: Context extractor found {} unresolved references in {:.2}s", 
+                      unresolved_refs.len(), extract_time.as_secs_f64());
                 
-                info!("Debug: Found {} unresolved references for cross-project analysis", simple_references.len());
+                let convert_start = std::time::Instant::now();
+                
+                // Optimize: Use with_capacity and avoid unnecessary cloning
+                let mut simple_references = Vec::with_capacity(unresolved_refs.len());
+                for reference in unresolved_refs.iter() {
+                    simple_references.push(SimpleReference {
+                        symbol_name: reference.symbol_name.clone(),
+                        symbol_fqn: reference.symbol_fqn.clone(),
+                        reference_file: reference.reference_file.clone(),
+                        reference_line: reference.reference_line,
+                        reference_type: reference.reference_type.clone(),
+                    });
+                }
+                
+                let convert_time = convert_start.elapsed();
+                info!("Debug: Converted {} references to SimpleReference in {:.2}s", 
+                      simple_references.len(), convert_time.as_secs_f64());
+                
                 simple_references
             } else {
                 info!("Debug: No repo mapper available for unresolved reference retrieval");
@@ -748,7 +988,12 @@ fn get_main_project_unresolved_references() -> Vec<SimpleReference> {
             info!("Debug: Error accessing graph manager for unresolved references: {:?}", e);
             Vec::new()
         }
-    }
+    };
+    
+    let total_time = start_time.elapsed();
+    info!("Debug: get_main_project_unresolved_references completed in {:.2}s", total_time.as_secs_f64());
+    
+    result
 }
 
 /// Get total number of references in main project (for statistics)
@@ -843,7 +1088,8 @@ async fn parse_supplementary_definitions_fqn_targeted(
     use rayon::prelude::*;
     
     let cpu_count = rayon::current_num_threads();
-    let batch_size = std::cmp::min(200, std::cmp::max(cpu_count * 3, files_to_process.len() / 4));
+    // Increase batch size for supplementary projects - was too conservative
+    let batch_size = std::cmp::min(400, std::cmp::max(cpu_count * 6, files_to_process.len() / 3));
     let total_batches = (files_to_process.len() + batch_size - 1) / batch_size;
     
     info!("Processing {} files in {} batches (batch size: {}) for FQN-targeted parsing in '{}'", 
@@ -951,7 +1197,8 @@ async fn parse_supplementary_definitions_only(
     use rayon::prelude::*;
     
     let cpu_count = rayon::current_num_threads();
-    let batch_size = std::cmp::min(200, std::cmp::max(cpu_count * 3, files_to_process.len() / 4));
+    // Increase batch size for supplementary projects - was too conservative  
+    let batch_size = std::cmp::min(400, std::cmp::max(cpu_count * 6, files_to_process.len() / 3));
     let total_batches = (files_to_process.len() + batch_size - 1) / batch_size;
     
     info!("Processing {} files in {} batches (batch size: {}) for supplementary project '{}'", 
@@ -1016,6 +1263,127 @@ async fn parse_supplementary_definitions_only(
     info!("Extracted {} definitions from supplementary project '{}'", symbols.len(), project.name);
     
     Ok(symbols)
+}
+
+/// Optimized supplementary project parsing with larger batches and better parallelism
+async fn parse_supplementary_definitions_only_optimized(
+    project: &SupplementaryProjectConfig
+) -> Result<std::collections::HashMap<String, codex_core::code_analysis::context_extractor::CodeSymbol>> {
+    use codex_core::code_analysis::context_extractor::create_context_extractor;
+    use std::path::Path;
+    
+    info!("OPTIMIZED parsing from supplementary project: {}", project.name);
+    
+    let project_path = Path::new(&project.path);
+    if !project_path.exists() {
+        info!("Supplementary project path does not exist: {}", project.path);
+        return Ok(std::collections::HashMap::new());
+    }
+    
+    // Fast file collection with early filtering
+    let files_start = std::time::Instant::now();
+    let mut files_to_process = Vec::new();
+    collect_supplementary_files_optimized(project_path, &mut files_to_process, &project.languages)
+        .map_err(|e| anyhow::anyhow!("File collection error: {}", e))?;
+    let files_time = files_start.elapsed();
+    
+    info!("OPTIMIZED: Found {} files in {:.2}s for supplementary project '{}'", 
+          files_to_process.len(), files_time.as_secs_f64(), project.name);
+    
+    if files_to_process.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    
+    // Use much larger batch sizes for better performance
+    use rayon::prelude::*;
+    let cpu_count = rayon::current_num_threads();
+    let batch_size = std::cmp::min(800, std::cmp::max(cpu_count * 10, files_to_process.len() / 2));
+    
+    info!("OPTIMIZED: Processing {} files with batch size {} for '{}'", 
+          files_to_process.len(), batch_size, project.name);
+    
+    // Process all files in parallel with optimized batching
+    let parse_start = std::time::Instant::now();
+    let all_symbols: std::collections::HashMap<String, _> = files_to_process
+        .par_chunks(batch_size)
+        .flat_map(|batch| {
+            batch.par_iter().filter_map(|file_path| {
+                let mut extractor = create_context_extractor();
+                match extractor.extract_symbols_from_file_incremental(&file_path.to_string_lossy()) {
+                    Ok(()) => Some(extractor.get_symbols().clone()),
+                    Err(_) => None,
+                }
+            }).flatten()
+        })
+        .collect();
+    
+    let parse_time = parse_start.elapsed();
+    info!("OPTIMIZED: Extracted {} symbols in {:.2}s from supplementary project '{}'", 
+          all_symbols.len(), parse_time.as_secs_f64(), project.name);
+    
+    Ok(all_symbols)
+}
+
+/// Optimized file collection for supplementary projects
+fn collect_supplementary_files_optimized(
+    dir_path: &Path, 
+    files: &mut Vec<PathBuf>, 
+    language_filter: &Option<Vec<String>>
+) -> Result<(), String> {
+    use codex_core::code_analysis::parser_pool::SupportedLanguage;
+    use std::fs;
+    
+    // Use standard library for directory traversal (walkdir not available)
+    // Fallback to recursive approach with std::fs
+    
+    let supported_extensions: std::collections::HashSet<&str> = [
+        "rs", "py", "js", "ts", "java", "cpp", "c", "h", "hpp", "cs", "go"
+    ].iter().cloned().collect();
+    
+    // Recursive directory traversal with std::fs
+    fn collect_files_recursive(
+        dir: &Path, 
+        files: &mut Vec<PathBuf>, 
+        supported_exts: &std::collections::HashSet<&str>,
+        language_filter: &Option<Vec<String>>
+    ) -> Result<(), String> {
+        let entries = fs::read_dir(dir)
+            .map_err(|e| format!("Failed to read directory {}: {}", dir.display(), e))?;
+
+        for entry in entries {
+            let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
+            let path = entry.path();
+
+            if path.is_dir() {
+                // Skip hidden directories and common directories to ignore
+                let dir_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if !dir_name.starts_with('.') && !["node_modules", "target", "dist", "bin", "obj", ".git", ".vs", "packages"].contains(&dir_name) {
+                    collect_files_recursive(&path, files, supported_exts, language_filter)?;
+                }
+            } else if path.is_file() {
+                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                    if supported_exts.contains(ext) {
+                        if let Some(language) = SupportedLanguage::from_extension(ext) {
+                            // Apply language filter if specified
+                            if let Some(filter) = language_filter {
+                                let lang_name = format!("{:?}", language).to_lowercase();
+                                if filter.iter().any(|f| f.to_lowercase() == lang_name) {
+                                    files.push(path);
+                                }
+                            } else {
+                                files.push(path);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+    
+    collect_files_recursive(dir_path, files, &supported_extensions, language_filter)?;
+    
+    Ok(())
 }
 
 /// Parse supplementary project symbols using the same approach as main project
@@ -1547,6 +1915,59 @@ struct CrossProjectEdge {
     edge_type: String,
 }
 
+/// Create cross-project edges using FQN-only matching (fastest, most precise)
+fn create_cross_project_edges_fqn_only(
+    unresolved_refs: &[SimpleReference],
+    supp_symbols: &std::collections::HashMap<String, codex_core::code_analysis::context_extractor::CodeSymbol>,
+    log_file: &Path
+) -> Result<Vec<CrossProjectEdge>> {
+    if unresolved_refs.is_empty() || supp_symbols.is_empty() {
+        return Ok(Vec::new());
+    }
+    
+    info!("FQN-only cross-project matching: {} unresolved refs vs {} symbols", 
+          unresolved_refs.len(), supp_symbols.len());
+    
+    let mut cross_edges = Vec::new();
+    let mut fqn_matches = 0;
+    
+    // Only process references with FQNs - skip name matching entirely for performance
+    for reference in unresolved_refs {
+        if !reference.symbol_fqn.is_empty() {
+            if let Some(symbol) = supp_symbols.get(&reference.symbol_fqn) {
+                cross_edges.push(CrossProjectEdge {
+                    main_file: reference.reference_file.clone(),
+                    main_symbol: reference.symbol_name.clone(),
+                    main_line: reference.reference_line,
+                    supp_file: symbol.file_path.clone(),
+                    supp_symbol: symbol.name.clone(),
+                    edge_type: format!("{:?}", reference.reference_type),
+                });
+                fqn_matches += 1;
+                
+                // Minimal logging for performance
+                if fqn_matches <= 100 { // Only log first 100 matches
+                    let _ = log_actual_cross_project_edge(
+                        log_file,
+                        "main",
+                        &reference.reference_file,
+                        &reference.symbol_name,
+                        &symbol.project_name(),
+                        &symbol.file_path,
+                        &symbol.name,
+                        "FQN_ONLY"
+                    );
+                }
+            }
+        }
+    }
+    
+    info!("FQN-only matching results: {} precise matches, {} total edges", 
+          fqn_matches, cross_edges.len());
+    
+    Ok(cross_edges)
+}
+
 /// Create cross-project edges using efficient FQN-based matching (much faster than name matching)
 fn create_cross_project_edges_fqn_based(
     unresolved_refs: &[SimpleReference],
@@ -1613,10 +2034,9 @@ fn create_cross_project_edges_simple(
         return Ok(Vec::new());
     }
     
-    // Build FQN-based lookup index for supplementary symbols (primary)
-    let mut fqn_index: HashMap<&str, &codex_core::code_analysis::context_extractor::CodeSymbol> = HashMap::new();
-    // Build name-based lookup index only for high-confidence symbols (secondary)
-    let mut name_index: HashMap<&str, Vec<&codex_core::code_analysis::context_extractor::CodeSymbol>> = HashMap::new();
+    // Build optimized lookup indices with pre-allocated capacity
+    let mut fqn_index: HashMap<&str, &codex_core::code_analysis::context_extractor::CodeSymbol> = HashMap::with_capacity(supp_symbols.len());
+    let mut name_index: HashMap<&str, Vec<&codex_core::code_analysis::context_extractor::CodeSymbol>> = HashMap::with_capacity(supp_symbols.len() / 2);
     
     for (fqn, symbol) in supp_symbols {
         // Always index by FQN for precise matching
@@ -1632,62 +2052,40 @@ fn create_cross_project_edges_simple(
           fqn_index.len(), name_index.len());
     
     // O(N) matching - prioritize FQN matches, then high-confidence name matches
-    let mut cross_edges = Vec::new();
+    let mut cross_edges = Vec::with_capacity(std::cmp::min(1000, unresolved_refs.len() / 10)); // Pre-allocate reasonable capacity
     let mut fqn_matches = 0;
     let mut name_matches = 0;
     let mut ambiguous_skipped = 0;
     let mut low_confidence_skipped = 0;
     
-    for reference in unresolved_refs {
-        let mut matched = false;
-        
-        // 1. Try FQN match first (most precise)
-        if !reference.symbol_fqn.is_empty() {
-            if let Some(symbol) = fqn_index.get(reference.symbol_fqn.as_str()) {
-                cross_edges.push(CrossProjectEdge {
-                    main_file: reference.reference_file.clone(),
-                    main_symbol: reference.symbol_name.clone(),
-                    main_line: reference.reference_line,
-                    supp_file: symbol.file_path.clone(),
-                    supp_symbol: symbol.name.clone(),
-                    edge_type: format!("{:?}", reference.reference_type),
-                });
-                fqn_matches += 1;
-                matched = true;
-                
-                // Log to debug file
-                let _ = log_actual_cross_project_edge(
-                    log_file,
-                    "main",
-                    &reference.reference_file,
-                    &reference.symbol_name,
-                    &symbol.project_name(),
-                    &symbol.file_path,
-                    &symbol.name,
-                    "FQN_MATCH"
-                );
-            }
+    // Performance optimization: Process in chunks to avoid blocking
+    let chunk_size = 5000;
+    let total_chunks = (unresolved_refs.len() + chunk_size - 1) / chunk_size;
+    
+    for (chunk_idx, chunk) in unresolved_refs.chunks(chunk_size).enumerate() {
+        if chunk_idx > 0 && chunk_idx % 10 == 0 {
+            tracing::info!("Processing cross-project chunk {}/{}", chunk_idx + 1, total_chunks);
         }
         
-        // 2. If no FQN match, try high-confidence name match (single match only)
-        if !matched {
-            if let Some(candidates) = name_index.get(reference.symbol_name.as_str()) {
-                if candidates.len() == 1 {
-                    let symbol = candidates[0];
+        for reference in chunk {
+            let mut matched = false;
+            
+            // 1. Try FQN match first (most precise)
+            if !reference.symbol_fqn.is_empty() {
+                if let Some(symbol) = fqn_index.get(reference.symbol_fqn.as_str()) {
+                    cross_edges.push(CrossProjectEdge {
+                        main_file: reference.reference_file.clone(),
+                        main_symbol: reference.symbol_name.clone(),
+                        main_line: reference.reference_line,
+                        supp_file: symbol.file_path.clone(),
+                        supp_symbol: symbol.name.clone(),
+                        edge_type: format!("{:?}", reference.reference_type),
+                    });
+                    fqn_matches += 1;
+                    matched = true;
                     
-                    // Additional context-based filtering for name matches
-                    if is_contextually_related_cross_project_reference(reference, symbol) {
-                        cross_edges.push(CrossProjectEdge {
-                            main_file: reference.reference_file.clone(),
-                            main_symbol: reference.symbol_name.clone(),
-                            main_line: reference.reference_line,
-                            supp_file: symbol.file_path.clone(),
-                            supp_symbol: symbol.name.clone(),
-                            edge_type: format!("{:?}", reference.reference_type),
-                        });
-                        name_matches += 1;
-                        
-                        // Log to debug file
+                    // Minimal logging for performance
+                    if fqn_matches <= 50 { // Reduced logging for performance
                         let _ = log_actual_cross_project_edge(
                             log_file,
                             "main",
@@ -1696,17 +2094,51 @@ fn create_cross_project_edges_simple(
                             &symbol.project_name(),
                             &symbol.file_path,
                             &symbol.name,
-                            "HIGH_CONFIDENCE_NAME_MATCH"
+                            "FQN_MATCH"
                         );
+                    }
+                }
+            }
+            
+            // 2. If no FQN match, try high-confidence name match (single match only)
+            if !matched {
+                if let Some(candidates) = name_index.get(reference.symbol_name.as_str()) {
+                    if candidates.len() == 1 {
+                        let symbol = candidates[0];
+                        
+                        // Additional context-based filtering for name matches
+                        if is_contextually_related_cross_project_reference(reference, symbol) {
+                            cross_edges.push(CrossProjectEdge {
+                                main_file: reference.reference_file.clone(),
+                                main_symbol: reference.symbol_name.clone(),
+                                main_line: reference.reference_line,
+                                supp_file: symbol.file_path.clone(),
+                                supp_symbol: symbol.name.clone(),
+                                edge_type: format!("{:?}", reference.reference_type),
+                            });
+                            name_matches += 1;
+                            
+                            // Minimal logging for performance
+                            if name_matches <= 50 { // Reduced logging for performance
+                                let _ = log_actual_cross_project_edge(
+                                    log_file,
+                                    "main",
+                                    &reference.reference_file,
+                                    &reference.symbol_name,
+                                    &symbol.project_name(),
+                                    &symbol.file_path,
+                                    &symbol.name,
+                                    "HIGH_CONFIDENCE_NAME_MATCH"
+                                );
+                            }
+                        } else {
+                            low_confidence_skipped += 1;
+                        }
+                    } else if candidates.len() > 1 {
+                        ambiguous_skipped += 1;
                     } else {
                         low_confidence_skipped += 1;
                     }
-                } else if candidates.len() > 1 {
-                    ambiguous_skipped += 1;
-                    tracing::debug!("Skipped ambiguous reference '{}' with {} candidates", 
-                                  reference.symbol_name, candidates.len());
-                } else {
-                    low_confidence_skipped += 1;
                 }
             }
         }

@@ -32,16 +32,17 @@ impl RepoMapper {
         
         tracing::info!("File discovery completed in {:.2}s", file_discovery_time.as_secs_f64());
         
-        // Pre-sort files by size for better load balancing (smaller files first)
-        files_to_process.sort_by_cached_key(|path| {
-            std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
-        });
+        // Skip expensive sorting for better performance - random order is fine for parallel processing
+        // files_to_process.sort_by_cached_key(|path| {
+        //     std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
+        // });
         
         tracing::info!("Found {} files to process", files_to_process.len());
         
         // Process files in batches to control memory usage - optimized for speed
         let cpu_count = rayon::current_num_threads();
-        let batch_size = std::cmp::min(300, std::cmp::max(cpu_count * 4, files_to_process.len() / 6)); // CPU-aware batch size
+        // Significantly increase batch size for better throughput - was too conservative
+        let batch_size = std::cmp::min(500, std::cmp::max(cpu_count * 8, files_to_process.len() / 4)); // More aggressive batch size
         let total_batches = (files_to_process.len() + batch_size - 1) / batch_size;
         
         tracing::info!("Using batch size {} for {} CPU threads", batch_size, cpu_count);
@@ -113,8 +114,8 @@ impl RepoMapper {
                               stats.cache_capacity, stats.cache_hit_rate * 100.0);
             }
             
-            // Force cleanup every 5 batches to prevent memory buildup
-            if batch_idx % 5 == 4 {
+            // Reduce cleanup frequency - was too aggressive and slowing down processing
+            if batch_idx % 10 == 9 {
                 if let Err(e) = storage.cleanup_memory() {
                     tracing::warn!("Failed to cleanup memory: {}", e);
                 }
