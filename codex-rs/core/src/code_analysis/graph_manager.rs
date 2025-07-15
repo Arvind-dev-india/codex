@@ -59,6 +59,8 @@ pub struct CodeGraphManager {
     repo_mapper: Option<RepoMapper>,
     /// Root path of the current workspace
     root_path: Option<PathBuf>,
+    /// Supplementary projects from --supplementary arguments
+    supplementary_projects: Vec<crate::config_types::SupplementaryProjectConfig>,
     /// File metadata for change detection
     file_metadata: HashMap<PathBuf, FileMetadata>,
     /// Whether the graph has been initialized
@@ -77,6 +79,7 @@ impl CodeGraphManager {
             symbol_storage: None,
             repo_mapper: None,
             root_path: None,
+            supplementary_projects: Vec::new(),
             file_metadata: HashMap::new(),
             initialized: false,
             status: GraphStatus::NotStarted,
@@ -388,6 +391,10 @@ impl CodeGraphManager {
     /// Get the current repository mapper (if initialized)
     pub fn get_repo_mapper(&self) -> Option<&RepoMapper> {
         self.repo_mapper.as_ref()
+    }
+
+    pub fn get_supplementary_projects(&self) -> &[crate::config_types::SupplementaryProjectConfig] {
+        &self.supplementary_projects
     }
 
     /// Get the symbol storage (if initialized)

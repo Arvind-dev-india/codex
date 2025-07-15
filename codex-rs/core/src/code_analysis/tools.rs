@@ -6,6 +6,7 @@ use serde_json::{json, Value};
 use tracing;
 
 use crate::openai_tools::{JsonSchema, OpenAiTool, create_function_tool};
+use super::repo_mapper::CrossProjectDetector;
 
 /// Register all code analysis tools
 pub fn register_code_analysis_tools() -> Vec<OpenAiTool> {
@@ -2025,20 +2026,29 @@ fn get_related_files_skeleton_handler(args: Value) -> Result<Value, String> {
         start_symbols.extend(repo_mapper.get_symbols_for_file(file_path));
     }
     
-    // 2. Find related files by traversing the graph
-    let related_files = repo_mapper.find_related_files_from_symbols(
-        start_symbols,
-        input.max_depth,
-        &active_files_set,
-    );
+    // 2. Find related files by traversing the graph with cross-project detection
+    let (in_project_files, cross_project_files) = find_related_files_bfs_with_cross_project_detection(&input.active_files, input.max_depth)?;
     
-    // 3. Generate skeletons for the related files
-    let skeletons = generate_file_skeletons(&related_files, input.max_tokens)?;
+    // 3. Combine files for skeleton generation
+    let mut all_files = in_project_files.clone();
+    all_files.extend(cross_project_files.iter().cloned());
+    
+    // 4. Generate enhanced skeletons with cross-project annotations
+    let skeletons = generate_enhanced_file_skeletons_with_cross_project_detection(&all_files, input.max_tokens, repo_mapper.get_root_path())?;
     
     Ok(json!({
         "files": skeletons,
-        "total_files": skeletons.len(),
-        "max_tokens_used": input.max_tokens
+        "total_files": all_files.len(),
+        "in_project_files": in_project_files.len(),
+        "cross_project_files": cross_project_files.len(),
+        "max_tokens_used": input.max_tokens,
+        "cross_project_boundaries_detected": !cross_project_files.is_empty(),
+        "summary": format!(
+            "Found {} related files ({} in-project, {} cross-project)", 
+            all_files.len(), 
+            in_project_files.len(), 
+            cross_project_files.len()
+        )
     }))
 }
 
@@ -2907,3 +2917,204 @@ fn truncate_skeleton(skeleton: &str, max_tokens: usize) -> String {
 }
 
 
+
+
+/// Enhanced BFS traversal with cross-project boundary detection
+fn find_related_files_bfs_with_cross_project_detection(
+    active_files: &[String], 
+    max_depth: usize
+) -> Result<(Vec<String>, Vec<String>), String> {
+    use std::collections::{HashSet, BinaryHeap, HashMap};
+    use std::cmp::Reverse;
+    
+    let manager = super::graph_manager::get_graph_manager();
+    let manager = manager.read().map_err(|e| format!("Failed to acquire read lock: {}", e))?;
+    
+    let repo_mapper = manager.get_repo_mapper()
+        .ok_or("Repository mapper not available")?;
+    
+    // Initialize cross-project detector with supplementary project information
+    let supplementary_projects = manager.get_supplementary_projects();
+    tracing::info!("CrossProjectDetector initialized with {} supplementary projects: {:?}", 
+                   supplementary_projects.len(), 
+                   supplementary_projects.iter().map(|sp| &sp.name).collect::<Vec<_>>());
+    let detector = CrossProjectDetector::with_supplementary_projects(repo_mapper.get_root_path(), supplementary_projects);
+    
+    let mut visited = HashSet::new();
+    let mut queue = BinaryHeap::new();
+    let mut in_project_files = Vec::new();
+    let mut cross_project_files = Vec::new();
+    
+    // Categorize active files
+    for file in active_files {
+        if detector.is_cross_project_symbol(file) {
+            cross_project_files.push(file.clone());
+        } else {
+            in_project_files.push(file.clone());
+        }
+        visited.insert(file.clone());
+    }
+    
+    // Add in-project files to queue for BFS traversal
+    for file in &in_project_files {
+        queue.push((Reverse(0), 0, file.clone()));
+    }
+    
+    // BFS traversal for in-project files only
+    while let Some((Reverse(_), depth, current_file)) = queue.pop() {
+        if depth >= max_depth {
+            continue;
+        }
+        
+        // Calculate edge counts between current file and potential next files
+        let mut file_edge_counts: HashMap<String, usize> = HashMap::new();
+        
+        // Find symbols defined in current file
+        let symbols_in_file: Vec<_> = repo_mapper.get_all_symbols()
+            .iter()
+            .filter(|(_, symbol)| symbol.file_path == current_file)
+            .map(|(fqn, _)| fqn.clone())
+            .collect();
+        
+        // Count references FROM current file TO other files
+        for symbol_fqn in &symbols_in_file {
+            let references = repo_mapper.find_symbol_references_by_fqn(symbol_fqn);
+            for reference in references {
+                if !visited.contains(&reference.reference_file) && reference.reference_file != current_file {
+                    
+                    // Check if target file is cross-project
+                    if detector.is_cross_project_symbol(&reference.reference_file) {
+                        // Add to cross-project files but dont traverse further
+                        if !cross_project_files.contains(&reference.reference_file) {
+                            cross_project_files.push(reference.reference_file.clone());
+                            tracing::debug!("Found cross-project boundary: {} -> {}", 
+                                          current_file, reference.reference_file);
+                        }
+                        visited.insert(reference.reference_file.clone());
+                    } else {
+                        // Regular in-project file
+                        *file_edge_counts.entry(reference.reference_file.clone()).or_insert(0) += 1;
+                    }
+                }
+            }
+        }
+        
+        // Add in-project files to queue prioritized by edge count
+        for (file_path, edge_count) in file_edge_counts {
+            if !visited.contains(&file_path) {
+                visited.insert(file_path.clone());
+                in_project_files.push(file_path.clone());
+                queue.push((Reverse(-(edge_count as i32)), depth + 1, file_path));
+            }
+        }
+    }
+    
+    Ok((in_project_files, cross_project_files))
+}
+
+/// Generate enhanced file skeletons with cross-project annotations
+fn generate_enhanced_file_skeletons_with_cross_project_detection(
+    file_paths: &[String],
+    max_tokens: usize,
+    project_root: &std::path::Path,
+) -> Result<Vec<Value>, String> {
+    // Get supplementary project information from graph manager
+    let manager = super::graph_manager::get_graph_manager();
+    let manager = manager.read().map_err(|e| format!("Failed to acquire read lock: {}", e))?;
+    let supplementary_projects = manager.get_supplementary_projects();
+    tracing::info!("CrossProjectDetector (skeleton) initialized with {} supplementary projects: {:?}", 
+                   supplementary_projects.len(), 
+                   supplementary_projects.iter().map(|sp| &sp.name).collect::<Vec<_>>());
+    let detector = CrossProjectDetector::with_supplementary_projects(project_root, supplementary_projects);
+    let mut skeletons = Vec::new();
+    let mut total_tokens = 0;
+    
+    for file_path in file_paths {
+        if total_tokens >= max_tokens {
+            break;
+        }
+        
+        let is_cross_project = detector.is_cross_project_symbol(file_path);
+        let project_id = detector.get_project_identifier(file_path);
+        
+        // Generate skeleton with cross-project annotation
+        match generate_single_file_skeleton(file_path) {
+            Ok(skeleton) => {
+                let skeleton_tokens = approximate_tokens(&skeleton);
+                
+                if total_tokens + skeleton_tokens <= max_tokens {
+                    let enhanced_skeleton = if is_cross_project {
+                        format!(
+                            "// ═══════════════════════════════════════════════════════════════\n// CROSS-PROJECT FILE: {} \n// Project: {}\n// This file is from an external dependency/project\n// BFS traversal stops here to respect project boundaries\n// ═══════════════════════════════════════════════════════════════\n\n{}",
+                            file_path, project_id, skeleton
+                        )
+                    } else {
+                        skeleton
+                    };
+                    
+                    skeletons.push(json!({
+                        "file_path": file_path,
+                        "skeleton": enhanced_skeleton,
+                        "tokens": skeleton_tokens,
+                        "is_cross_project": is_cross_project,
+                        "project_id": project_id,
+                        "boundary_type": if is_cross_project { "external_dependency" } else { "in_project" }
+                    }));
+                    
+                    total_tokens += skeleton_tokens;
+                } else {
+                    // Truncate if needed
+                    let available_tokens = max_tokens - total_tokens;
+                    let truncated = truncate_skeleton(&skeleton, available_tokens);
+                    
+                    let enhanced_skeleton = if is_cross_project {
+                        format!(
+                            "// ═══════════════════════════════════════════════════════════════\n// CROSS-PROJECT FILE: {} \n// Project: {}\n// This file is from an external dependency/project\n// BFS traversal stops here to respect project boundaries\n// [TRUNCATED DUE TO TOKEN LIMIT]\n// ═══════════════════════════════════════════════════════════════\n\n{}",
+                            file_path, project_id, truncated
+                        )
+                    } else {
+                        format!("// [TRUNCATED DUE TO TOKEN LIMIT]\n\n{}", truncated)
+                    };
+                    
+                    skeletons.push(json!({
+                        "file_path": file_path,
+                        "skeleton": enhanced_skeleton,
+                        "tokens": available_tokens,
+                        "is_cross_project": is_cross_project,
+                        "project_id": project_id,
+                        "boundary_type": if is_cross_project { "external_dependency" } else { "in_project" },
+                        "truncated": true
+                    }));
+                    
+                    break;
+                }
+            },
+            Err(e) => {
+                // For cross-project files that cant be parsed, provide a minimal skeleton
+                if is_cross_project {
+                    let minimal_skeleton = format!(
+                        "// ═══════════════════════════════════════════════════════════════\n// CROSS-PROJECT FILE: {} \n// Project: {}\n// External dependency - skeleton generation failed\n// Error: {}\n// This represents a boundary to external code\n// ═══════════════════════════════════════════════════════════════\n\n// Unable to analyze external dependency file\n// This file is outside the current project scope",
+                        file_path, project_id, e
+                    );
+                    
+                    skeletons.push(json!({
+                        "file_path": file_path,
+                        "skeleton": minimal_skeleton,
+                        "tokens": 100,
+                        "is_cross_project": true,
+                        "project_id": project_id,
+                        "boundary_type": "external_dependency",
+                        "error": e,
+                        "analysis_status": "failed_external_dependency"
+                    }));
+                    
+                    total_tokens += 100;
+                } else {
+                    tracing::warn!("Failed to generate skeleton for in-project file {}: {}", file_path, e);
+                }
+            }
+        }
+    }
+    
+    Ok(skeletons)
+}

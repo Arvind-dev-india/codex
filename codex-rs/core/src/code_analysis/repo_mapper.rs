@@ -567,10 +567,30 @@ impl RepoMapper {
     
     /// Get a subgraph starting from a specific symbol with a maximum depth
     pub fn get_subgraph_bfs(&self, start_symbol: &str, max_depth: usize) -> CodeReferenceGraph {
+        self.get_subgraph_bfs_with_cross_project_detection(start_symbol, max_depth)
+    }
+
+    /// Enhanced get_subgraph_bfs with cross-project boundary detection
+    pub fn get_subgraph_bfs_with_cross_project_detection(&self, start_symbol: &str, max_depth: usize) -> CodeReferenceGraph {
+        // Initialize cross-project detector with supplementary project information
+        let manager = super::graph_manager::get_graph_manager();
+        let supplementary_projects = if let Ok(manager) = manager.read() {
+            manager.get_supplementary_projects().to_vec() // Clone to avoid lifetime issues
+        } else {
+            Vec::new() // fallback to empty if lock fails
+        };
+        let detector = CrossProjectDetector::with_supplementary_projects(&self.root_path, &supplementary_projects);
+        
+        // Add safety limits to prevent infinite loops
+        const MAX_NODES: usize = 1000;
+        const MAX_ITERATIONS: usize = 10000;
+        let mut iteration_count = 0;
+        
         let mut visited_nodes = HashSet::new();
         let mut nodes = Vec::new();
         let mut edges = Vec::new();
         let mut queue = std::collections::VecDeque::new();
+        let mut cross_project_nodes = Vec::new(); // Track cross-project terminal nodes
         
         // Find all starting nodes - first try exact FQN match, then try by name
         let start_nodes = if let Some(node) = self.symbol_nodes.get(start_symbol) {
@@ -610,6 +630,14 @@ impl RepoMapper {
         
         // BFS traversal
         while let Some((node_id, depth)) = queue.pop_front() {
+            iteration_count += 1;
+            
+            // Safety checks to prevent infinite loops
+            if iteration_count > MAX_ITERATIONS || nodes.len() > MAX_NODES {
+                tracing::warn!("BFS traversal hit safety limits: iterations={}, nodes={}", iteration_count, nodes.len());
+                break;
+            }
+            
             // Stop if we've reached the maximum depth
             if depth >= max_depth {
                 continue;
@@ -618,17 +646,27 @@ impl RepoMapper {
             // Find all edges where this node is the source
             for edge in &self.edges {
                 if edge.source == node_id && !visited_nodes.contains(&edge.target) {
-                    // Add the edge
-                    edges.push(edge.clone());
-                    
                     // Find the target node
                     let target_node = self.find_node_by_id(&edge.target);
                     if let Some(target_node) = target_node {
-                        // Add the target node
+                        
+                        // CHECK CROSS-PROJECT BOUNDARY
+                        if detector.is_cross_project_symbol(&target_node.file_path) {
+                            // This is a cross-project symbol - add it but don't traverse further
+                            edges.push(edge.clone());
+                            nodes.push(target_node.clone());
+                            visited_nodes.insert(edge.target.clone());
+                            cross_project_nodes.push(edge.target.clone());
+                            
+                            tracing::debug!("Found cross-project boundary: {} -> {}", 
+                                          node_id, target_node.file_path);
+                            continue; // Don't add to queue - treat as terminal
+                        }
+                        
+                        // Regular in-project symbol - add to queue for further traversal
+                        edges.push(edge.clone());
                         nodes.push(target_node.clone());
                         visited_nodes.insert(edge.target.clone());
-                        
-                        // Add the target to the queue with increased depth
                         queue.push_back((edge.target.clone(), depth + 1));
                     }
                 }
@@ -637,22 +675,32 @@ impl RepoMapper {
             // Also find all edges where this node is the target (for reverse traversal)
             for edge in &self.edges {
                 if edge.target == node_id && !visited_nodes.contains(&edge.source) {
-                    // Add the edge
-                    edges.push(edge.clone());
-                    
                     // Find the source node
                     let source_node = self.find_node_by_id(&edge.source);
                     if let Some(source_node) = source_node {
-                        // Add the source node
+                        
+                        // CHECK CROSS-PROJECT BOUNDARY for reverse edge
+                        if detector.is_cross_project_symbol(&source_node.file_path) {
+                            // Cross-project source - add but don't traverse
+                            edges.push(edge.clone());
+                            nodes.push(source_node.clone());
+                            visited_nodes.insert(edge.source.clone());
+                            cross_project_nodes.push(edge.source.clone());
+                            continue; // Terminal node
+                        }
+                        
+                        // Regular in-project symbol
+                        edges.push(edge.clone());
                         nodes.push(source_node.clone());
                         visited_nodes.insert(edge.source.clone());
-                        
-                        // Add the source to the queue with increased depth
                         queue.push_back((edge.source.clone(), depth + 1));
                     }
                 }
             }
         }
+        
+        tracing::info!("BFS completed: {} nodes ({} cross-project), {} edges", 
+                       nodes.len(), cross_project_nodes.len(), edges.len());
         
         CodeReferenceGraph { nodes, edges }
     }
@@ -1070,4 +1118,133 @@ impl RepoMapper {
 /// Create a new repository mapper
 pub fn create_repo_mapper(root_path: &Path) -> RepoMapper {
     RepoMapper::new(root_path)
+}
+
+/// Cross-project boundary detection utilities
+pub struct CrossProjectDetector {
+    current_project_root: PathBuf,
+    supplementary_projects: HashMap<String, PathBuf>, // name -> path mapping from --supplementary args
+    dependency_patterns: Vec<String>, // fallback for unknown external deps
+}
+
+impl CrossProjectDetector {
+    pub fn new(project_root: &Path) -> Self {
+        Self {
+            current_project_root: project_root.to_path_buf(),
+            supplementary_projects: HashMap::new(),
+            dependency_patterns: vec![
+                "node_modules".to_string(),
+                "target/debug/deps".to_string(),
+                "target/release/deps".to_string(),
+                ".cargo/registry".to_string(),
+                "vendor".to_string(),
+                "third_party".to_string(),
+                "external".to_string(),
+                "deps".to_string(),
+                "build".to_string(),
+                "dist".to_string(),
+                "out".to_string(),
+                ".git".to_string(),
+                ".vscode".to_string(),
+                ".idea".to_string(),
+            ],
+        }
+    }
+
+    /// Create detector with explicit supplementary project information
+    pub fn with_supplementary_projects(
+        project_root: &Path, 
+        supplementary_projects: &[crate::config_types::SupplementaryProjectConfig]
+    ) -> Self {
+        let mut detector = Self::new(project_root);
+        
+        // Add supplementary projects from --supplementary arguments
+        for project in supplementary_projects {
+            detector.supplementary_projects.insert(
+                project.name.clone(), 
+                PathBuf::from(&project.path)
+            );
+        }
+        
+        tracing::info!("CrossProjectDetector initialized with {} supplementary projects: {:?}", 
+                      detector.supplementary_projects.len(),
+                      detector.supplementary_projects.keys().collect::<Vec<_>>());
+        
+        detector
+    }
+
+    /// Check if a symbol belongs to a cross-project dependency
+    pub fn is_cross_project_symbol(&self, symbol_file_path: &str) -> bool {
+        let path = Path::new(symbol_file_path);
+        
+        // First, check if this file belongs to any supplementary project (explicit cross-project)
+        for (project_name, project_path) in &self.supplementary_projects {
+            if path.starts_with(project_path) {
+                tracing::debug!("File {} belongs to supplementary project: {}", symbol_file_path, project_name);
+                return true;
+            }
+        }
+        
+        // Check if the file is within the current project root
+        if path.is_absolute() {
+            if let Ok(relative_path) = path.strip_prefix(&self.current_project_root) {
+                // File is within project root - check if it's a dependency pattern (fallback)
+                self.is_dependency_path(relative_path)
+            } else {
+                // File is outside project root and not in supplementary projects - external dependency
+                true
+            }
+        } else {
+            // Relative path - check against dependency patterns (fallback)
+            self.is_dependency_path(path)
+        }
+    }
+
+    /// Check if a path matches known dependency patterns (fallback for unknown external deps)
+    fn is_dependency_path(&self, path: &Path) -> bool {
+        let path_str = path.to_string_lossy().to_lowercase();
+        
+        // Check against known dependency patterns (fallback)
+        for pattern in &self.dependency_patterns {
+            if path_str.contains(pattern) {
+                return true;
+            }
+        }
+        
+        false
+    }
+
+    /// Get supplementary project information
+    pub fn get_supplementary_projects(&self) -> &HashMap<String, PathBuf> {
+        &self.supplementary_projects
+    }
+    
+    /// Add a supplementary project
+    pub fn add_supplementary_project(&mut self, name: String, path: PathBuf) {
+        self.supplementary_projects.insert(name, path);
+    }
+
+    /// Get the project identifier for a file path
+    pub fn get_project_identifier(&self, file_path: &str) -> String {
+        let path = Path::new(file_path);
+        
+        // First, check if this file belongs to any supplementary project
+        for (project_name, project_path) in &self.supplementary_projects {
+            if path.starts_with(project_path) {
+                return format!("supplementary:{}", project_name);
+            }
+        }
+        
+        // Check if it's within the current project
+        if path.starts_with(&self.current_project_root) {
+            return "current".to_string();
+        }
+        
+        // Fallback for unknown external dependencies
+        if self.is_cross_project_symbol(file_path) {
+            "external:unknown".to_string()
+        } else {
+            "current".to_string()
+        }
+    }
 }
