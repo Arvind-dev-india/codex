@@ -2029,25 +2029,36 @@ fn get_related_files_skeleton_handler(args: Value) -> Result<Value, String> {
     // 2. Find related files by traversing the graph with cross-project detection
     let (in_project_files, cross_project_files) = find_related_files_bfs_with_cross_project_detection(&input.active_files, input.max_depth)?;
     
-    // 3. Combine files for skeleton generation
-    let mut all_files = in_project_files.clone();
-    all_files.extend(cross_project_files.iter().cloned());
+    // 3. Filter out the original active files from the results to avoid returning skeletons of the same files
+    let filtered_in_project_files: Vec<String> = in_project_files.into_iter()
+        .filter(|file| !active_files_set.contains(file))
+        .collect();
+    let filtered_cross_project_files: Vec<String> = cross_project_files.into_iter()
+        .filter(|file| !active_files_set.contains(file))
+        .collect();
     
-    // 4. Generate enhanced skeletons with cross-project annotations
-    let skeletons = generate_enhanced_file_skeletons_with_cross_project_detection(&all_files, input.max_tokens, repo_mapper.get_root_path())?;
+    // 4. Combine filtered files for skeleton generation (excluding original active files)
+    let mut all_related_files = filtered_in_project_files.clone();
+    all_related_files.extend(filtered_cross_project_files.iter().cloned());
+    
+    // 5. Generate enhanced skeletons with cross-project annotations for related files only
+    let skeletons = generate_enhanced_file_skeletons_with_cross_project_detection(&all_related_files, input.max_tokens, repo_mapper.get_root_path())?;
     
     Ok(json!({
-        "files": skeletons,
-        "total_files": all_files.len(),
-        "in_project_files": in_project_files.len(),
-        "cross_project_files": cross_project_files.len(),
+        "related_files": skeletons,
+        "files": skeletons,  // Keep both for backward compatibility
+        "total_files": all_related_files.len(),
+        "in_project_files": filtered_in_project_files.len(),
+        "cross_project_files": filtered_cross_project_files.len(),
         "max_tokens_used": input.max_tokens,
-        "cross_project_boundaries_detected": !cross_project_files.is_empty(),
+        "cross_project_boundaries_detected": !filtered_cross_project_files.is_empty(),
+        "active_files_excluded": input.active_files,
         "summary": format!(
-            "Found {} related files ({} in-project, {} cross-project)", 
-            all_files.len(), 
-            in_project_files.len(), 
-            cross_project_files.len()
+            "Found {} related files ({} in-project, {} cross-project) excluding {} active files", 
+            all_related_files.len(), 
+            filtered_in_project_files.len(), 
+            filtered_cross_project_files.len(),
+            input.active_files.len()
         )
     }))
 }
@@ -2289,41 +2300,23 @@ pub fn generate_single_file_skeleton(file_path: &str) -> Result<String, String> 
     
     skeleton.push_str("\n");
     
-    // Group symbols by parent for hierarchical structure
-    let mut child_symbols: std::collections::HashMap<String, Vec<&super::context_extractor::CodeSymbol>> = std::collections::HashMap::new();
-    let mut top_level_symbols = Vec::new();
+    // Generate clean, non-duplicated skeleton with proper hierarchy
+    tracing::debug!("Generating clean skeleton for {} symbols", symbols_in_file.len());
     
-    for symbol in &symbols_in_file {
-        if let Some(parent) = &symbol.parent {
-            child_symbols.entry(parent.clone()).or_insert_with(Vec::new).push(symbol);
-        } else {
-            top_level_symbols.push(symbol);
-        }
-    }
+    // Create a proper parent-child hierarchy
+    let symbol_hierarchy = build_symbol_hierarchy(&symbols_in_file);
     
-    // Generate skeleton for top-level symbols
-    tracing::debug!("Generating skeleton for {} top-level symbols", top_level_symbols.len());
-    
-    for symbol in &top_level_symbols {
-        if let Err(e) = generate_symbol_skeleton(&mut skeleton, symbol, &child_symbols, &lines, 0) {
-            tracing::warn!("Failed to generate skeleton for symbol {}: {}, using simple fallback", symbol.name, e);
-            // Add a simple fallback for this symbol
-            let signature = extract_symbol_signature(&lines, symbol).unwrap_or_else(|_| format!("// {}: {}", symbol.symbol_type.as_str(), symbol.name));
-            skeleton.push_str(&format!("// Lines {}-{}\n", symbol.start_line, symbol.end_line));
-            skeleton.push_str(&format!("{} {{\n", signature));
-            skeleton.push_str("    // ...\n");
-            skeleton.push_str("}\n\n");
-        }
+    // Generate skeleton for each symbol in line order, respecting hierarchy
+    for symbol in &symbol_hierarchy {
+        generate_clean_symbol_skeleton(&mut skeleton, symbol, &lines, 0);
     }
     
     // If we still have minimal content, add more symbols as simple entries
-    if skeleton.len() < 200 && symbols_in_file.len() > top_level_symbols.len() {
-        skeleton.push_str("\n// Additional symbols:\n");
+    if skeleton.len() < 200 {
+        skeleton.push_str("\n// Additional symbols (fallback):\n");
         for symbol in &symbols_in_file {
-            if !top_level_symbols.contains(&symbol) {
-                let signature = extract_symbol_signature(&lines, symbol).unwrap_or_else(|_| format!("// {}: {}", symbol.symbol_type.as_str(), symbol.name));
-                skeleton.push_str(&format!("// Lines {}-{}: {}\n", symbol.start_line, symbol.end_line, signature));
-            }
+            let signature = extract_symbol_signature(&lines, symbol).unwrap_or_else(|_| format!("// {}: {}", symbol.symbol_type.as_str(), symbol.name));
+            skeleton.push_str(&format!("// Lines {}-{}: {}\n", symbol.start_line, symbol.end_line, signature));
         }
     }
     
@@ -2855,6 +2848,101 @@ fn generate_symbol_skeleton(
     }
     
     Ok(())
+}
+
+/// Hierarchical symbol structure for clean skeleton generation
+#[derive(Debug, Clone)]
+struct HierarchicalSymbol {
+    symbol: super::context_extractor::CodeSymbol,
+    children: Vec<HierarchicalSymbol>,
+}
+
+/// Build a proper symbol hierarchy without duplication, sorted by line numbers
+fn build_symbol_hierarchy(symbols: &[super::context_extractor::CodeSymbol]) -> Vec<HierarchicalSymbol> {
+    use std::collections::HashMap;
+    
+    // Create a map for quick symbol lookup by name
+    let mut symbol_map: HashMap<String, &super::context_extractor::CodeSymbol> = HashMap::new();
+    for symbol in symbols {
+        symbol_map.insert(symbol.name.clone(), symbol);
+    }
+    
+    // Group symbols by parent
+    let mut children_map: HashMap<String, Vec<&super::context_extractor::CodeSymbol>> = HashMap::new();
+    let mut top_level_symbols = Vec::new();
+    
+    for symbol in symbols {
+        if let Some(parent_name) = &symbol.parent {
+            children_map.entry(parent_name.clone()).or_insert_with(Vec::new).push(symbol);
+        } else {
+            top_level_symbols.push(symbol);
+        }
+    }
+    
+    // Sort all symbol lists by line number
+    top_level_symbols.sort_by_key(|s| s.start_line);
+    for children in children_map.values_mut() {
+        children.sort_by_key(|s| s.start_line);
+    }
+    
+    // Build hierarchical structure recursively
+    fn build_hierarchy_recursive(
+        symbol: &super::context_extractor::CodeSymbol,
+        children_map: &HashMap<String, Vec<&super::context_extractor::CodeSymbol>>,
+    ) -> HierarchicalSymbol {
+        let children = if let Some(child_symbols) = children_map.get(&symbol.name) {
+            child_symbols.iter()
+                .map(|child| build_hierarchy_recursive(child, children_map))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        
+        HierarchicalSymbol {
+            symbol: symbol.clone(),
+            children,
+        }
+    }
+    
+    // Build hierarchy for top-level symbols
+    top_level_symbols.into_iter()
+        .map(|symbol| build_hierarchy_recursive(symbol, &children_map))
+        .collect()
+}
+
+/// Generate clean symbol skeleton without duplication
+fn generate_clean_symbol_skeleton(
+    skeleton: &mut String,
+    hierarchical_symbol: &HierarchicalSymbol,
+    lines: &[&str],
+    indent_level: usize,
+) {
+    let indent = "    ".repeat(indent_level);
+    let symbol = &hierarchical_symbol.symbol;
+    
+    // Extract and add the symbol signature with line numbers
+    let signature = extract_symbol_signature(lines, symbol)
+        .unwrap_or_else(|_| format!("// {}: {}", symbol.symbol_type.as_str(), symbol.name));
+    
+    skeleton.push_str(&format!("{}// Lines {}-{}\n", indent, symbol.start_line, symbol.end_line));
+    skeleton.push_str(&format!("{}{}", indent, signature));
+    
+    if hierarchical_symbol.children.is_empty() {
+        // No children, just add simple body
+        skeleton.push_str(" {\n");
+        skeleton.push_str(&format!("{}    // ...\n", indent));
+        skeleton.push_str(&format!("{}}}\n\n", indent));
+    } else {
+        // Has children, add them nested inside
+        skeleton.push_str(" {\n");
+        
+        // Add child symbols with increased indentation (sorted by line number)
+        for child in &hierarchical_symbol.children {
+            generate_clean_symbol_skeleton(skeleton, child, lines, indent_level + 1);
+        }
+        
+        skeleton.push_str(&format!("{}}}\n\n", indent));
+    }
 }
 
 /// Extract symbol signature from source lines
