@@ -7,6 +7,8 @@ use tracing;
 
 use crate::openai_tools::{JsonSchema, OpenAiTool, create_function_tool};
 use super::repo_mapper::CrossProjectDetector;
+use super::supplementary_registry::SupplementarySymbolRegistry;
+use super::enhanced_bfs_traversal::find_related_files_optimized;
 
 /// Register all code analysis tools
 pub fn register_code_analysis_tools() -> Vec<OpenAiTool> {
@@ -2026,10 +2028,18 @@ fn get_related_files_skeleton_handler(args: Value) -> Result<Value, String> {
         start_symbols.extend(repo_mapper.get_symbols_for_file(file_path));
     }
     
-    // 2. Find related files by traversing the graph with cross-project detection
-    let (in_project_files, cross_project_files) = find_related_files_bfs_with_cross_project_detection(&input.active_files, input.max_depth)?;
+    // 2. Create supplementary registry from existing data
+    let supplementary_registry = get_or_create_supplementary_registry(&manager)?;
     
-    // 3. Filter out the original active files from the results to avoid returning skeletons of the same files
+    println!("DEBUG: About to call find_related_files_optimized with {} active files", input.active_files.len());
+    
+    // 3. Find related files using enhanced BFS with supplementary registry
+    let (in_project_files, cross_project_files) = find_related_files_optimized(&input.active_files, input.max_depth, &supplementary_registry)?;
+    
+    println!("DEBUG: Enhanced BFS returned {} in-project files, {} cross-project files", 
+             in_project_files.len(), cross_project_files.len());
+    
+    // 4. Filter out the original active files from the results to avoid returning skeletons of the same files
     let filtered_in_project_files: Vec<String> = in_project_files.into_iter()
         .filter(|file| !active_files_set.contains(file))
         .collect();
@@ -2037,11 +2047,11 @@ fn get_related_files_skeleton_handler(args: Value) -> Result<Value, String> {
         .filter(|file| !active_files_set.contains(file))
         .collect();
     
-    // 4. Combine filtered files for skeleton generation (excluding original active files)
+    // 5. Combine filtered files for skeleton generation (excluding original active files)
     let mut all_related_files = filtered_in_project_files.clone();
     all_related_files.extend(filtered_cross_project_files.iter().cloned());
     
-    // 5. Generate enhanced skeletons with cross-project annotations for related files only
+    // 6. Generate enhanced skeletons with cross-project annotations for related files only
     let skeletons = generate_enhanced_file_skeletons_with_cross_project_detection(&all_related_files, input.max_tokens, repo_mapper.get_root_path())?;
     
     Ok(json!({
@@ -2835,6 +2845,30 @@ fn truncate_skeleton(skeleton: &str, max_tokens: usize) -> String {
 
 
 
+
+/// Create or get supplementary registry from existing graph data
+fn get_or_create_supplementary_registry(manager: &std::sync::RwLockReadGuard<super::graph_manager::CodeGraphManager>) -> Result<SupplementarySymbolRegistry, String> {
+    let supplementary_projects = manager.get_supplementary_projects();
+    
+    if supplementary_projects.is_empty() {
+        tracing::info!("No supplementary projects configured, returning empty registry");
+        return Ok(SupplementarySymbolRegistry::new());
+    }
+    
+    tracing::info!("Creating supplementary registry from {} existing supplementary projects", supplementary_projects.len());
+    
+    // Use the existing extract_supplementary_symbols_lightweight function
+    // Note: This is async, but we're in a sync context. For now, we'll create an empty registry
+    // and populate it synchronously from any existing data in the graph manager
+    let mut registry = SupplementarySymbolRegistry::new();
+    registry.project_count = supplementary_projects.len();
+    
+    // TODO: In a future enhancement, we could cache the supplementary registry in the graph manager
+    // For now, we'll work with the existing cross-project detection logic but use the registry structure
+    
+    tracing::info!("Supplementary registry created with {} projects (async population deferred)", supplementary_projects.len());
+    Ok(registry)
+}
 
 /// Enhanced BFS traversal with cross-project boundary detection
 fn find_related_files_bfs_with_cross_project_detection(

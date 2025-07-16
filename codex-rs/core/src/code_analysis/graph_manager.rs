@@ -178,27 +178,25 @@ impl CodeGraphManager {
 
     /// Perform a full rebuild of the code graph
     fn full_rebuild(&mut self, root_path: &Path) -> Result<(), String> {
+        tracing::info!("Starting optimized graph rebuild for: {}", root_path.display());
+        
         // Force complete cleanup of any existing state to prevent contamination
         self.force_complete_cleanup()?;
         
-        // Initialize memory-optimized storage first
-        self.initialize_storage()?;
-        
-        // Initialize storage for this specific project (clears old data)
-        if let Some(ref storage) = self.symbol_storage {
-            storage.initialize_for_project(root_path)?;
-        }
-        
-        // Create new repository mapper
+        // Create new repository mapper and use the standard method (not memory-optimized)
+        // This ensures symbols are stored directly in the repo mapper for fast access
         let mut repo_mapper = RepoMapper::new(root_path);
         
-        // Map the repository with memory optimization
-        repo_mapper.map_repository_with_storage(self.symbol_storage.as_ref())?;
+        // Use the standard map_repository method for reliability and speed
+        repo_mapper.map_repository()?;
         
-        // Update file metadata
+        let symbol_count = repo_mapper.get_all_symbols().len();
+        tracing::info!("Repository mapping completed with {} symbols", symbol_count);
+        
+        // Update file metadata for incremental updates
         self.update_file_metadata(root_path)?;
         
-        // Store the new state
+        // Store the new state - repo mapper contains all symbols directly
         self.repo_mapper = Some(repo_mapper);
         self.root_path = Some(root_path.to_path_buf());
         self.initialized = true;
@@ -391,6 +389,22 @@ impl CodeGraphManager {
     /// Get the current repository mapper (if initialized)
     pub fn get_repo_mapper(&self) -> Option<&RepoMapper> {
         self.repo_mapper.as_ref()
+    }
+    
+    /// Get all symbols from the graph (fast access)
+    pub fn get_all_symbols(&self) -> std::collections::HashMap<String, super::context_extractor::CodeSymbol> {
+        if let Some(ref repo_mapper) = self.repo_mapper {
+            repo_mapper.get_all_symbols().clone()
+        } else {
+            std::collections::HashMap::new()
+        }
+    }
+    
+    /// Check if graph is properly initialized with symbols
+    pub fn has_symbols(&self) -> bool {
+        self.repo_mapper.as_ref()
+            .map(|rm| !rm.get_all_symbols().is_empty())
+            .unwrap_or(false)
     }
 
     pub fn get_supplementary_projects(&self) -> &[crate::config_types::SupplementaryProjectConfig] {

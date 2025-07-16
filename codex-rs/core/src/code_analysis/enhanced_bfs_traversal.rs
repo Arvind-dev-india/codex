@@ -24,18 +24,62 @@ pub fn find_related_files_bfs_with_cross_project_boundaries(
 // the enhanced graph structures with the existing graph system
 
 /// Optimized file discovery with cross-project boundary detection
-/// This is a simplified version that works with the current graph structure
+/// This version uses the actual graph with cross-project edges
 pub fn find_related_files_optimized(
     active_files: &[String],
     max_depth: usize,
     supplementary_registry: &SupplementarySymbolRegistry,
 ) -> Result<(Vec<String>, Vec<String>), String> {
     
-    info!("Starting optimized file discovery for {} active files", active_files.len());
+    println!("DEBUG: Enhanced BFS called with {} active files, max_depth {}", active_files.len(), max_depth);
+    info!("Starting optimized file discovery for {} active files with max depth {}", active_files.len(), max_depth);
     
-    let _graph_manager = get_graph_manager();
-    // TODO: Implement proper graph traversal when needed
+    let graph_manager = get_graph_manager();
     
+    // Check if graph needs initialization
+    {
+        let manager = graph_manager.read().map_err(|e| format!("Failed to acquire read lock: {}", e))?;
+        if !manager.has_symbols() {
+            println!("DEBUG: Graph has no symbols - attempting initialization");
+            drop(manager); // Release read lock
+            
+            // Force initialization if needed
+            let mut write_manager = graph_manager.write().map_err(|e| format!("Failed to acquire write lock: {}", e))?;
+            if !write_manager.has_symbols() {
+                // Get the root path from active files
+                if let Some(first_file) = active_files.first() {
+                    if let Some(parent_dir) = std::path::Path::new(first_file).parent() {
+                        println!("DEBUG: Force initializing graph for: {:?}", parent_dir);
+                        if let Err(e) = write_manager.ensure_graph_for_path(parent_dir) {
+                            println!("DEBUG: Graph initialization failed: {}", e);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Now get a fresh read lock and proceed
+    let manager = graph_manager.read().map_err(|e| format!("Failed to acquire read lock: {}", e))?;
+    
+    if !manager.has_symbols() {
+        println!("DEBUG: Still no symbols after initialization - returning empty results");
+        return Ok((Vec::new(), Vec::new()));
+    }
+    
+    // Get all symbols efficiently from graph manager
+    let all_symbols = manager.get_all_symbols();
+    println!("DEBUG: Graph contains {} total symbols", all_symbols.len());
+    
+    let repo_mapper = manager.get_repo_mapper()
+        .ok_or("Repository mapper not available")?;
+    
+    if all_symbols.is_empty() {
+        println!("DEBUG: No symbols available - returning empty results");
+        return Ok((Vec::new(), Vec::new()));
+    }
+    
+    // Now we have symbols - proceed with BFS traversal
     let mut visited = HashSet::new();
     let mut queue = VecDeque::new();
     let mut main_project_files = HashSet::new();
@@ -46,7 +90,7 @@ pub fn find_related_files_optimized(
         if !visited.contains(file) {
             visited.insert(file.clone());
             
-            // Check if this is a supplementary file
+            // Check if this is a supplementary file using the registry
             if supplementary_registry.contains_file(file) {
                 supplementary_files.insert(file.clone());
                 debug!("Active file {} is from supplementary project", file);
@@ -58,24 +102,203 @@ pub fn find_related_files_optimized(
         }
     }
     
-    // BFS traversal using existing graph structure
+    // BFS traversal using actual graph structure with cross-project boundary detection
     while let Some((current_file, depth)) = queue.pop_front() {
         if depth >= max_depth {
             continue;
         }
         
-        // For now, skip complex graph traversal and just return the categorized active files
-        // TODO: Implement proper cross-project BFS traversal when graph structure is clarified
-        break;
+        debug!("Processing file {} at depth {}", current_file, depth);
+        
+        // Find symbols defined in current file
+        let symbols_in_file: Vec<_> = all_symbols
+            .iter()
+            .filter(|(_, symbol)| symbol.file_path == current_file)
+            .map(|(fqn, _)| fqn.clone())
+            .collect();
+        
+        debug!("Found {} symbols in file {}", symbols_in_file.len(), current_file);
+        
+        // Count references FROM current file TO other files
+        for symbol_fqn in &symbols_in_file {
+            let references = repo_mapper.find_symbol_references_by_fqn(symbol_fqn);
+            debug!("Symbol {} has {} references", symbol_fqn, references.len());
+            
+            for reference in references {
+                if !visited.contains(&reference.reference_file) && reference.reference_file != current_file {
+                    visited.insert(reference.reference_file.clone());
+                    
+                    // Check if target file is from supplementary project using registry
+                    if supplementary_registry.contains_file(&reference.reference_file) {
+                        // Add to supplementary files but don't traverse further (cross-project boundary)
+                        if supplementary_files.insert(reference.reference_file.clone()) {
+                            debug!("Found cross-project boundary: {} -> {} (supplementary)", 
+                                  current_file, reference.reference_file);
+                        }
+                    } else {
+                        // Regular in-project file - add to queue for further traversal
+                        main_project_files.insert(reference.reference_file.clone());
+                        queue.push_back((reference.reference_file.clone(), depth + 1));
+                        debug!("Found in-project reference: {} -> {} (depth {})", 
+                              current_file, reference.reference_file, depth + 1);
+                    }
+                }
+            }
+        }
     }
     
     let main_files: Vec<String> = main_project_files.into_iter().collect();
     let supp_files: Vec<String> = supplementary_files.into_iter().collect();
     
-    info!("Optimized discovery completed: {} main project files, {} supplementary files", 
+    info!("Enhanced BFS completed: {} main project files, {} supplementary files", 
           main_files.len(), supp_files.len());
     
     Ok((main_files, supp_files))
+}
+
+
+/// Find related files using memory-optimized storage when repo mapper is empty
+fn find_related_files_using_storage(
+    active_files: &[String],
+    _max_depth: usize,
+    supplementary_registry: &SupplementarySymbolRegistry,
+    manager: &std::sync::RwLockReadGuard<crate::code_analysis::graph_manager::CodeGraphManager>,
+) -> Result<(Vec<String>, Vec<String>), String> {
+    
+    println!("DEBUG: Implementing storage-based BFS traversal");
+    
+    let _storage = manager.get_symbol_storage()
+        .ok_or("Storage not available")?;
+    
+    let mut main_project_files = HashSet::new();
+    let mut supplementary_files = HashSet::new();
+    let mut visited = HashSet::new();
+    
+    // For now, implement a simple version that finds related files based on file patterns
+    // This is a temporary solution until we can properly access symbols from storage
+    
+    for active_file in active_files {
+        visited.insert(active_file.clone());
+        
+        // Check if this is a supplementary file
+        if supplementary_registry.contains_file(active_file) {
+            supplementary_files.insert(active_file.clone());
+        } else {
+            // For Python files, look for related files in the same directory structure
+            if active_file.ends_with(".py") {
+                let file_path = std::path::Path::new(active_file);
+                if let Some(parent_dir) = file_path.parent() {
+                    // Find other Python files in the same directory and subdirectories
+                    if let Ok(entries) = std::fs::read_dir(parent_dir) {
+                        for entry in entries.flatten() {
+                            let path = entry.path();
+                            if path.is_file() && path.extension().map_or(false, |ext| ext == "py") {
+                                let path_str = path.to_string_lossy().to_string();
+                                if !visited.contains(&path_str) && path_str != *active_file {
+                                    main_project_files.insert(path_str);
+                                    visited.insert(path.to_string_lossy().to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    let main_files: Vec<String> = main_project_files.into_iter().collect();
+    let supp_files: Vec<String> = supplementary_files.into_iter().collect();
+    
+    println!("DEBUG: Storage-based BFS found {} main files, {} supplementary files", 
+             main_files.len(), supp_files.len());
+    
+    Ok((main_files, supp_files))
+}
+
+/// Fallback BFS function when graph is not properly initialized
+fn find_related_files_bfs_with_cross_project_detection_fallback(
+    active_files: &[String], 
+    max_depth: usize,
+    detector: &super::repo_mapper::CrossProjectDetector,
+    repo_mapper: &super::repo_mapper::RepoMapper,
+) -> Result<(Vec<String>, Vec<String>), String> {
+    use std::collections::{HashSet, BinaryHeap, HashMap};
+    use std::cmp::Reverse;
+    
+    println!("DEBUG: Using fallback BFS with {} active files", active_files.len());
+    
+    let mut visited = HashSet::new();
+    let mut queue = BinaryHeap::new();
+    let mut in_project_files = HashSet::new();
+    let mut cross_project_files = HashSet::new();
+    
+    // Categorize active files
+    for file in active_files {
+        if detector.is_cross_project_symbol(file) {
+            cross_project_files.insert(file.clone());
+        } else {
+            in_project_files.insert(file.clone());
+        }
+        visited.insert(file.clone());
+    }
+    
+    // Add in-project files to queue for BFS traversal
+    for file in &in_project_files {
+        queue.push((Reverse(0), 0, file.clone()));
+    }
+    
+    // BFS traversal for in-project files only
+    while let Some((Reverse(_), depth, current_file)) = queue.pop() {
+        if depth >= max_depth {
+            continue;
+        }
+        
+        // Calculate edge counts between current file and potential next files
+        let mut file_edge_counts: HashMap<String, usize> = HashMap::new();
+        
+        // Find symbols defined in current file
+        let symbols_in_file: Vec<_> = repo_mapper.get_all_symbols()
+            .iter()
+            .filter(|(_, symbol)| symbol.file_path == current_file)
+            .map(|(fqn, _)| fqn.clone())
+            .collect();
+        
+        // Count references FROM current file TO other files
+        for symbol_fqn in &symbols_in_file {
+            let references = repo_mapper.find_symbol_references_by_fqn(symbol_fqn);
+            for reference in references {
+                if !visited.contains(&reference.reference_file) && reference.reference_file != current_file {
+                    
+                    // Check if target file is cross-project
+                    if detector.is_cross_project_symbol(&reference.reference_file) {
+                        // Add to cross-project files but dont traverse further
+                        if cross_project_files.insert(reference.reference_file.clone()) {
+                            debug!("Found cross-project boundary: {} -> {}", 
+                                  current_file, reference.reference_file);
+                        }
+                        visited.insert(reference.reference_file.clone());
+                    } else {
+                        // Regular in-project file
+                        *file_edge_counts.entry(reference.reference_file.clone()).or_insert(0) += 1;
+                    }
+                }
+            }
+        }
+        
+        // Add in-project files to queue prioritized by edge count
+        for (file_path, edge_count) in file_edge_counts {
+            if !visited.contains(&file_path) {
+                visited.insert(file_path.clone());
+                in_project_files.insert(file_path.clone());
+                queue.push((Reverse(-(edge_count as i32)), depth + 1, file_path));
+            }
+        }
+    }
+    
+    println!("DEBUG: Fallback BFS found {} in-project files, {} cross-project files", 
+             in_project_files.len(), cross_project_files.len());
+    
+    Ok((in_project_files.into_iter().collect(), cross_project_files.into_iter().collect()))
 }
 
 #[cfg(test)]

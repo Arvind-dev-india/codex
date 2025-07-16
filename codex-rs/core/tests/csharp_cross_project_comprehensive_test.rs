@@ -436,6 +436,7 @@ async fn test_analyze_projects(main_dir: &Path, skeleton_dir: &Path) {
         match handle_analyze_code(input) {
             Some(Ok(result)) => {
                 println!("✅ Successfully analyzed main project file: {}", file.display());
+                if let Some(symbols) = result.get("symbols").and_then(|s| s.as_array()) {
                     println!("   Found {} symbols", symbols.len());
                 }
             }
@@ -484,28 +485,27 @@ async fn test_cross_project_symbol_references(_main_dir: &Path, _skeleton_dir: &
             Some(Ok(result)) => {
                 println!("✅ Found references for symbol: {}", symbol);
                 if let Some(references) = result.get("references").and_then(|r| r.as_array()) {
-                        println!("   Found {} references", references.len());
-                        
-                        // Check for cross-project references
-                        let mut main_refs = 0;
-                        let mut skeleton_refs = 0;
-                        
-                        for reference in references {
-                            if let Some(file) = reference.get("file").and_then(|f| f.as_str()) {
-                                if file.contains("MainProject") {
-                                    main_refs += 1;
-                                } else if file.contains("SkeletonProject") {
-                                    skeleton_refs += 1;
-                                }
+                    println!("   Found {} references", references.len());
+                    
+                    // Check for cross-project references
+                    let mut main_refs = 0;
+                    let mut skeleton_refs = 0;
+                    
+                    for reference in references {
+                        if let Some(file) = reference.get("file").and_then(|f| f.as_str()) {
+                            if file.contains("MainProject") {
+                                main_refs += 1;
+                            } else if file.contains("SkeletonProject") {
+                                skeleton_refs += 1;
                             }
                         }
-                        
-                        println!("   Main project references: {}, Skeleton project references: {}", 
-                                main_refs, skeleton_refs);
-                        
-                        if main_refs > 0 && skeleton_refs > 0 {
-                            println!("   ✅ Cross-project references detected!");
-                        }
+                    }
+                    
+                    println!("   Main project references: {}, Skeleton project references: {}", 
+                            main_refs, skeleton_refs);
+                    
+                    if main_refs > 0 && skeleton_refs > 0 {
+                        println!("   ✅ Cross-project references detected!");
                     }
                 }
             }
@@ -535,16 +535,16 @@ async fn test_cross_project_symbol_definitions(_main_dir: &Path, _skeleton_dir: 
             Some(Ok(result)) => {
                 println!("✅ Found definitions for symbol: {}", symbol);
                 if let Some(definitions) = result.get("definitions").and_then(|d| d.as_array()) {
-                        println!("   Found {} definitions", definitions.len());
-                        
-                        for definition in definitions {
-                            if let Some(file) = definition.get("file").and_then(|f| f.as_str()) {
-                                let project = if file.contains("MainProject") { "Main" } else { "Skeleton" };
-                                println!("   Definition in {} project: {}", project, file);
-                            }
+                    println!("   Found {} definitions", definitions.len());
+                    
+                    for definition in definitions {
+                        if let Some(file) = definition.get("file").and_then(|f| f.as_str()) {
+                            let project = if file.contains("MainProject") { "Main" } else { "Skeleton" };
+                            println!("   Definition in {} project: {}", project, file);
                         }
                     }
                 }
+            }
             }
             Some(Err(e)) => println!("❌ Failed to find definitions for {}: {}", symbol, e),
             None => println!("❌ No result for symbol: {}", symbol),
