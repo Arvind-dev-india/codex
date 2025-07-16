@@ -622,7 +622,7 @@ pub async fn initialize_graph_async(root_path: &Path) -> Result<(), String> {
             
             // Clone data for background task
             let root_path_bg = root_path.to_path_buf();
-            let manager_clone = Arc::clone(&get_graph_manager());
+            let _manager_clone = Arc::clone(&get_graph_manager());
             
             // Start background metadata update (truly non-blocking and deferred)
             let manager_weak = Arc::downgrade(&get_graph_manager());

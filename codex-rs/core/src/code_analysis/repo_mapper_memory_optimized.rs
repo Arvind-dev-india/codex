@@ -132,46 +132,6 @@ impl RepoMapper {
         Ok(())
     }
     
-    /// Process a single file and extract symbols
-    fn process_file_for_symbols(&mut self, file_path: &str) -> Result<Vec<CodeSymbol>, String> {
-        // Check if file is supported
-        let path = std::path::Path::new(file_path);
-        let extension = path.extension()
-            .and_then(|ext| ext.to_str())
-            .ok_or_else(|| format!("No extension found for file: {}", file_path))?;
-        
-        if SupportedLanguage::from_extension(extension).is_none() {
-            return Ok(Vec::new()); // Skip unsupported files
-        }
-        
-        // Skip very large files to prevent memory issues
-        if let Ok(metadata) = std::fs::metadata(file_path) {
-            if metadata.len() > 10 * 1024 * 1024 { // Skip files > 10MB
-                tracing::debug!("Skipping large file: {} ({} MB)", 
-                               file_path, metadata.len() / (1024 * 1024));
-                return Ok(Vec::new());
-            }
-        }
-        
-        // Create context extractor for this file
-        let mut extractor = create_context_extractor();
-        
-        // Extract symbols
-        extractor.extract_symbols_from_file_incremental(file_path)?;
-        
-        // Store references in the main context extractor for graph building
-        let references = extractor.get_references();
-        tracing::debug!("Adding {} references from {} to main context extractor", 
-                       references.len(), file_path);
-        for reference in references {
-            self.add_reference(reference.clone());
-        }
-        
-        // Return symbols as vector
-        let symbols: Vec<CodeSymbol> = extractor.get_symbols().values().cloned().collect();
-        
-        Ok(symbols)
-    }
     
     /// Get memory usage statistics from the repository mapper
     pub fn get_memory_stats(&self) -> String {

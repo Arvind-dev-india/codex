@@ -715,10 +715,6 @@ impl ContextExtractor {
         Vec::new()
     }
     
-    /// Normalize a file path for consistent lookup by converting to relative path from project root
-    fn normalize_path_for_lookup(file_path: &str) -> String {
-        Self::normalize_path_for_lookup_with_root(file_path, None)
-    }
     
     /// Normalize a file path for consistent lookup with optional project root
     fn normalize_path_for_lookup_with_root(file_path: &str, project_root: Option<&std::path::Path>) -> String {
@@ -863,7 +859,7 @@ impl ContextExtractor {
                 } else {
                     // If no FQN, check if we have any symbol with this name
                     // A reference is unresolved if we have NO symbols with this name
-                    if let Some(fqns) = self.name_to_fqns.get(&reference.symbol_name) {
+                    if let Some(_fqns) = self.name_to_fqns.get(&reference.symbol_name) {
                         // We have symbols with this name, so reference is resolved
                         false
                     } else {

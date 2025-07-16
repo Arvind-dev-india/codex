@@ -1,5 +1,4 @@
 use crate::config_profile::ConfigProfile;
-use crate::config_types::CodeAnalysisConfig;
 use crate::config_types::History;
 use crate::config_types::McpServerConfig;
 use crate::config_types::ReasoningEffort;
@@ -8,7 +7,6 @@ use crate::config_types::SandboxMode;
 use crate::config_types::SandboxWorkplaceWrite;
 use crate::config_types::ShellEnvironmentPolicy;
 use crate::config_types::ShellEnvironmentPolicyToml;
-use crate::config_types::SupplementaryProjectConfig;
 use crate::config_types::Tui;
 use crate::config_types::UriBasedFileOpener;
 use crate::flags::OPENAI_DEFAULT_MODEL;
