@@ -590,7 +590,7 @@ impl RepoMapper {
         let mut nodes = Vec::new();
         let mut edges = Vec::new();
         let mut queue = std::collections::VecDeque::new();
-        let mut cross_project_nodes = Vec::new(); // Track cross-project terminal nodes
+        let mut cross_project_nodes = HashSet::new(); // Track cross-project terminal nodes (prevent duplicates)
         
         // Find all starting nodes - first try exact FQN match, then try by name
         let start_nodes = if let Some(node) = self.symbol_nodes.get(start_symbol) {
@@ -656,7 +656,7 @@ impl RepoMapper {
                             edges.push(edge.clone());
                             nodes.push(target_node.clone());
                             visited_nodes.insert(edge.target.clone());
-                            cross_project_nodes.push(edge.target.clone());
+                            cross_project_nodes.insert(edge.target.clone());
                             
                             tracing::debug!("Found cross-project boundary: {} -> {}", 
                                           node_id, target_node.file_path);
@@ -685,7 +685,7 @@ impl RepoMapper {
                             edges.push(edge.clone());
                             nodes.push(source_node.clone());
                             visited_nodes.insert(edge.source.clone());
-                            cross_project_nodes.push(edge.source.clone());
+                            cross_project_nodes.insert(edge.source.clone());
                             continue; // Terminal node
                         }
                         
