@@ -38,6 +38,9 @@ mod safety;
 mod user_notification;
 pub mod util;
 
+#[cfg(test)]
+mod detailed_cross_project_test;
+
 // Azure DevOps integration
 pub mod azure_devops;
 
