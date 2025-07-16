@@ -3030,15 +3030,15 @@ fn find_related_files_bfs_with_cross_project_detection(
     
     let mut visited = HashSet::new();
     let mut queue = BinaryHeap::new();
-    let mut in_project_files = Vec::new();
-    let mut cross_project_files = Vec::new();
+    let mut in_project_files = HashSet::new();
+    let mut cross_project_files = HashSet::new();
     
     // Categorize active files
     for file in active_files {
         if detector.is_cross_project_symbol(file) {
-            cross_project_files.push(file.clone());
+            cross_project_files.insert(file.clone());
         } else {
-            in_project_files.push(file.clone());
+            in_project_files.insert(file.clone());
         }
         visited.insert(file.clone());
     }
@@ -3073,8 +3073,7 @@ fn find_related_files_bfs_with_cross_project_detection(
                     // Check if target file is cross-project
                     if detector.is_cross_project_symbol(&reference.reference_file) {
                         // Add to cross-project files but dont traverse further
-                        if !cross_project_files.contains(&reference.reference_file) {
-                            cross_project_files.push(reference.reference_file.clone());
+                        if cross_project_files.insert(reference.reference_file.clone()) {
                             tracing::debug!("Found cross-project boundary: {} -> {}", 
                                           current_file, reference.reference_file);
                         }
@@ -3091,13 +3090,13 @@ fn find_related_files_bfs_with_cross_project_detection(
         for (file_path, edge_count) in file_edge_counts {
             if !visited.contains(&file_path) {
                 visited.insert(file_path.clone());
-                in_project_files.push(file_path.clone());
+                in_project_files.insert(file_path.clone());
                 queue.push((Reverse(-(edge_count as i32)), depth + 1, file_path));
             }
         }
     }
     
-    Ok((in_project_files, cross_project_files))
+    Ok((in_project_files.into_iter().collect(), cross_project_files.into_iter().collect()))
 }
 
 /// Generate enhanced file skeletons with cross-project annotations
