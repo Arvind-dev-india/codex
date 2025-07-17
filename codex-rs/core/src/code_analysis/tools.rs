@@ -1214,10 +1214,10 @@ pub fn handle_find_symbol_references(args: Value) -> Option<Result<Value, String
                 // Use the cached global graph to find references
                 let references = super::graph_manager::find_symbol_references(&input.symbol_name);
                 tracing::debug!("Found {} references using graph manager", references.len());
-                    
-                let reference_infos: Vec<_> = references.iter().map(|r| {
+                
+                let mut reference_infos: Vec<_> = references.iter().map(|r| {
                     json!({
-                        "file": r.reference_file,
+                        "file_path": r.reference_file,
                         "line": r.reference_line,
                         "column": r.reference_col,
                         "reference_type": match r.reference_type {
@@ -1228,8 +1228,30 @@ pub fn handle_find_symbol_references(args: Value) -> Option<Result<Value, String
                             super::context_extractor::ReferenceType::Inheritance => "inheritance",
                             super::context_extractor::ReferenceType::Usage => "usage",
                         },
+                        "project_type": "main"
                     })
                 }).collect();
+                
+                // ENHANCEMENT: Also search supplementary registry for cross-project references
+                let manager = super::graph_manager::get_graph_manager();
+                if let Ok(manager) = manager.read() {
+                    if let Some(registry) = manager.get_supplementary_registry() {
+                        for (fqn, symbol) in &registry.symbols {
+                            if symbol.name.contains(&input.symbol_name) || fqn.contains(&input.symbol_name) {
+                                reference_infos.push(json!({
+                                    "file_path": symbol.file_path,
+                                    "line": symbol.start_line,
+                                    "column": 0,
+                                    "reference_type": "definition",
+                                    "project_type": "cross-project",
+                                    "project_name": symbol.project_name
+                                }));
+                            }
+                        }
+                    }
+                }
+                
+                tracing::debug!("Found {} total references (including cross-project)", reference_infos.len());
                     
                 Ok(json!({
                     "references": reference_infos
@@ -1687,16 +1709,39 @@ pub fn handle_find_symbol_definitions(args: Value) -> Option<Result<Value, Strin
             if super::graph_manager::is_graph_initialized() {
                 // Use the cached global graph to find definitions
                 let definitions = super::graph_manager::find_symbol_definitions(&input.symbol_name);
-                    
-                    let definition_infos: Vec<_> = definitions.iter().map(|d| {
-                        json!({
-                            "symbol": &input.symbol_name,
-                            "file": d.file_path,
-                            "start_line": d.start_line,
-                            "end_line": d.end_line,
-                            "symbol_type": d.symbol_type.to_string(),
-                        })
-                    }).collect();
+                
+                let mut definition_infos: Vec<_> = definitions.iter().map(|d| {
+                    json!({
+                        "symbol": &input.symbol_name,
+                        "file_path": d.file_path,
+                        "start_line": d.start_line,
+                        "end_line": d.end_line,
+                        "symbol_type": d.symbol_type.to_string(),
+                        "project_type": "main"
+                    })
+                }).collect();
+                
+                // ENHANCEMENT: Also search supplementary registry for cross-project definitions
+                let manager = super::graph_manager::get_graph_manager();
+                if let Ok(manager) = manager.read() {
+                    if let Some(registry) = manager.get_supplementary_registry() {
+                        for (fqn, symbol) in &registry.symbols {
+                            if symbol.name.contains(&input.symbol_name) || fqn.contains(&input.symbol_name) {
+                                definition_infos.push(json!({
+                                    "symbol": &input.symbol_name,
+                                    "file_path": symbol.file_path,
+                                    "start_line": symbol.start_line,
+                                    "end_line": symbol.end_line,
+                                    "symbol_type": symbol.symbol_type,
+                                    "project_type": "cross-project",
+                                    "project_name": symbol.project_name
+                                }));
+                            }
+                        }
+                    }
+                }
+                
+                tracing::debug!("Found {} total definitions (including cross-project)", definition_infos.len());
                     
                 Ok(json!({
                     "definitions": definition_infos
@@ -1805,7 +1850,7 @@ pub fn handle_get_symbol_subgraph(args: Value) -> Option<Result<Value, String>> 
                 // Use the cached global graph to get the subgraph
                 if let Some(subgraph) = super::graph_manager::get_symbol_subgraph(&input.symbol_name, input.max_depth) {
                         // Convert nodes to the expected format
-                        let nodes: Vec<_> = subgraph.nodes.iter().map(|node| {
+                        let mut nodes: Vec<_> = subgraph.nodes.iter().map(|node| {
                             let symbol_type = match node.node_type {
                                 super::repo_mapper::CodeNodeType::File => "File",
                                 super::repo_mapper::CodeNodeType::Function => "Function",
@@ -1823,8 +1868,31 @@ pub fn handle_get_symbol_subgraph(args: Value) -> Option<Result<Value, String>> 
                                 "start_line": node.start_line,
                                 "end_line": node.end_line,
                                 "parent": null, // TODO: Extract parent information if needed
+                                "project_type": "main"
                             })
                         }).collect();
+                        
+                        // ENHANCEMENT: Also add cross-project nodes from supplementary registry
+                        let manager = super::graph_manager::get_graph_manager();
+                        if let Ok(manager) = manager.read() {
+                            if let Some(registry) = manager.get_supplementary_registry() {
+                                for (fqn, symbol) in &registry.symbols {
+                                    if symbol.name.contains(&input.symbol_name) || fqn.contains(&input.symbol_name) {
+                                        nodes.push(json!({
+                                            "id": format!("cross_project_{}", nodes.len()),
+                                            "name": symbol.name,
+                                            "symbol_type": symbol.symbol_type,
+                                            "file_path": symbol.file_path,
+                                            "start_line": symbol.start_line,
+                                            "end_line": symbol.end_line,
+                                            "parent": symbol.parent,
+                                            "project_type": "cross-project",
+                                            "project_name": symbol.project_name
+                                        }));
+                                    }
+                                }
+                            }
+                        }
                         
                         // Convert edges to the expected format
                         let edges: Vec<_> = subgraph.edges.iter().map(|edge| {
