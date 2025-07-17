@@ -589,7 +589,6 @@ async fn test_cross_project_symbol_subgraph(_main_dir: &Path, _skeleton_dir: &Pa
                             println!("   ✅ Cross-project dependencies detected in subgraph!");
                         }
                     }
-                }
             }
             Some(Err(e)) => println!("❌ Failed to generate subgraph for {}: {}", symbol, e),
             None => println!("❌ No result for symbol: {}", symbol),
@@ -635,7 +634,6 @@ async fn test_cross_project_related_files_skeleton(main_dir: &Path, _skeleton_di
                             println!("   ✅ Cross-project related files detected!");
                         }
                     }
-                }
             }
             Some(Err(e)) => println!("❌ Failed to generate related files skeleton: {}", e),
             None => println!("❌ No result for related files skeleton"),
@@ -684,7 +682,6 @@ async fn test_cross_project_multiple_files_skeleton(main_dir: &Path, skeleton_di
                         
                         println!("   ✅ Cross-project multiple files skeleton generated successfully!");
                     }
-                }
             }
             Some(Err(e)) => println!("❌ Failed to generate multiple files skeleton: {}", e),
             None => println!("❌ No result for multiple files skeleton"),
