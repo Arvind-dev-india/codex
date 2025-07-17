@@ -102,17 +102,21 @@ pub fn find_related_files_optimized(
         }
     }
     
+    // Pre-compute expensive operations outside the loop to avoid performance issues
+    let all_references = repo_mapper.get_all_references();
+    
     // BFS traversal using actual graph structure with cross-project boundary detection
     // Add safety limits to prevent infinite loops and stack overflow
-    const MAX_FILES: usize = 100;
-    const MAX_ITERATIONS: usize = 1000;
+    const MAX_FILES: usize = 10;  // Very conservative limit to prevent stack overflow
+    const MAX_ITERATIONS: usize = 25;   // Very conservative limit to prevent stack overflow
     let mut iteration_count = 0;
     
     while let Some((current_file, depth)) = queue.pop_front() {
         iteration_count += 1;
         
-        // Safety checks
+        // Safety checks - be very aggressive to prevent stack overflow
         if depth >= max_depth {
+            debug!("BFS hit max depth ({}), skipping file at depth {}", max_depth, depth);
             continue;
         }
         if main_project_files.len() + supplementary_files.len() >= MAX_FILES {
@@ -121,6 +125,10 @@ pub fn find_related_files_optimized(
         }
         if iteration_count >= MAX_ITERATIONS {
             debug!("BFS hit iteration limit ({}), stopping traversal", MAX_ITERATIONS);
+            break;
+        }
+        if queue.len() > 50 {
+            debug!("BFS queue too large ({}), stopping traversal", queue.len());
             break;
         }
         
@@ -139,7 +147,6 @@ pub fn find_related_files_optimized(
         
         // 1. Find references FROM current file TO other files (outgoing references)
         // Look at all references that originate from this file
-        let all_references = repo_mapper.get_all_references();
         let refs_from_file: Vec<_> = all_references.iter()
             .filter(|r| r.reference_file == current_file)
             .collect();
