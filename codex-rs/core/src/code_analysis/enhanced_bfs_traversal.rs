@@ -107,8 +107,8 @@ pub fn find_related_files_optimized(
     
     // BFS traversal using actual graph structure with cross-project boundary detection
     // Add safety limits to prevent infinite loops and stack overflow
-    const MAX_FILES: usize = 10;  // Very conservative limit to prevent stack overflow
-    const MAX_ITERATIONS: usize = 25;   // Very conservative limit to prevent stack overflow
+    const MAX_FILES: usize = 30;  // Balanced limit for larger codebases like C++
+    const MAX_ITERATIONS: usize = 100;  // Balanced limit for larger codebases like C++
     let mut iteration_count = 0;
     
     while let Some((current_file, depth)) = queue.pop_front() {
@@ -127,8 +127,14 @@ pub fn find_related_files_optimized(
             debug!("BFS hit iteration limit ({}), stopping traversal", MAX_ITERATIONS);
             break;
         }
-        if queue.len() > 50 {
+        if queue.len() > 20 {
             debug!("BFS queue too large ({}), stopping traversal", queue.len());
+            break;
+        }
+        
+        // Additional safety for deep recursion scenarios
+        if depth > 1 && main_project_files.len() > 5 {
+            debug!("BFS hit conservative limit for depth > 1 (depth: {}, files: {})", depth, main_project_files.len());
             break;
         }
         
