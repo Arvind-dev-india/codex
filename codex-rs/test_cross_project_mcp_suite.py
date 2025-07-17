@@ -2,6 +2,19 @@
 """
 Cross-Project Analysis Test Suite using MCP Server
 This tests the enhanced BFS approach with cross-project skeleton generation.
+
+USAGE:
+1. Start MCP server in another terminal:
+   ./target/release/code-analysis-server --sse --project-dir /home/arvkum/projects/codex/codex-rs/test_cross_project_mcp/MainProject --supplementary SkeletonProject:/home/arvkum/projects/codex/codex-rs/test_cross_project_mcp/SkeletonProject --verbose
+
+2. Run this test:
+   python3 test_cross_project_mcp_suite.py http://localhost:3000
+
+EXPECTED RESULTS:
+- ✅ UserService.cs analysis: 4+ symbols found
+- ✅ Cross-project skeleton: 3+ files from SkeletonProject with proper parsed skeletons
+- ✅ Symbol references: Cross-project references detected
+- ✅ Symbol definitions: ValidationHelper found in SkeletonProject
 """
 
 import json
@@ -41,8 +54,14 @@ def test_mcp_endpoint(endpoint_url, test_name, request_data):
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python3 test_cross_project_mcp_suite.py <server_url>")
-        print("Example: python3 test_cross_project_mcp_suite.py http://localhost:3000")
+        print("❌ ERROR: Server URL required")
+        print()
+        print("USAGE:")
+        print("1. Start MCP server in another terminal:")
+        print("   ./target/release/code-analysis-server --sse --project-dir /home/arvkum/projects/codex/codex-rs/test_cross_project_mcp/MainProject --supplementary SkeletonProject:/home/arvkum/projects/codex/codex-rs/test_cross_project_mcp/SkeletonProject --verbose")
+        print()
+        print("2. Run this test:")
+        print("   python3 test_cross_project_mcp_suite.py http://localhost:3000")
         return
     
     server_url = sys.argv[1].rstrip('/')
@@ -50,6 +69,31 @@ def main():
     
     print("=== Cross-Project Analysis Test Suite ===")
     print(f"Testing MCP server at: {mcp_endpoint}")
+    
+    # Test 0: Check server health and available tools
+    print("\n--- Test 0: Server Health Check ---")
+    tools_request = {
+        "jsonrpc": "2.0",
+        "id": "test_tools",
+        "method": "tools/list",
+        "params": {}
+    }
+    
+    tools_result = test_mcp_endpoint(mcp_endpoint, "List Available Tools", tools_request)
+    if tools_result:
+        tools = tools_result['result'].get('tools', [])
+        tool_names = [tool['name'] for tool in tools]
+        print(f"   Available tools: {', '.join(tool_names)}")
+        
+        required_tools = ['analyze_code', 'get_related_files_skeleton', 'find_symbol_references', 'find_symbol_definitions', 'get_symbol_subgraph']
+        missing_tools = [tool for tool in required_tools if tool not in tool_names]
+        if missing_tools:
+            print(f"   ❌ Missing required tools: {missing_tools}")
+        else:
+            print("   ✅ All required tools available")
+    else:
+        print("   ❌ Failed to get tools list - server may not be running correctly")
+        return
     
     # Test 1: Analyze main project file
     analyze_request = {
@@ -103,8 +147,18 @@ def main():
             files = content.get('files', [])
             for file_info in files:
                 file_path = file_info.get('file_path', 'unknown')
+                skeleton = file_info.get('skeleton', '')
                 project_type = "CROSS-PROJECT" if "SkeletonProject" in file_path else "MAIN PROJECT"
-                print(f"   - {file_path} ({project_type})")
+                
+                # Check skeleton quality
+                if "SkeletonProject" in file_path:
+                    if "Fallback skeleton generation" in skeleton:
+                        skeleton_quality = "❌ FALLBACK"
+                    else:
+                        skeleton_quality = "✅ PARSED"
+                    print(f"   - {file_path} ({project_type}) - {skeleton_quality} skeleton ({len(skeleton)} chars)")
+                else:
+                    print(f"   - {file_path} ({project_type})")
         else:
             print("   ❌ Cross-project analysis not working - no cross-project files found")
             print(f"   Summary: {content.get('summary', 'No summary')}")
@@ -158,12 +212,80 @@ def main():
             project_type = "CROSS-PROJECT" if "SkeletonProject" in file_path else "MAIN PROJECT"
             print(f"   - {file_path} ({project_type}) at lines {definition.get('start_line', 0)}-{definition.get('end_line', 0)}")
     
+    # Test 5: Get symbol subgraph (should show cross-project connections)
+    subgraph_request = {
+        "jsonrpc": "2.0",
+        "id": "test_subgraph",
+        "method": "tools/call",
+        "params": {
+            "name": "get_symbol_subgraph",
+            "arguments": {
+                "symbol_name": "UserService",
+                "max_depth": 2
+            }
+        }
+    }
+    
+    subgraph_result = test_mcp_endpoint(mcp_endpoint, "Get Symbol Subgraph for 'UserService'", subgraph_request)
+    if subgraph_result:
+        content = json.loads(subgraph_result['result']['content'][0]['text'])
+        nodes = content.get('nodes', [])
+        edges = content.get('edges', [])
+        print(f"   Found {len(nodes)} nodes and {len(edges)} edges in subgraph")
+        
+        cross_project_nodes = sum(1 for node in nodes if "SkeletonProject" in node.get('file_path', ''))
+        main_project_nodes = len(nodes) - cross_project_nodes
+        print(f"   Main project nodes: {main_project_nodes}")
+        print(f"   Cross-project nodes: {cross_project_nodes}")
+        
+        if cross_project_nodes > 0:
+            print("   ✅ Cross-project nodes found in subgraph")
+        else:
+            print("   ❌ No cross-project nodes in subgraph")
+    
+    # Test 6: Get multiple files skeleton (test batch processing)
+    multiple_files_request = {
+        "jsonrpc": "2.0",
+        "id": "test_multiple_files",
+        "method": "tools/call",
+        "params": {
+            "name": "get_multiple_files_skeleton",
+            "arguments": {
+                "file_paths": ["UserService.cs"],
+                "max_tokens": 4000
+            }
+        }
+    }
+    
+    multiple_files_result = test_mcp_endpoint(mcp_endpoint, "Get Multiple Files Skeleton", multiple_files_request)
+    if multiple_files_result:
+        content = json.loads(multiple_files_result['result']['content'][0]['text'])
+        files = content.get('files', [])
+        print(f"   Processed {len(files)} files in batch")
+        
+        for file_info in files:
+            file_path = file_info.get('file_path', 'unknown')
+            skeleton = file_info.get('skeleton', '')
+            print(f"   - {file_path}: {len(skeleton)} chars")
+    
     print("\n=== Test Suite Complete ===")
-    print("Expected results for working cross-project analysis:")
-    print("1. UserService.cs should have 4+ symbols")
-    print("2. Related files skeleton should find 3+ cross-project files from SkeletonProject")
-    print("3. Symbol references should find cross-project references")
-    print("4. Symbol definitions should find ValidationHelper in SkeletonProject")
+    print()
+    print("🎯 EXPECTED RESULTS for working cross-project analysis:")
+    print("1. ✅ UserService.cs should have 4+ symbols")
+    print("2. ✅ Related files skeleton should find 3+ cross-project files from SkeletonProject with PARSED skeletons")
+    print("3. ✅ Symbol references should find cross-project references")
+    print("4. ✅ Symbol definitions should find ValidationHelper in SkeletonProject")
+    print("5. ✅ Symbol subgraph should include cross-project nodes")
+    print("6. ✅ Multiple files skeleton should work for batch processing")
+    print()
+    print("📋 TO RUN THIS TEST:")
+    print("1. Start MCP server: ./target/release/code-analysis-server --sse --project-dir /home/arvkum/projects/codex/codex-rs/test_cross_project_mcp/MainProject --supplementary SkeletonProject:/home/arvkum/projects/codex/codex-rs/test_cross_project_mcp/SkeletonProject --verbose")
+    print("2. Run test: python3 test_cross_project_mcp_suite.py http://localhost:3000")
+    print()
+    print("🔍 DEBUGGING TIPS:")
+    print("- Check server logs for 'Supplementary registry with X symbols stored in graph manager'")
+    print("- Look for 'DEBUG: Supplementary registry contains X symbols' in enhanced BFS logs")
+    print("- Verify 'Cross-project boundaries detected: true' in skeleton results")
 
 if __name__ == "__main__":
     main()
