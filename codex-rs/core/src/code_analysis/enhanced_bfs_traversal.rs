@@ -62,14 +62,16 @@ pub fn find_related_files_optimized(
     // Now get a fresh read lock and proceed
     let manager = graph_manager.read().map_err(|e| format!("Failed to acquire read lock: {}", e))?;
     
-    if !manager.has_symbols() {
-        println!("DEBUG: Still no symbols after initialization - returning empty results");
-        return Ok((Vec::new(), Vec::new()));
-    }
-    
     // Get all symbols efficiently from graph manager
     let all_symbols = manager.get_all_symbols();
-    println!("DEBUG: Graph contains {} total symbols", all_symbols.len());
+    println!("DEBUG: Graph contains {} main project symbols", all_symbols.len());
+    println!("DEBUG: Supplementary registry contains {} symbols", supplementary_registry.symbols.len());
+    
+    // Check if we have any symbols to work with (main project OR supplementary)
+    if all_symbols.is_empty() && supplementary_registry.symbols.is_empty() {
+        println!("DEBUG: No symbols in main project or supplementary registry - returning empty results");
+        return Ok((Vec::new(), Vec::new()));
+    }
     
     let repo_mapper = manager.get_repo_mapper()
         .ok_or("Repository mapper not available")?;
@@ -174,10 +176,11 @@ pub fn find_related_files_optimized(
         debug!("Found {} outgoing references from file {}", refs_from_file.len(), current_file);
         
         for reference in refs_from_file {
-            // Find the file where the referenced symbol is defined using O(1) lookup
+            let mut target_file_found = false;
+            
+            // First try to find the target file in main project symbols
             if !reference.symbol_fqn.is_empty() {
                 if let Some(target_file) = symbol_fqn_to_file.get(&reference.symbol_fqn) {
-                    
                     if !visited.contains(target_file) && *target_file != current_file {
                         visited.insert(target_file.clone());
                         
@@ -193,6 +196,24 @@ pub fn find_related_files_optimized(
                             queue.push_back((target_file.clone(), depth + 1));
                             debug!("Found in-project outgoing reference: {} -> {} (depth {})", 
                                   current_file, target_file, depth + 1);
+                        }
+                        target_file_found = true;
+                    }
+                }
+            }
+            
+            // If not found in main project, check supplementary registry by symbol name
+            if !target_file_found && !reference.symbol_name.is_empty() {
+                for (supp_fqn, supp_symbol) in &supplementary_registry.symbols {
+                    if supp_symbol.name == reference.symbol_name {
+                        let target_file = &supp_symbol.file_path;
+                        if !visited.contains(target_file) && *target_file != current_file {
+                            visited.insert(target_file.clone());
+                            if supplementary_files.insert(target_file.clone()) {
+                                debug!("Found cross-project reference by name: {} -> {} (supplementary symbol: {})", 
+                                      current_file, target_file, supp_fqn);
+                            }
+                            break;
                         }
                     }
                 }

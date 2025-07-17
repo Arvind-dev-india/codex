@@ -61,6 +61,8 @@ pub struct CodeGraphManager {
     root_path: Option<PathBuf>,
     /// Supplementary projects from --supplementary arguments
     supplementary_projects: Vec<crate::config_types::SupplementaryProjectConfig>,
+    /// Supplementary registry for cross-project analysis
+    supplementary_registry: Option<super::supplementary_registry::SupplementarySymbolRegistry>,
     /// File metadata for change detection
     file_metadata: HashMap<PathBuf, FileMetadata>,
     /// Whether the graph has been initialized
@@ -80,6 +82,7 @@ impl CodeGraphManager {
             repo_mapper: None,
             root_path: None,
             supplementary_projects: Vec::new(),
+            supplementary_registry: None,
             file_metadata: HashMap::new(),
             initialized: false,
             status: GraphStatus::NotStarted,
@@ -409,6 +412,26 @@ impl CodeGraphManager {
 
     pub fn get_supplementary_projects(&self) -> &[crate::config_types::SupplementaryProjectConfig] {
         &self.supplementary_projects
+    }
+    
+    /// Set supplementary projects configuration
+    pub fn set_supplementary_projects(&mut self, projects: Vec<crate::config_types::SupplementaryProjectConfig>) {
+        tracing::info!("Setting {} supplementary projects in graph manager", projects.len());
+        for project in &projects {
+            tracing::info!("  - {} at {}", project.name, project.path);
+        }
+        self.supplementary_projects = projects;
+    }
+    
+    /// Set supplementary registry for cross-project analysis
+    pub fn set_supplementary_registry(&mut self, registry: super::supplementary_registry::SupplementarySymbolRegistry) {
+        tracing::info!("Setting supplementary registry with {} symbols in graph manager", registry.symbols.len());
+        self.supplementary_registry = Some(registry);
+    }
+    
+    /// Get supplementary registry for cross-project analysis
+    pub fn get_supplementary_registry(&self) -> Option<&super::supplementary_registry::SupplementarySymbolRegistry> {
+        self.supplementary_registry.as_ref()
     }
 
     /// Get the symbol storage (if initialized)

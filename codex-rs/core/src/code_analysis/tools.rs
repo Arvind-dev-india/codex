@@ -2876,6 +2876,13 @@ fn truncate_skeleton(skeleton: &str, max_tokens: usize) -> String {
 
 /// Create or get supplementary registry from existing graph data
 fn get_or_create_supplementary_registry(manager: &std::sync::RwLockReadGuard<super::graph_manager::CodeGraphManager>) -> Result<SupplementarySymbolRegistry, String> {
+    // CRITICAL FIX: Use the supplementary registry that was stored by the MCP server
+    if let Some(registry) = manager.get_supplementary_registry() {
+        tracing::info!("Using stored supplementary registry with {} symbols from {} projects", 
+                       registry.symbols.len(), registry.project_count);
+        return Ok(registry.clone());
+    }
+    
     let supplementary_projects = manager.get_supplementary_projects();
     
     if supplementary_projects.is_empty() {
@@ -2883,18 +2890,14 @@ fn get_or_create_supplementary_registry(manager: &std::sync::RwLockReadGuard<sup
         return Ok(SupplementarySymbolRegistry::new());
     }
     
-    tracing::info!("Creating supplementary registry from {} existing supplementary projects", supplementary_projects.len());
+    tracing::info!("No stored supplementary registry found, creating empty registry for {} projects", supplementary_projects.len());
     
-    // Use the existing extract_supplementary_symbols_lightweight function
-    // Note: This is async, but we're in a sync context. For now, we'll create an empty registry
-    // and populate it synchronously from any existing data in the graph manager
+    // Fallback: create empty registry with project count
     let mut registry = SupplementarySymbolRegistry::new();
     registry.project_count = supplementary_projects.len();
     
-    // TODO: In a future enhancement, we could cache the supplementary registry in the graph manager
-    // For now, we'll work with the existing cross-project detection logic but use the registry structure
+    tracing::info!("Fallback supplementary registry created with {} projects", registry.project_count);
     
-    tracing::info!("Supplementary registry created with {} projects (async population deferred)", supplementary_projects.len());
     Ok(registry)
 }
 

@@ -170,6 +170,50 @@ pub async fn init_code_graph_with_supplementary(
         info!("Main project stats: {} nodes, {} edges, {} symbols", 
               main_stats.nodes, main_stats.edges, main_stats.symbols);
         
+        // CRITICAL FIX: Set supplementary projects and registry in graph manager so tools can access them
+        {
+            let manager = graph_manager::get_graph_manager();
+            let mut manager = manager.write().unwrap();
+            manager.set_supplementary_projects(supplementary_projects.clone());
+            
+            // Also store the supplementary registry that was created during parallel processing
+            // Extract the supplementary symbols from SupplementaryStats and create a registry
+            if let Some(ref supplementary_symbols) = supplementary_result.supplementary_symbols {
+                // Create a supplementary registry from the symbols
+                let mut registry = codex_core::code_analysis::supplementary_registry::SupplementarySymbolRegistry::new();
+                
+                // Convert the symbols to the registry format
+                for (fqn, symbol) in supplementary_symbols {
+                    let supp_symbol = codex_core::code_analysis::supplementary_registry::SupplementarySymbolInfo {
+                        fqn: fqn.clone(),
+                        name: symbol.name.clone(),
+                        file_path: symbol.file_path.clone(),
+                        symbol_type: format!("{:?}", symbol.symbol_type),
+                        project_name: "SkeletonProject".to_string(), // TODO: Get actual project name
+                        start_line: symbol.start_line as u32,
+                        end_line: symbol.end_line as u32,
+                        parent: symbol.parent.clone(),
+                    };
+                    
+                    registry.symbols.insert(fqn.clone(), supp_symbol);
+                    
+                    // Update file_to_symbols mapping
+                    registry.file_to_symbols
+                        .entry(symbol.file_path.clone())
+                        .or_insert_with(Vec::new)
+                        .push(fqn.clone());
+                }
+                
+                registry.project_count = 1; // We have 1 supplementary project
+                
+                manager.set_supplementary_registry(registry.clone());
+                info!("Supplementary registry with {} symbols stored in graph manager", registry.symbols.len());
+            } else {
+                info!("No supplementary symbols found to create registry");
+            }
+        }
+        info!("Supplementary projects configuration stored in graph manager");
+        
         // Process supplementary results (already completed in parallel)
         if supplementary_result.projects_processed > 0 {
             info!("Supplementary projects completed in parallel!");
@@ -453,7 +497,7 @@ async fn finalize_cross_project_analysis(
     supplementary_result: &mut SupplementaryStats,
     log_file: &Path
 ) -> Result<()> {
-    if let Some(all_supp_symbols) = supplementary_result.supplementary_symbols.take() {
+    if let Some(ref all_supp_symbols) = supplementary_result.supplementary_symbols {
         if !all_supp_symbols.is_empty() {
             info!("Starting cross-project analysis with {} supplementary symbols...", all_supp_symbols.len());
         

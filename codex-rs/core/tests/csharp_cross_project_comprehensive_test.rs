@@ -430,9 +430,43 @@ namespace MainProject.Controllers
 async fn configure_cross_project_analysis(main_project_dir: &Path, skeleton_project_dir: &Path) {
     println!("Setting up cross-project analysis...");
     
-    // Initialize graph for main project ONLY
+    // Initialize graph for main project - this is the single source of truth
+    println!("Initializing main project graph...");
     if let Err(e) = graph_manager::ensure_graph_for_path(main_project_dir) {
         panic!("Failed to initialize graph for main project: {}", e);
+    }
+    
+    // Debug: Check if files actually exist
+    let main_files = get_all_cs_files(main_project_dir);
+    println!("DEBUG: Created {} C# files in main project:", main_files.len());
+    for file in &main_files {
+        println!("  - {}", file.display());
+        if let Ok(content) = std::fs::read_to_string(file) {
+            println!("    Content length: {} chars", content.len());
+        }
+        
+        // Test if SupportedLanguage can detect C# files
+        if let Some(ext) = file.extension().and_then(|e| e.to_str()) {
+            let detected_lang = codex_core::code_analysis::parser_pool::SupportedLanguage::from_extension(ext);
+            println!("    Extension '{}' detected as: {:?}", ext, detected_lang);
+        }
+    }
+    
+    // Verify the graph has symbols
+    {
+        let manager = graph_manager::get_graph_manager();
+        let manager = manager.read().unwrap();
+        let symbol_count = manager.get_all_symbols().len();
+        println!("✅ Main project graph initialized with {} symbols", symbol_count);
+        
+        if symbol_count == 0 {
+            // Debug: Check what the repo mapper found
+            if let Some(repo_mapper) = manager.get_repo_mapper() {
+                println!("DEBUG: Repo mapper root path: {:?}", repo_mapper.get_root_path());
+                println!("DEBUG: Repo mapper found {} files total", repo_mapper.get_all_symbols().len());
+            }
+            panic!("Main project graph has no symbols - initialization failed!");
+        }
     }
     
     // DO NOT add skeleton project to main graph - it should remain separate
