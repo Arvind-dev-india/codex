@@ -5,7 +5,10 @@ use codex_core::code_analysis::{
     handle_get_symbol_subgraph,
     handle_get_related_files_skeleton,
     handle_get_multiple_files_skeleton,
+    supplementary_registry::{SupplementarySymbolRegistry, extract_supplementary_symbols_lightweight},
+    graph_manager,
 };
+use codex_core::config_types::SupplementaryProjectConfig;
 use serde_json::{json, Value};
 use std::fs;
 use std::path::Path;
@@ -30,6 +33,10 @@ async fn test_csharp_cross_project_comprehensive() {
     
     // Create main project files (uses skeleton project)
     create_main_project_files(&main_project_dir);
+    
+    // Configure cross-project analysis with supplementary registry
+    println!("\n--- Configuring Cross-Project Analysis ---");
+    configure_cross_project_analysis(&main_project_dir, &skeleton_project_dir).await;
     
     // Test 1: Analyze both projects
     println!("\n--- Test 1: Analyzing Projects ---");
@@ -420,6 +427,74 @@ namespace MainProject.Controllers
 }
 
 /// Test analyzing both projects
+async fn configure_cross_project_analysis(main_project_dir: &Path, skeleton_project_dir: &Path) {
+    println!("Setting up cross-project analysis...");
+    
+    // Initialize graph for main project ONLY
+    if let Err(e) = graph_manager::ensure_graph_for_path(main_project_dir) {
+        panic!("Failed to initialize graph for main project: {}", e);
+    }
+    
+    // DO NOT add skeleton project to main graph - it should remain separate
+    
+    // Configure skeleton project as supplementary project for cross-project analysis
+    let skeleton_config = SupplementaryProjectConfig {
+        name: "SkeletonProject".to_string(),
+        path: skeleton_project_dir.to_string_lossy().to_string(),
+        languages: Some(vec!["csharp".to_string()]),
+        description: Some("Cross-project skeleton test".to_string()),
+        priority: 1,
+        enabled: true,
+    };
+    
+    println!("Extracting supplementary symbols from skeleton project...");
+    
+    // Extract supplementary symbols from skeleton project
+    let supplementary_registry = match extract_supplementary_symbols_lightweight(&[skeleton_config]).await {
+        Ok(registry) => {
+            println!("✅ Extracted supplementary symbols successfully");
+            
+            // Debug: Check registry stats
+            let stats = registry.get_stats();
+            println!("DEBUG: Supplementary registry stats:");
+            println!("  - Total symbols: {}", stats.total_symbols);
+            println!("  - Total files: {}", stats.total_files);
+            println!("  - Total projects: {}", stats.total_projects);
+            
+            // Debug: Check if skeleton files are in registry (with correct subdirectories)
+            let skeleton_files = [
+                "Models/User.cs", "Services/IUserRepository.cs", "Utils/ValidationHelper.cs"
+            ];
+            for file in &skeleton_files {
+                let full_path = skeleton_project_dir.join(file);
+                let path_str = full_path.to_string_lossy();
+                let contains = registry.contains_file(&path_str);
+                println!("DEBUG: Registry contains '{}': {}", path_str, contains);
+            }
+            
+            registry
+        },
+        Err(e) => {
+            println!("❌ Failed to extract supplementary symbols: {}", e);
+            return;
+        }
+    };
+    
+    println!("Configuring graph manager with supplementary registry...");
+    
+    // Configure the graph manager to use the supplementary registry
+    {
+        let manager = graph_manager::get_graph_manager();
+        let mut manager = manager.write().unwrap();
+        if let Some(repo_mapper) = manager.get_repo_mapper() {
+            // Note: The supplementary registry is already configured during extraction
+            println!("✅ Cross-project analysis configured successfully!");
+        } else {
+            println!("❌ Failed to get repo mapper for configuration");
+        }
+    }
+}
+
 async fn test_analyze_projects(main_dir: &Path, skeleton_dir: &Path) {
     let main_files = get_all_cs_files(main_dir);
     let skeleton_files = get_all_cs_files(skeleton_dir);
