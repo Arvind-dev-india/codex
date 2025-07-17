@@ -105,10 +105,37 @@ pub fn find_related_files_optimized(
     // Pre-compute expensive operations outside the loop to avoid performance issues
     let all_references = repo_mapper.get_all_references();
     
+    // Build efficient O(1) lookup maps for real-world scale (100k nodes, 50k edges)
+    let mut symbol_fqn_to_file: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut file_to_symbols: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    
+    for (fqn, symbol) in all_symbols.iter() {
+        symbol_fqn_to_file.insert(fqn.clone(), symbol.file_path.clone());
+        file_to_symbols.entry(symbol.file_path.clone())
+            .or_insert_with(Vec::new)
+            .push(fqn.clone());
+    }
+    
+    // Group references by source file for O(1) lookup
+    let mut refs_by_file: std::collections::HashMap<String, Vec<_>> = std::collections::HashMap::new();
+    for reference in all_references.iter() {
+        refs_by_file.entry(reference.reference_file.clone())
+            .or_insert_with(Vec::new)
+            .push(reference);
+    }
+    
+    // Group references by target symbol FQN for O(1) lookup
+    let mut refs_by_symbol_fqn: std::collections::HashMap<String, Vec<_>> = std::collections::HashMap::new();
+    for reference in all_references.iter() {
+        refs_by_symbol_fqn.entry(reference.symbol_fqn.clone())
+            .or_insert_with(Vec::new)
+            .push(reference);
+    }
+    
     // BFS traversal using actual graph structure with cross-project boundary detection
-    // Add safety limits to prevent infinite loops and stack overflow
-    const MAX_FILES: usize = 30;  // Balanced limit for larger codebases like C++
-    const MAX_ITERATIONS: usize = 100;  // Balanced limit for larger codebases like C++
+    // Designed for real-world scale: 100k nodes, 50k edges
+    const MAX_FILES: usize = 1000;     // Realistic limit for large codebases
+    const MAX_ITERATIONS: usize = 5000; // Sufficient for deep traversal in large projects
     let mut iteration_count = 0;
     
     while let Some((current_file, depth)) = queue.pop_front() {
@@ -127,43 +154,29 @@ pub fn find_related_files_optimized(
             debug!("BFS hit iteration limit ({}), stopping traversal", MAX_ITERATIONS);
             break;
         }
-        if queue.len() > 20 {
+        if queue.len() > 500 {
             debug!("BFS queue too large ({}), stopping traversal", queue.len());
-            break;
-        }
-        
-        // Additional safety for deep recursion scenarios
-        if depth > 1 && main_project_files.len() > 5 {
-            debug!("BFS hit conservative limit for depth > 1 (depth: {}, files: {})", depth, main_project_files.len());
             break;
         }
         
         debug!("Processing file {} at depth {}", current_file, depth);
         
-        // Find symbols defined in current file
-        let symbols_in_file: Vec<_> = all_symbols
-            .iter()
-            .filter(|(_, symbol)| symbol.file_path == current_file)
-            .map(|(fqn, _)| fqn.clone())
-            .collect();
-        
+        // Get symbols for current file using O(1) lookup
+        let symbols_in_file = file_to_symbols.get(&current_file).cloned().unwrap_or_default();
         debug!("Found {} symbols in file {}", symbols_in_file.len(), current_file);
         
         // Find references both FROM and TO current file
         
         // 1. Find references FROM current file TO other files (outgoing references)
-        // Look at all references that originate from this file
-        let refs_from_file: Vec<_> = all_references.iter()
-            .filter(|r| r.reference_file == current_file)
-            .collect();
+        // Use O(1) lookup instead of O(n) filter
+        let refs_from_file = refs_by_file.get(&current_file).cloned().unwrap_or_default();
         
         debug!("Found {} outgoing references from file {}", refs_from_file.len(), current_file);
         
         for reference in refs_from_file {
-            // Find the file where the referenced symbol is defined
+            // Find the file where the referenced symbol is defined using O(1) lookup
             if !reference.symbol_fqn.is_empty() {
-                if let Some(target_symbol) = all_symbols.values().find(|s| s.fqn == reference.symbol_fqn) {
-                    let target_file = &target_symbol.file_path;
+                if let Some(target_file) = symbol_fqn_to_file.get(&reference.symbol_fqn) {
                     
                     if !visited.contains(target_file) && *target_file != current_file {
                         visited.insert(target_file.clone());
@@ -188,7 +201,7 @@ pub fn find_related_files_optimized(
         
         // 2. Count references FROM symbols defined in current file TO other files (symbol-based outgoing)
         for symbol_fqn in &symbols_in_file {
-            let references = repo_mapper.find_symbol_references_by_fqn(symbol_fqn);
+            let references = refs_by_symbol_fqn.get(symbol_fqn).cloned().unwrap_or_default();
             debug!("Symbol {} has {} outgoing references", symbol_fqn, references.len());
             
             for reference in references {
@@ -213,11 +226,11 @@ pub fn find_related_files_optimized(
             }
         }
         
-        // 2. Find references TO current file FROM other files
+        // 3. Find references TO current file FROM other files
         // Look for files that reference symbols defined in the current file
         for symbol_fqn in &symbols_in_file {
-            // Find all references to this symbol and extract unique file paths
-            let references = repo_mapper.find_symbol_references_by_fqn(symbol_fqn);
+            // Find all references to this symbol using O(1) lookup
+            let references = refs_by_symbol_fqn.get(symbol_fqn).cloned().unwrap_or_default();
             debug!("Symbol {} has {} incoming references", symbol_fqn, references.len());
             
             // Extract unique file paths from references

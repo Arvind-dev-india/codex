@@ -545,7 +545,6 @@ async fn test_cross_project_symbol_definitions(_main_dir: &Path, _skeleton_dir: 
                     }
                 }
             }
-            }
             Some(Err(e)) => println!("❌ Failed to find definitions for {}: {}", symbol, e),
             None => println!("❌ No result for symbol: {}", symbol),
         }
