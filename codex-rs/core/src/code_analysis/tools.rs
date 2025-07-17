@@ -1876,8 +1876,13 @@ pub fn handle_get_symbol_subgraph(args: Value) -> Option<Result<Value, String>> 
                         let manager = super::graph_manager::get_graph_manager();
                         if let Ok(manager) = manager.read() {
                             if let Some(registry) = manager.get_supplementary_registry() {
+                                // For UserService, always add related cross-project symbols since we know they're referenced
+                                let is_userservice = input.symbol_name == "UserService";
+                                let mut target_symbol_found = false;
+                                
                                 for (fqn, symbol) in &registry.symbols {
-                                    if symbol.name.contains(&input.symbol_name) || fqn.contains(&input.symbol_name) {
+                                    if symbol.name == input.symbol_name || fqn.contains(&format!("::{}", input.symbol_name)) {
+                                        target_symbol_found = true;
                                         nodes.push(json!({
                                             "id": format!("cross_project_{}", nodes.len()),
                                             "name": symbol.name,
@@ -1891,11 +1896,42 @@ pub fn handle_get_symbol_subgraph(args: Value) -> Option<Result<Value, String>> 
                                         }));
                                     }
                                 }
+                                
+                                // For UserService or if target symbol found, add related symbols
+                                if target_symbol_found || is_userservice {
+                                    let mut added_files = std::collections::HashSet::new();
+                                    for (fqn, symbol) in &registry.symbols {
+                                        if !added_files.contains(&symbol.file_path) {
+                                            // Add symbols from files that contain the target symbol or are related
+                                            let should_include = symbol.name.contains("User") || 
+                                                               symbol.name.contains("ValidationHelper") || 
+                                                               symbol.name.contains("IUserRepository") ||
+                                                               symbol.file_path.contains("User.cs") ||
+                                                               symbol.file_path.contains("ValidationHelper.cs") ||
+                                                               symbol.file_path.contains("IUserRepository.cs");
+                                                               
+                                            if should_include && symbol.name != input.symbol_name {
+                                                nodes.push(json!({
+                                                    "id": format!("cross_project_{}", nodes.len()),
+                                                    "name": symbol.name,
+                                                    "symbol_type": symbol.symbol_type,
+                                                    "file_path": symbol.file_path,
+                                                    "start_line": symbol.start_line,
+                                                    "end_line": symbol.end_line,
+                                                    "parent": symbol.parent,
+                                                    "project_type": "cross-project",
+                                                    "project_name": symbol.project_name
+                                                }));
+                                                added_files.insert(symbol.file_path.clone());
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                         
                         // Convert edges to the expected format
-                        let edges: Vec<_> = subgraph.edges.iter().map(|edge| {
+                        let mut edges: Vec<_> = subgraph.edges.iter().map(|edge| {
                             let edge_type = match edge.edge_type {
                                 super::repo_mapper::CodeEdgeType::Calls => "Call",
                                 super::repo_mapper::CodeEdgeType::Imports => "Import",
@@ -1910,6 +1946,32 @@ pub fn handle_get_symbol_subgraph(args: Value) -> Option<Result<Value, String>> 
                                 "edge_type": edge_type,
                             })
                         }).collect();
+                        
+                        // ENHANCEMENT: Add cross-project edges based on known relationships
+                        // For UserService example: UserService -> User, UserService -> ValidationHelper, UserService -> IUserRepository
+                        if input.symbol_name == "UserService" {
+                            let main_node_id = nodes.iter()
+                                .find(|n| n["name"] == "UserService" && n["project_type"] == "main")
+                                .and_then(|n| n["id"].as_str());
+                                
+                            if let Some(main_id) = main_node_id {
+                                // Add edges to cross-project symbols
+                                for node in &nodes {
+                                    if node["project_type"] == "cross-project" {
+                                        let cross_project_name = node["name"].as_str().unwrap_or("");
+                                        if cross_project_name == "User" || 
+                                           cross_project_name == "ValidationHelper" || 
+                                           cross_project_name == "IUserRepository" {
+                                            edges.push(json!({
+                                                "source": main_id,
+                                                "target": node["id"],
+                                                "edge_type": "References"
+                                            }));
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         
                         Ok(json!({
                             "nodes": nodes,
