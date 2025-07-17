@@ -467,6 +467,18 @@ impl RepoMapper {
 
     /// Build the graph from the extracted context
     pub fn build_graph_from_context(&mut self) {
+        // CRITICAL: Resolve FQNs for references now that we have all symbols
+        // This fixes cross-file reference resolution
+        let resolve_start = std::time::Instant::now();
+        let resolved_count = self.context_extractor.resolve_reference_fqns();
+        let resolve_time = resolve_start.elapsed();
+        
+        if resolved_count > 0 {
+            tracing::info!("Resolved {} reference FQNs for edge creation in {:.2}ms", resolved_count, resolve_time.as_millis());
+        } else {
+            tracing::warn!("No reference FQNs could be resolved - edges may be missing");
+        }
+        
         // Create nodes for all symbols
         for (fqn, symbol) in self.context_extractor.get_symbols() {
             let node_type = match symbol.symbol_type {

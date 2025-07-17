@@ -103,9 +103,25 @@ pub fn find_related_files_optimized(
     }
     
     // BFS traversal using actual graph structure with cross-project boundary detection
+    // Add safety limits to prevent infinite loops and stack overflow
+    const MAX_FILES: usize = 100;
+    const MAX_ITERATIONS: usize = 1000;
+    let mut iteration_count = 0;
+    
     while let Some((current_file, depth)) = queue.pop_front() {
+        iteration_count += 1;
+        
+        // Safety checks
         if depth >= max_depth {
             continue;
+        }
+        if main_project_files.len() + supplementary_files.len() >= MAX_FILES {
+            debug!("BFS hit file limit ({}), stopping traversal", MAX_FILES);
+            break;
+        }
+        if iteration_count >= MAX_ITERATIONS {
+            debug!("BFS hit iteration limit ({}), stopping traversal", MAX_ITERATIONS);
+            break;
         }
         
         debug!("Processing file {} at depth {}", current_file, depth);
@@ -119,10 +135,48 @@ pub fn find_related_files_optimized(
         
         debug!("Found {} symbols in file {}", symbols_in_file.len(), current_file);
         
-        // Count references FROM current file TO other files
+        // Find references both FROM and TO current file
+        
+        // 1. Find references FROM current file TO other files (outgoing references)
+        // Look at all references that originate from this file
+        let all_references = repo_mapper.get_all_references();
+        let refs_from_file: Vec<_> = all_references.iter()
+            .filter(|r| r.reference_file == current_file)
+            .collect();
+        
+        debug!("Found {} outgoing references from file {}", refs_from_file.len(), current_file);
+        
+        for reference in refs_from_file {
+            // Find the file where the referenced symbol is defined
+            if !reference.symbol_fqn.is_empty() {
+                if let Some(target_symbol) = all_symbols.values().find(|s| s.fqn == reference.symbol_fqn) {
+                    let target_file = &target_symbol.file_path;
+                    
+                    if !visited.contains(target_file) && *target_file != current_file {
+                        visited.insert(target_file.clone());
+                        
+                        // Check if target file is from supplementary project
+                        if supplementary_registry.contains_file(target_file) {
+                            if supplementary_files.insert(target_file.clone()) {
+                                debug!("Found cross-project outgoing reference: {} -> {} (supplementary)", 
+                                      current_file, target_file);
+                            }
+                        } else {
+                            // Regular in-project file - add to queue for further traversal
+                            main_project_files.insert(target_file.clone());
+                            queue.push_back((target_file.clone(), depth + 1));
+                            debug!("Found in-project outgoing reference: {} -> {} (depth {})", 
+                                  current_file, target_file, depth + 1);
+                        }
+                    }
+                }
+            }
+        }
+        
+        // 2. Count references FROM symbols defined in current file TO other files (symbol-based outgoing)
         for symbol_fqn in &symbols_in_file {
             let references = repo_mapper.find_symbol_references_by_fqn(symbol_fqn);
-            debug!("Symbol {} has {} references", symbol_fqn, references.len());
+            debug!("Symbol {} has {} outgoing references", symbol_fqn, references.len());
             
             for reference in references {
                 if !visited.contains(&reference.reference_file) && reference.reference_file != current_file {
@@ -141,6 +195,40 @@ pub fn find_related_files_optimized(
                         queue.push_back((reference.reference_file.clone(), depth + 1));
                         debug!("Found in-project reference: {} -> {} (depth {})", 
                               current_file, reference.reference_file, depth + 1);
+                    }
+                }
+            }
+        }
+        
+        // 2. Find references TO current file FROM other files
+        // Look for files that reference symbols defined in the current file
+        for symbol_fqn in &symbols_in_file {
+            // Find all references to this symbol and extract unique file paths
+            let references = repo_mapper.find_symbol_references_by_fqn(symbol_fqn);
+            debug!("Symbol {} has {} incoming references", symbol_fqn, references.len());
+            
+            // Extract unique file paths from references
+            let mut referencing_files = HashSet::new();
+            for reference in references {
+                referencing_files.insert(reference.reference_file.clone());
+            }
+            
+            for referencing_file in referencing_files {
+                if !visited.contains(&referencing_file) && referencing_file != current_file {
+                    visited.insert(referencing_file.clone());
+                    
+                    // Check if referencing file is from supplementary project
+                    if supplementary_registry.contains_file(&referencing_file) {
+                        if supplementary_files.insert(referencing_file.clone()) {
+                            debug!("Found cross-project incoming reference: {} <- {} (supplementary)", 
+                                  current_file, referencing_file);
+                        }
+                    } else {
+                        // Regular in-project file - add to queue for further traversal
+                        main_project_files.insert(referencing_file.clone());
+                        queue.push_back((referencing_file.clone(), depth + 1));
+                        debug!("Found in-project incoming reference: {} <- {} (depth {})", 
+                              current_file, referencing_file, depth + 1);
                     }
                 }
             }

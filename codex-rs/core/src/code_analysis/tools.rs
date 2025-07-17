@@ -2051,6 +2051,34 @@ fn get_related_files_skeleton_handler(args: Value) -> Result<Value, String> {
     let mut all_related_files = filtered_in_project_files.clone();
     all_related_files.extend(filtered_cross_project_files.iter().cloned());
     
+    // If no external related files found, check if we have intra-file references
+    // If so, include the active files themselves as they are self-referential
+    if all_related_files.is_empty() {
+        // Check if any active file has intra-file references (references within the same file)
+        for active_file in &input.active_files {
+            let symbols_in_file = repo_mapper.get_symbols_for_file(active_file);
+            let mut has_intra_file_refs = false;
+            
+            for symbol in symbols_in_file {
+                let references = repo_mapper.find_symbol_references_by_fqn(&symbol.fqn);
+                for reference in references {
+                    if reference.reference_file == *active_file {
+                        has_intra_file_refs = true;
+                        break;
+                    }
+                }
+                if has_intra_file_refs {
+                    break;
+                }
+            }
+            
+            // If this file has intra-file references, include it
+            if has_intra_file_refs {
+                all_related_files.push(active_file.clone());
+            }
+        }
+    }
+    
     // 6. Generate enhanced skeletons with cross-project annotations for related files only
     let skeletons = generate_enhanced_file_skeletons_with_cross_project_detection(&all_related_files, input.max_tokens, repo_mapper.get_root_path())?;
     
