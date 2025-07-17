@@ -2189,13 +2189,54 @@ pub fn generate_single_file_skeleton(file_path: &str) -> Result<String, String> 
     
     tracing::debug!("Got repo mapper, searching for symbols in file");
     
-    // REVERT: Use the original efficient O(1) file-based symbol lookup
-    let symbols_in_file: Vec<_> = repo_mapper.get_symbols_for_file(file_path)
-        .into_iter()
-        .cloned()
-        .collect();
-    
-    tracing::info!("SKELETON DEBUG: Found {} symbols for file {} using O(1) lookup", symbols_in_file.len(), file_path);
+    // CRITICAL FIX: Check if this is a cross-project file and use supplementary registry
+    let symbols_in_file: Vec<_> = if let Some(registry) = manager.get_supplementary_registry() {
+        if registry.contains_file(file_path) {
+            // This is a cross-project file - get symbols from supplementary registry
+            let supp_symbols: Vec<_> = registry.file_to_symbols
+                .get(file_path)
+                .map(|fqns| {
+                    fqns.iter()
+                        .filter_map(|fqn| registry.symbols.get(fqn))
+                        .map(|supp_symbol| {
+                            // Convert SupplementarySymbolInfo to CodeSymbol for skeleton generation
+                            super::context_extractor::CodeSymbol {
+                                name: supp_symbol.name.clone(),
+                                file_path: supp_symbol.file_path.clone(),
+                                start_line: supp_symbol.start_line as usize,
+                                end_line: supp_symbol.end_line as usize,
+                                start_col: 0, // Default values for missing fields
+                                end_col: 0,
+                                symbol_type: super::context_extractor::SymbolType::Class, // Default type
+                                parent: supp_symbol.parent.clone(),
+                                fqn: supp_symbol.fqn.clone(),
+                                origin_project: Some(supp_symbol.project_name.clone()),
+                            }
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            
+            tracing::info!("SKELETON DEBUG: Found {} symbols for CROSS-PROJECT file {} using supplementary registry", supp_symbols.len(), file_path);
+            supp_symbols
+        } else {
+            // Regular main project file - use repo mapper
+            let symbols: Vec<_> = repo_mapper.get_symbols_for_file(file_path)
+                .into_iter()
+                .cloned()
+                .collect();
+            tracing::info!("SKELETON DEBUG: Found {} symbols for main project file {} using O(1) lookup", symbols.len(), file_path);
+            symbols
+        }
+    } else {
+        // No supplementary registry - use repo mapper
+        let symbols: Vec<_> = repo_mapper.get_symbols_for_file(file_path)
+            .into_iter()
+            .cloned()
+            .collect();
+        tracing::info!("SKELETON DEBUG: Found {} symbols for file {} using O(1) lookup (no supplementary registry)", symbols.len(), file_path);
+        symbols
+    };
     
     // Check if we found any symbols
     if symbols_in_file.is_empty() {
