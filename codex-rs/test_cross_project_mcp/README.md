@@ -29,10 +29,12 @@ test_cross_project_mcp/
 cd codex-rs
 ./target/release/code-analysis-server \
   --sse \
-  --project-dir test_cross_project_mcp/MainProject \
-  --supplementary SkeletonProject:test_cross_project_mcp/SkeletonProject \
+  --project-dir /home/arvkum/project/codex/codex-rs/test_cross_project_mcp/MainProject \
+  --supplementary SkeletonProject:/home/arvkum/project/codex/codex-rs/test_cross_project_mcp/SkeletonProject \
   --verbose
 ```
+
+**Note**: Use absolute paths to avoid path resolution issues. Replace `/home/arvkum/project/codex/codex-rs` with your actual codex-rs directory path.
 
 ### 2. Run Test Suite
 ```bash

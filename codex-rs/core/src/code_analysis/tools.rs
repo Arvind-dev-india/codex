@@ -1233,18 +1233,54 @@ pub fn handle_find_symbol_references(args: Value) -> Option<Result<Value, String
                 }).collect();
                 
                 // ENHANCEMENT: Also search supplementary registry for cross-project references
+                // with enhanced same-named symbol resolution
                 let manager = super::graph_manager::get_graph_manager();
                 if let Ok(manager) = manager.read() {
                     if let Some(registry) = manager.get_supplementary_registry() {
+                        // Get main project symbols with this name for relationship analysis
+                        let main_symbols = manager.get_all_symbols();
+                        let main_symbols_with_name: Vec<_> = main_symbols
+                            .values()
+                            .filter(|s| s.name == input.symbol_name)
+                            .collect();
+                        
+                        // Get cross-project symbols with exact name match
+                        let cross_symbols_with_name: Vec<_> = registry.symbols
+                            .iter()
+                            .filter(|(_, s)| s.name == input.symbol_name)
+                            .collect();
+                        
+                        // Analyze relationships between same-named symbols
+                        for main_symbol in &main_symbols_with_name {
+                            for (cross_fqn, cross_symbol) in &cross_symbols_with_name {
+                                // Detect if main symbol uses/wraps the cross-project symbol
+                                let relationship_type = detect_symbol_relationship(main_symbol, cross_symbol);
+                                
+                                reference_infos.push(json!({
+                                    "file_path": cross_symbol.file_path,
+                                    "line": cross_symbol.start_line,
+                                    "column": 0,
+                                    "reference_type": relationship_type,
+                                    "project_type": "cross-project",
+                                    "project_name": cross_symbol.project_name,
+                                    "main_symbol_fqn": main_symbol.fqn,
+                                    "cross_symbol_fqn": cross_fqn,
+                                    "relationship_detected": true
+                                }));
+                            }
+                        }
+                        
+                        // Also add any other cross-project symbols that contain the name (fallback)
                         for (fqn, symbol) in &registry.symbols {
-                            if symbol.name.contains(&input.symbol_name) || fqn.contains(&input.symbol_name) {
+                            if symbol.name.contains(&input.symbol_name) && symbol.name != input.symbol_name {
                                 reference_infos.push(json!({
                                     "file_path": symbol.file_path,
                                     "line": symbol.start_line,
                                     "column": 0,
-                                    "reference_type": "definition",
+                                    "reference_type": "partial_match",
                                     "project_type": "cross-project",
-                                    "project_name": symbol.project_name
+                                    "project_name": symbol.project_name,
+                                    "relationship_detected": false
                                 }));
                             }
                         }
@@ -1722,11 +1758,54 @@ pub fn handle_find_symbol_definitions(args: Value) -> Option<Result<Value, Strin
                 }).collect();
                 
                 // ENHANCEMENT: Also search supplementary registry for cross-project definitions
+                // with enhanced same-named symbol resolution
                 let manager = super::graph_manager::get_graph_manager();
                 if let Ok(manager) = manager.read() {
                     if let Some(registry) = manager.get_supplementary_registry() {
+                        // Get main project symbols with this name for relationship analysis
+                        let main_symbols = manager.get_all_symbols();
+                        let main_symbols_with_name: Vec<_> = main_symbols
+                            .values()
+                            .filter(|s| s.name == input.symbol_name)
+                            .collect();
+                        
+                        // Get cross-project symbols with exact name match
+                        let cross_symbols_with_name: Vec<_> = registry.symbols
+                            .iter()
+                            .filter(|(_, s)| s.name == input.symbol_name)
+                            .collect();
+                        
+                        // Analyze relationships between same-named symbols
+                        for (cross_fqn, cross_symbol) in &cross_symbols_with_name {
+                            let mut related_main_symbols = Vec::new();
+                            
+                            for main_symbol in &main_symbols_with_name {
+                                let relationship_type = detect_symbol_relationship(main_symbol, cross_symbol);
+                                if relationship_type != "unrelated" {
+                                    related_main_symbols.push(json!({
+                                        "main_fqn": main_symbol.fqn,
+                                        "relationship": relationship_type
+                                    }));
+                                }
+                            }
+                            
+                            definition_infos.push(json!({
+                                "symbol": &input.symbol_name,
+                                "file_path": cross_symbol.file_path,
+                                "start_line": cross_symbol.start_line,
+                                "end_line": cross_symbol.end_line,
+                                "symbol_type": cross_symbol.symbol_type,
+                                "project_type": "cross-project",
+                                "project_name": cross_symbol.project_name,
+                                "cross_symbol_fqn": cross_fqn,
+                                "related_main_symbols": related_main_symbols,
+                                "relationship_detected": !related_main_symbols.is_empty()
+                            }));
+                        }
+                        
+                        // Also add any other cross-project symbols that contain the name (fallback)
                         for (fqn, symbol) in &registry.symbols {
-                            if symbol.name.contains(&input.symbol_name) || fqn.contains(&input.symbol_name) {
+                            if symbol.name.contains(&input.symbol_name) && symbol.name != input.symbol_name {
                                 definition_infos.push(json!({
                                     "symbol": &input.symbol_name,
                                     "file_path": symbol.file_path,
@@ -1734,7 +1813,8 @@ pub fn handle_find_symbol_definitions(args: Value) -> Option<Result<Value, Strin
                                     "end_line": symbol.end_line,
                                     "symbol_type": symbol.symbol_type,
                                     "project_type": "cross-project",
-                                    "project_name": symbol.project_name
+                                    "project_name": symbol.project_name,
+                                    "relationship_detected": false
                                 }));
                             }
                         }
@@ -3269,4 +3349,165 @@ fn generate_enhanced_file_skeletons_with_cross_project_detection(
     }
     
     Ok(skeletons)
+}
+
+/// Detect the relationship between a main project symbol and a cross-project symbol with the same name
+/// Pure Tree-sitter AST-based analysis - no string fallback
+fn detect_symbol_relationship(
+    main_symbol: &super::context_extractor::CodeSymbol,
+    cross_symbol: &super::supplementary_registry::SupplementarySymbolInfo,
+) -> String {
+    // Read the main symbol's file content
+    if let Ok(content) = std::fs::read_to_string(&main_symbol.file_path) {
+        // Use Tree-sitter AST analysis ONLY - no fallback
+        match super::parser_pool::get_parser_pool().parse_file(&main_symbol.file_path, &content) {
+            Ok(parsed_file) => {
+                analyze_symbol_relationship_pure_ast(&parsed_file, main_symbol, cross_symbol)
+            }
+            Err(e) => {
+                // Log the AST parsing failure but don't fallback to string analysis
+                tracing::warn!("AST parsing failed for {} ({}), returning unrelated", main_symbol.file_path, e);
+                "unrelated".to_string()
+            }
+        }
+    } else {
+        tracing::warn!("Could not read file {}", main_symbol.file_path);
+        "unrelated".to_string()
+    }
+}
+
+/// Pure AST-based relationship analysis using Tree-sitter queries
+fn analyze_symbol_relationship_pure_ast(
+    parsed_file: &super::parser_pool::ParsedFile,
+    main_symbol: &super::context_extractor::CodeSymbol,
+    cross_symbol: &super::supplementary_registry::SupplementarySymbolInfo,
+) -> String {
+    let mut wrapper_score: f32 = 0.0;
+    let mut implementation_score: f32 = 0.0;
+    let mut inheritance_score: f32 = 0.0;
+    
+    let cross_project_name = &cross_symbol.project_name;
+    let cross_symbol_name = &cross_symbol.name;
+    let symbol_start_line = main_symbol.start_line;
+    let symbol_end_line = main_symbol.end_line;
+    
+    tracing::debug!("🔍 AST analysis for {} (lines {}-{}) looking for relationships with {}", 
+                   main_symbol.name, symbol_start_line, symbol_end_line, cross_symbol_name);
+    
+    // Execute Tree-sitter query to find all captures within the symbol's range
+    if let Ok(matches) = parsed_file.execute_predefined_query(super::parser_pool::QueryType::All) {
+        for match_ in matches {
+            for capture in &match_.captures {
+                let capture_line = capture.start_point.0 + 1; // Convert to 1-based
+                
+                // Only analyze captures within our symbol's range
+                if capture_line >= symbol_start_line && capture_line <= symbol_end_line {
+                    
+                    // Log all captures for debugging
+                    tracing::debug!("AST capture: '{}' = '{}' at line {}", 
+                                   capture.name, capture.text, capture_line);
+                    
+                    // 1. Constructor calls and object creation
+                    if capture.name.contains("constructor") || 
+                       capture.name.contains("call") ||
+                       capture.name.contains("new") ||
+                       capture.name.contains("object_creation") {
+                        if capture.text.contains(cross_project_name) || capture.text == cross_symbol_name.as_str() {
+                            wrapper_score += 0.4;
+                            tracing::info!("🎯 AST: Constructor/call to {} ({})", cross_symbol_name, capture.name);
+                        }
+                    }
+                    
+                    // 2. Type usage in fields, parameters, return types
+                    if capture.name.contains("type") || 
+                       capture.name.contains("usage") ||
+                       capture.name.contains("identifier") ||
+                       capture.name.contains("field") ||
+                       capture.name.contains("parameter") ||
+                       capture.name.contains("qualified_name") {
+                        if capture.text.contains(cross_project_name) || capture.text == cross_symbol_name.as_str() {
+                            wrapper_score += 0.3;
+                            tracing::info!("🎯 AST: Type/usage of {} ({})", cross_symbol_name, capture.name);
+                        }
+                    }
+                    
+                    // 3. Interface implementation detection
+                    if capture.name.contains("interface") || 
+                       capture.name.contains("implementation") ||
+                       capture.name.contains("base") ||
+                       capture.name.contains("base_list") {
+                        if capture.text.contains(cross_symbol_name) {
+                            // Enhanced interface detection
+                            if cross_symbol_name.starts_with('I') && cross_symbol_name.len() > 1 {
+                                implementation_score += 0.7;
+                                tracing::info!("🎯 AST: Interface implementation of {} ({})", cross_symbol_name, capture.name);
+                            } else {
+                                inheritance_score += 0.5;
+                                tracing::info!("🎯 AST: Class inheritance of {} ({})", cross_symbol_name, capture.name);
+                            }
+                        }
+                    }
+                    
+                    // 4. Class definition with inheritance/implementation
+                    if capture.name.contains("definition.class") || 
+                       capture.name.contains("class_declaration") {
+                        if capture.text.contains(cross_symbol_name) {
+                            if cross_symbol_name.starts_with('I') && cross_symbol_name.len() > 1 {
+                                implementation_score += 0.6;
+                                tracing::info!("🎯 AST: Class implementing interface {} ({})", cross_symbol_name, capture.name);
+                            } else {
+                                inheritance_score += 0.4;
+                                tracing::info!("🎯 AST: Class inheriting from {} ({})", cross_symbol_name, capture.name);
+                            }
+                        }
+                    }
+                    
+                    // 5. Method calls to cross-project symbols
+                    if capture.name.contains("method_call") ||
+                       capture.name.contains("invocation") ||
+                       capture.name.contains("member_access") {
+                        if capture.text.contains(cross_project_name) || capture.text.contains(cross_symbol_name) {
+                            wrapper_score += 0.2;
+                            tracing::info!("🎯 AST: Method call involving {} ({})", cross_symbol_name, capture.name);
+                        }
+                    }
+                    
+                    // 6. Namespace/project usage
+                    if capture.text.contains(cross_project_name) {
+                        wrapper_score += 0.1;
+                        tracing::debug!("AST: Namespace usage of {} in {}", cross_project_name, capture.name);
+                    }
+                    
+                    // 7. Specific qualified name patterns (e.g., SkeletonProject.Models.User)
+                    if capture.text.contains(&format!("{}.{}", cross_project_name, cross_symbol_name)) {
+                        wrapper_score += 0.5;
+                        tracing::info!("🎯 AST: Qualified name usage: {} ({})", capture.text, capture.name);
+                    }
+                }
+            }
+        }
+    } else {
+        tracing::warn!("Failed to execute Tree-sitter query for {}", main_symbol.file_path);
+        return "unrelated".to_string();
+    }
+    
+    // Determine the best relationship based on AST analysis
+    let max_score = wrapper_score.max(implementation_score).max(inheritance_score);
+    
+    tracing::debug!("AST scores for {}: wrapper={}, implementation={}, inheritance={}, max={}", 
+                   main_symbol.name, wrapper_score, implementation_score, inheritance_score, max_score);
+    
+    if max_score > 0.5 {
+        if implementation_score == max_score {
+            "implementation".to_string()
+        } else if inheritance_score == max_score {
+            "inheritance".to_string()
+        } else {
+            "wrapper".to_string()
+        }
+    } else if max_score > 0.2 {
+        "possible_wrapper".to_string()
+    } else {
+        "unrelated".to_string()
+    }
 }
