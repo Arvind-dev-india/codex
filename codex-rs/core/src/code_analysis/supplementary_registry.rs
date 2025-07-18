@@ -1,12 +1,14 @@
 use std::collections::HashMap;
+use lru::LruCache;
+use std::num::NonZeroUsize;
 use serde_json::{json, Value};
 use tracing::{info, debug, error};
 use crate::code_analysis::handle_analyze_code;
 use crate::config_types::SupplementaryProjectConfig;
 
-/// Lightweight registry for supplementary project symbols (FQNs only)
+/// Enhanced registry for supplementary project symbols with AST-first approach (PHASE 2)
 /// This replaces the heavy full-graph approach for supplementary projects
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct SupplementarySymbolRegistry {
     /// Map: FQN → SupplementarySymbolInfo
     pub symbols: HashMap<String, SupplementarySymbolInfo>,
@@ -16,6 +18,15 @@ pub struct SupplementarySymbolRegistry {
     pub project_to_symbols: HashMap<String, Vec<String>>,
     /// Total number of projects in registry
     pub project_count: usize,
+    
+    /// PHASE 2: LRU cache for AST relationship results (symbol_name -> relationships)
+    ast_relationship_cache: LruCache<String, Vec<ASTRelationshipResult>>,
+    
+    /// PHASE 2: Cache for traditional FQN/name matching (fallback only)
+    traditional_match_cache: LruCache<String, Vec<TraditionalMatchResult>>,
+    
+    /// PHASE 2: Performance metrics
+    pub metrics: CrossProjectMetrics,
 }
 
 /// Lightweight symbol information for supplementary projects
@@ -38,6 +49,10 @@ impl SupplementarySymbolRegistry {
             file_to_symbols: HashMap::new(),
             project_to_symbols: HashMap::new(),
             project_count: 0,
+            // PHASE 2: Initialize caches with reasonable sizes
+            ast_relationship_cache: LruCache::new(NonZeroUsize::new(1000).unwrap()),
+            traditional_match_cache: LruCache::new(NonZeroUsize::new(500).unwrap()),
+            metrics: CrossProjectMetrics::default(),
         }
     }
     
@@ -470,5 +485,302 @@ mod tests {
         
         assert!(extensions.contains(&"cs"));
         assert!(extensions.contains(&"ts"));
+    }
+}
+/// PHASE 2: AST-based relationship result with high confidence
+#[derive(Debug, Clone)]
+pub struct ASTRelationshipResult {
+    pub main_symbol_fqn: String,
+    pub cross_project_symbol_fqn: String,
+    pub relationship_type: String, // "wrapper", "implementation", "inheritance"
+    pub confidence: f32, // AST analysis typically gives higher confidence
+    pub ast_patterns_detected: Vec<String>, // Debug info about detected patterns
+    pub file_path: String,
+    pub project_name: String,
+}
+
+/// PHASE 2: Traditional matching result (fallback when AST fails)
+#[derive(Debug, Clone)]
+pub struct TraditionalMatchResult {
+    pub cross_project_symbol_fqn: String,
+    pub match_type: String, // "fqn_exact", "name_exact", "name_partial"
+    pub confidence: f32, // Traditional matching gives lower confidence
+    pub file_path: String,
+    pub project_name: String,
+}
+
+/// PHASE 2: Performance metrics for cross-project analysis
+#[derive(Debug, Default)]
+pub struct CrossProjectMetrics {
+    pub ast_cache_hits: u64,
+    pub ast_cache_misses: u64,
+    pub ast_analysis_time_ms: u64,
+    pub traditional_fallbacks: u64,
+    pub total_queries: u64,
+}
+
+/// PHASE 2: Unified cross-project relationship result
+#[derive(Debug, Clone)]
+pub struct CrossProjectRelationship {
+    pub main_symbol_fqn: Option<String>, // Some for AST, None for traditional
+    pub cross_project_symbol_fqn: String,
+    pub relationship_type: String,
+    pub confidence: f32,
+    pub detection_method: String, // "ast_analysis", "fqn_exact", "name_exact", etc.
+    pub file_path: String,
+    pub project_name: String,
+    pub ast_patterns: Option<Vec<String>>, // Only for AST-detected relationships
+}
+
+impl SupplementarySymbolRegistry {
+    /// PHASE 2: AST-FIRST query for relationships using AST analysis as primary method
+    pub fn query_relationships_ast_first(
+        &mut self, 
+        symbol_name: &str, 
+        main_symbols: &std::collections::HashMap<String, super::context_extractor::CodeSymbol>
+    ) -> Vec<CrossProjectRelationship> {
+        self.metrics.total_queries += 1;
+        let start_time = std::time::Instant::now();
+
+        tracing::debug!("AST-first query for symbol: {}", symbol_name);
+
+        // Step 1: Try AST-based analysis first (PRIMARY)
+        let ast_relationships = self.get_ast_relationships_cached(symbol_name, main_symbols);
+        
+        // Step 2: Traditional matching as fallback (SECONDARY)
+        let traditional_relationships = if ast_relationships.is_empty() {
+            self.metrics.traditional_fallbacks += 1;
+            tracing::debug!("AST analysis found no relationships for '{}', falling back to traditional matching", symbol_name);
+            self.get_traditional_relationships_cached(symbol_name)
+        } else {
+            tracing::debug!("AST analysis found {} relationships for '{}', skipping traditional fallback", 
+                           ast_relationships.len(), symbol_name);
+            Vec::new()
+        };
+
+        // Step 3: Combine results with AST taking priority
+        let mut combined_relationships = Vec::new();
+
+        // Add AST relationships (higher priority, higher confidence)
+        for ast_rel in ast_relationships {
+            combined_relationships.push(CrossProjectRelationship {
+                main_symbol_fqn: Some(ast_rel.main_symbol_fqn),
+                cross_project_symbol_fqn: ast_rel.cross_project_symbol_fqn,
+                relationship_type: ast_rel.relationship_type,
+                confidence: ast_rel.confidence,
+                detection_method: "ast_analysis".to_string(),
+                file_path: ast_rel.file_path,
+                project_name: ast_rel.project_name,
+                ast_patterns: Some(ast_rel.ast_patterns_detected),
+            });
+        }
+
+        // Add traditional relationships only if no AST relationships found
+        for trad_rel in traditional_relationships {
+            combined_relationships.push(CrossProjectRelationship {
+                main_symbol_fqn: None, // Traditional matching doesn't provide main symbol context
+                cross_project_symbol_fqn: trad_rel.cross_project_symbol_fqn,
+                relationship_type: "definition".to_string(), // Traditional matching only finds definitions
+                confidence: trad_rel.confidence,
+                detection_method: trad_rel.match_type,
+                file_path: trad_rel.file_path,
+                project_name: trad_rel.project_name,
+                ast_patterns: None,
+            });
+        }
+
+        self.metrics.ast_analysis_time_ms += start_time.elapsed().as_millis() as u64;
+
+        tracing::info!("AST-first query for '{}': {} AST rels, {} traditional rels, {} total", 
+                      symbol_name, 
+                      ast_relationships.len(), 
+                      traditional_relationships.len(),
+                      combined_relationships.len());
+
+        combined_relationships
+    }
+
+    /// Get AST relationships with caching
+    fn get_ast_relationships_cached(
+        &mut self, 
+        symbol_name: &str, 
+        main_symbols: &std::collections::HashMap<String, super::context_extractor::CodeSymbol>
+    ) -> Vec<ASTRelationshipResult> {
+        // Check cache first
+        if let Some(cached_results) = self.ast_relationship_cache.get(symbol_name) {
+            self.metrics.ast_cache_hits += 1;
+            tracing::debug!("AST cache HIT for '{}': {} relationships", symbol_name, cached_results.len());
+            return cached_results.clone();
+        }
+
+        self.metrics.ast_cache_misses += 1;
+        tracing::debug!("AST cache MISS for '{}', computing relationships", symbol_name);
+
+        // Compute AST relationships
+        let ast_relationships = self.compute_ast_relationships(symbol_name, main_symbols);
+
+        // Cache the results
+        self.ast_relationship_cache.put(symbol_name.to_string(), ast_relationships.clone());
+
+        tracing::debug!("Cached {} AST relationships for '{}'", ast_relationships.len(), symbol_name);
+        ast_relationships
+    }
+
+    /// Compute AST relationships using pure Tree-sitter analysis
+    fn compute_ast_relationships(
+        &self, 
+        symbol_name: &str, 
+        main_symbols: &std::collections::HashMap<String, super::context_extractor::CodeSymbol>
+    ) -> Vec<ASTRelationshipResult> {
+        let mut ast_relationships = Vec::new();
+
+        // Get main project symbols with this name
+        let main_symbols_with_name: Vec<_> = main_symbols
+            .values()
+            .filter(|s| s.name == symbol_name)
+            .collect();
+
+        // Get cross-project symbols with this name
+        let cross_symbols_with_name: Vec<_> = self.symbols
+            .iter()
+            .filter(|(_, s)| s.name == symbol_name)
+            .collect();
+
+        tracing::debug!("AST analysis: {} main symbols, {} cross-project symbols with name '{}'", 
+                       main_symbols_with_name.len(), cross_symbols_with_name.len(), symbol_name);
+
+        // Analyze relationships between same-named symbols using AST
+        for main_symbol in &main_symbols_with_name {
+            for (cross_fqn, cross_symbol) in &cross_symbols_with_name {
+                // Use the existing pure AST-based relationship detection
+                let relationship_type = super::tools::detect_symbol_relationship(main_symbol, cross_symbol);
+                
+                if relationship_type != "unrelated" {
+                    let confidence = self.calculate_ast_confidence(&relationship_type);
+                    
+                    ast_relationships.push(ASTRelationshipResult {
+                        main_symbol_fqn: main_symbol.fqn.clone(),
+                        cross_project_symbol_fqn: cross_fqn.clone(),
+                        relationship_type: relationship_type.clone(),
+                        confidence,
+                        ast_patterns_detected: vec!["tree_sitter_analysis".to_string()], // TODO: Add actual patterns
+                        file_path: cross_symbol.file_path.clone(),
+                        project_name: cross_symbol.project_name.clone(),
+                    });
+
+                    tracing::info!("AST detected {} relationship: {} -> {} (confidence: {})", 
+                                  relationship_type,
+                                  main_symbol.fqn, 
+                                  cross_fqn, 
+                                  confidence);
+                }
+            }
+        }
+
+        ast_relationships
+    }
+
+    /// Calculate confidence score for AST-detected relationships
+    fn calculate_ast_confidence(&self, relationship_type: &str) -> f32 {
+        match relationship_type {
+            "wrapper" => 0.85,           // High confidence for wrapper detection
+            "implementation" => 0.90,    // Very high confidence for interface implementation
+            "inheritance" => 0.90,       // Very high confidence for class inheritance
+            "possible_wrapper" => 0.60,  // Medium confidence for uncertain patterns
+            _ => 0.30,                   // Low confidence for other relationships
+        }
+    }
+
+    /// Get traditional relationships with caching (fallback only)
+    fn get_traditional_relationships_cached(&mut self, symbol_name: &str) -> Vec<TraditionalMatchResult> {
+        // Check cache first
+        if let Some(cached_results) = self.traditional_match_cache.get(symbol_name) {
+            tracing::debug!("Traditional cache HIT for '{}': {} relationships", symbol_name, cached_results.len());
+            return cached_results.clone();
+        }
+
+        tracing::debug!("Traditional cache MISS for '{}', computing fallback relationships", symbol_name);
+
+        // Compute traditional relationships (simple name/FQN matching)
+        let traditional_relationships = self.compute_traditional_relationships(symbol_name);
+
+        // Cache the results
+        self.traditional_match_cache.put(symbol_name.to_string(), traditional_relationships.clone());
+
+        traditional_relationships
+    }
+
+    /// Compute traditional relationships (fallback when AST fails)
+    fn compute_traditional_relationships(&self, symbol_name: &str) -> Vec<TraditionalMatchResult> {
+        self.symbols
+            .iter()
+            .filter_map(|(fqn, symbol)| {
+                let (match_type, confidence) = if symbol.name == symbol_name {
+                    ("name_exact".to_string(), 0.70) // Lower confidence than AST
+                } else if symbol.name.contains(symbol_name) {
+                    ("name_partial".to_string(), 0.50)
+                } else if fqn.contains(symbol_name) {
+                    ("fqn_partial".to_string(), 0.40)
+                } else {
+                    return None;
+                };
+
+                Some(TraditionalMatchResult {
+                    cross_project_symbol_fqn: fqn.clone(),
+                    match_type,
+                    confidence,
+                    file_path: symbol.file_path.clone(),
+                    project_name: symbol.project_name.clone(),
+                })
+            })
+            .collect()
+    }
+
+    /// Get cache statistics for monitoring
+    pub fn get_cache_stats(&self) -> Value {
+        json!({
+            "ast_cache": {
+                "capacity": self.ast_relationship_cache.cap().get(),
+                "current_size": self.ast_relationship_cache.len(),
+                "hit_rate": if self.metrics.total_queries > 0 {
+                    self.metrics.ast_cache_hits as f64 / self.metrics.total_queries as f64
+                } else { 0.0 }
+            },
+            "traditional_cache": {
+                "capacity": self.traditional_match_cache.cap().get(),
+                "current_size": self.traditional_match_cache.len()
+            },
+            "metrics": {
+                "total_queries": self.metrics.total_queries,
+                "ast_cache_hits": self.metrics.ast_cache_hits,
+                "ast_cache_misses": self.metrics.ast_cache_misses,
+                "traditional_fallbacks": self.metrics.traditional_fallbacks,
+                "avg_analysis_time_ms": if self.metrics.total_queries > 0 {
+                    self.metrics.ast_analysis_time_ms / self.metrics.total_queries
+                } else { 0 }
+            }
+        })
+    }
+
+    /// Clear caches (useful for testing or memory management)
+    pub fn clear_caches(&mut self) {
+        self.ast_relationship_cache.clear();
+        self.traditional_match_cache.clear();
+        tracing::info!("Cleared cross-project relationship caches");
+    }
+}
+
+impl Clone for SupplementarySymbolRegistry {
+    fn clone(&self) -> Self {
+        Self {
+            symbols: self.symbols.clone(),
+            file_to_symbols: self.file_to_symbols.clone(),
+            project_to_symbols: self.project_to_symbols.clone(),
+            project_count: self.project_count,
+            // Create new empty caches for the clone (don't copy cache contents)
+            ast_relationship_cache: LruCache::new(NonZeroUsize::new(1000).unwrap()),
+            traditional_match_cache: LruCache::new(NonZeroUsize::new(500).unwrap()),
+            metrics: CrossProjectMetrics::default(),
+        }
     }
 }

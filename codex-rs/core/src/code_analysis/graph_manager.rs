@@ -426,7 +426,18 @@ impl CodeGraphManager {
     /// Set supplementary registry for cross-project analysis
     pub fn set_supplementary_registry(&mut self, registry: super::supplementary_registry::SupplementarySymbolRegistry) {
         tracing::info!("Setting supplementary registry with {} symbols in graph manager", registry.symbols.len());
+        
+        // PHASE 2: Initialize new cross-project registry with AST-first approach
+        let mut cross_project_registry = super::cross_project_registry::CrossProjectRegistry::new(
+            1000, // AST cache size
+            500   // Traditional cache size
+        );
+        cross_project_registry.set_supplementary_registry(registry.clone());
+        
         self.supplementary_registry = Some(registry);
+        self.cross_project_registry = Some(cross_project_registry);
+        
+        tracing::info!("Initialized cross-project registry with AST-first approach");
     }
     
     /// Get supplementary registry for cross-project analysis

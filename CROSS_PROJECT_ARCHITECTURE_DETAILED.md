@@ -441,10 +441,27 @@ let result = graph_manager.query_unified_relationships("User");
 // - Layer 3: AST relationships (on-demand, smart)
 ```
 
-### **Phase 2: Consolidate Cross-Project Logic** 📋 **PLANNED**
-- Move all cross-project relationship logic to `CrossProjectRegistry`
-- Remove scattered edge creation from `code_analysis_bridge.rs`
-- Implement on-demand AST relationship computation
+### **Phase 2: Consolidate Cross-Project Logic** ⏳ **IN PROGRESS**
+
+**Goal**: Consolidate scattered cross-project logic into unified AST-first approach
+
+**AST-First Strategy**:
+- ✅ **Primary**: Pure Tree-sitter AST analysis for all relationships
+- ✅ **Fallback**: Traditional FQN/name matching only when AST fails
+- ✅ **Performance**: LRU cache for AST results
+- ✅ **Quality**: Higher confidence in AST-detected relationships
+
+**Files to Modify**:
+1. `core/src/code_analysis/cross_project_registry.rs` - New consolidated registry
+2. `code_analysis_bridge.rs` - Remove scattered edge creation logic
+3. `unified_relationship_query.rs` - Enhanced AST-first querying
+4. `tools.rs` - Simplified to use unified interface only
+
+**Implementation Plan**:
+- ⏳ Create `CrossProjectRegistry` with AST-first approach
+- ⏳ Move edge creation logic from bridge to registry
+- ⏳ Implement LRU cache for AST relationship results
+- ⏳ Remove duplicate logic from multiple files
 
 ### **Phase 3: Simplify Tool Implementation** 📋 **PLANNED**
 - Update `tools.rs` to use unified query interface
