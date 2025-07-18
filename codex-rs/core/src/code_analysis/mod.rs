@@ -4,6 +4,7 @@ pub mod parser_pool;
 pub mod context_extractor;
 pub mod repo_mapper;
 pub mod tools;
+pub mod unified_relationship_query;
 pub mod supplementary_registry;
 pub mod enhanced_graph_structures;
 pub mod enhanced_bfs_traversal;

@@ -3353,7 +3353,7 @@ fn generate_enhanced_file_skeletons_with_cross_project_detection(
 
 /// Detect the relationship between a main project symbol and a cross-project symbol with the same name
 /// Pure Tree-sitter AST-based analysis - no string fallback
-fn detect_symbol_relationship(
+pub fn detect_symbol_relationship(
     main_symbol: &super::context_extractor::CodeSymbol,
     cross_symbol: &super::supplementary_registry::SupplementarySymbolInfo,
 ) -> String {

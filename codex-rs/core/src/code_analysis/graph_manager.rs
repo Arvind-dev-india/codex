@@ -553,6 +553,57 @@ impl CodeGraphManager {
         tracing::info!("Complete cleanup finished - all state cleared");
         Ok(())
     }
+
+    /// Get all references from the repo mapper
+    pub fn get_all_references(&self) -> Vec<super::context_extractor::SymbolReference> {
+        if let Some(repo_mapper) = &self.repo_mapper {
+            repo_mapper.get_all_references().to_vec()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// PHASE 1: Unified query interface for all relationship types
+    /// This provides a single entry point for querying main project + cross-project relationships
+    pub fn query_unified_relationships(&self, symbol_name: &str) -> super::unified_relationship_query::UnifiedRelationshipResult {
+        tracing::debug!("Unified relationship query for symbol: {}", symbol_name);
+
+        // Get main project data
+        let main_symbols = self.get_all_symbols();
+        let main_references = self.get_all_references();
+
+        // Create unified query interface
+        let query = super::unified_relationship_query::UnifiedRelationshipQuery::new(
+            &main_symbols,
+            &main_references,
+            self.supplementary_registry.as_ref(),
+        );
+
+        // Execute unified query across all layers
+        let result = query.query_symbol_relationships(symbol_name);
+
+        tracing::info!("Unified query for '{}': {} main refs, {} cross-project rels, {} AST rels",
+                      symbol_name,
+                      result.summary.total_main_references,
+                      result.summary.total_cross_project_relationships,
+                      result.summary.total_ast_relationships);
+
+        result
+    }
+
+    /// PHASE 1: Query symbol references using unified interface
+    /// This replaces the scattered edge creation in tools.rs
+    pub fn query_symbol_references_unified(&self, symbol_name: &str) -> serde_json::Value {
+        let unified_result = self.query_unified_relationships(symbol_name);
+        unified_result.to_references_json()
+    }
+
+    /// PHASE 1: Query symbol definitions using unified interface
+    /// This replaces the scattered edge creation in tools.rs
+    pub fn query_symbol_definitions_unified(&self, symbol_name: &str) -> serde_json::Value {
+        let unified_result = self.query_unified_relationships(symbol_name);
+        unified_result.to_definitions_json()
+    }
 }
 
 /// Global instance of the code graph manager
