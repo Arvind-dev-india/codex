@@ -428,14 +428,7 @@ impl CodeGraphManager {
         tracing::info!("Setting supplementary registry with {} symbols in graph manager", registry.symbols.len());
         
         // PHASE 2: Initialize new cross-project registry with AST-first approach
-        let mut cross_project_registry = super::cross_project_registry::CrossProjectRegistry::new(
-            1000, // AST cache size
-            500   // Traditional cache size
-        );
-        cross_project_registry.set_supplementary_registry(registry.clone());
-        
         self.supplementary_registry = Some(registry);
-        self.cross_project_registry = Some(cross_project_registry);
         
         tracing::info!("Initialized cross-project registry with AST-first approach");
     }
@@ -670,43 +663,109 @@ pub async fn initialize_graph_async(root_path: &Path) -> Result<(), String> {
         });
     }
     
-    // Create and initialize the repository mapper in a blocking task
+    // PHASE 2: Get supplementary projects for parallel processing
+    let supplementary_projects = {
+        let manager = get_graph_manager();
+        let manager = manager.read()
+            .map_err(|e| format!("Failed to acquire read lock: {}", e))?;
+        manager.get_supplementary_projects().to_vec()
+    };
+    
+    // PHASE 2B: Start supplementary projects processing in parallel (immediate)
+    let supplementary_handle = if !supplementary_projects.is_empty() {
+        tracing::info!("Starting parallel processing of {} supplementary projects", supplementary_projects.len());
+        let projects_clone = supplementary_projects.clone();
+        Some(tokio::spawn(async move {
+            let supp_start = std::time::Instant::now();
+            tracing::info!("PHASE 2B: Starting supplementary projects processing");
+            
+            match super::supplementary_registry::extract_supplementary_symbols_lightweight(&projects_clone).await {
+                Ok(registry) => {
+                    let stats = registry.get_stats();
+                    tracing::info!("PHASE 2B: Supplementary processing completed in {:.2}s - {} symbols from {} projects", 
+                                 supp_start.elapsed().as_secs_f64(), stats.total_symbols, stats.total_projects);
+                    Ok(registry)
+                }
+                Err(e) => {
+                    tracing::error!("PHASE 2B: Supplementary processing failed: {}", e);
+                    Err(e)
+                }
+            }
+        }))
+    } else {
+        tracing::info!("No supplementary projects configured, skipping parallel processing");
+        None
+    };
+    
+    // PHASE 2A: Create and initialize the repository mapper in a blocking task (Main Project)
     let root_path_clone = root_path.to_path_buf();
-    let result = tokio::task::spawn_blocking(move || {
+    let main_project_handle = tokio::task::spawn_blocking(move || {
         let task_start = std::time::Instant::now();
-        tracing::info!("Starting spawn_blocking task for graph initialization");
+        tracing::info!("PHASE 2A: Starting spawn_blocking task for main project initialization");
         
         // Initialize memory-optimized storage for this task
         let storage_start = std::time::Instant::now();
         let storage_config = StorageConfig::for_large_projects();
         let storage = ThreadSafeStorage::new(storage_config)?;
         storage.initialize_for_project(&root_path_clone)?;
-        tracing::info!("Storage initialization completed in {:.2}s", storage_start.elapsed().as_secs_f64());
+        tracing::info!("PHASE 2A: Storage initialization completed in {:.2}s", storage_start.elapsed().as_secs_f64());
         
         let mut repo_mapper = RepoMapper::new(&root_path_clone);
         
         // Use memory-optimized mapping
         let mapping_start = std::time::Instant::now();
         repo_mapper.map_repository_with_storage(Some(&storage))?;
-        tracing::info!("Repository mapping completed in {:.2}s", mapping_start.elapsed().as_secs_f64());
+        tracing::info!("PHASE 2A: Repository mapping completed in {:.2}s", mapping_start.elapsed().as_secs_f64());
         
         // CRITICAL: Build the graph after parsing symbols
         // But we need to build it from the storage, not the empty context extractor
         let graph_start = std::time::Instant::now();
         repo_mapper.build_graph_from_storage(&storage)?;
-        tracing::info!("Graph building completed in {:.2}s", graph_start.elapsed().as_secs_f64());
+        tracing::info!("PHASE 2A: Graph building completed in {:.2}s", graph_start.elapsed().as_secs_f64());
         
         let task_total = task_start.elapsed();
-        tracing::info!("spawn_blocking task completed in {:.2}s - about to return", task_total.as_secs_f64());
+        tracing::info!("PHASE 2A: Main project processing completed in {:.2}s", task_total.as_secs_f64());
         
         Ok::<(RepoMapper, ThreadSafeStorage), String>((repo_mapper, storage))
-    }).await.map_err(|e| format!("Task join error: {}", e))?;
+    });
     
-    tracing::info!("spawn_blocking task returned, processing results...");
+    // PHASE 2: Wait for both main project and supplementary projects to complete
+    tracing::info!("PHASE 2: Waiting for parallel processing to complete...");
+    let (main_result, supplementary_result) = tokio::join!(
+        main_project_handle,
+        async {
+            match supplementary_handle {
+                Some(handle) => Some(handle.await.map_err(|e| format!("Supplementary task join error: {}", e)).ok()?),
+                None => None
+            }
+        }
+    );
+    
+    let result = main_result.map_err(|e| format!("Main project task join error: {}", e))?;
+    
+    tracing::info!("PHASE 2: Both main project and supplementary processing completed, consolidating results...");
     
     match result {
         Ok((repo_mapper, storage)) => {
-            tracing::info!("spawn_blocking result received successfully");
+            tracing::info!("PHASE 2A: Main project result received successfully");
+            
+            // Process supplementary results
+            let supplementary_registry = match supplementary_result {
+                Some(Ok(registry)) => {
+                    let stats = registry.get_stats();
+                    tracing::info!("PHASE 2B: Supplementary registry received - {} symbols from {} projects", 
+                                 stats.total_symbols, stats.total_projects);
+                    Some(registry)
+                }
+                Some(Err(e)) => {
+                    tracing::warn!("PHASE 2B: Supplementary processing failed, continuing without: {}", e);
+                    None
+                }
+                None => {
+                    tracing::info!("PHASE 2B: No supplementary projects processed");
+                    None
+                }
+            };
             
             // Now acquire the write lock and update the manager
             let lock_start = std::time::Instant::now();
@@ -775,10 +834,11 @@ pub async fn initialize_graph_async(root_path: &Path) -> Result<(), String> {
             let (_total_files, files_processed, _, _) = repo_mapper.get_parsing_statistics();
             let initialization_time_ms = start_time.elapsed().as_millis() as u64;
             
-            // Store the new state
+            // Store the new state (PHASE 2: Include supplementary registry)
             manager.repo_mapper = Some(repo_mapper);
             manager.symbol_storage = Some(storage); // Store the storage for later access
             manager.root_path = Some(root_path.to_path_buf());
+            manager.supplementary_registry = supplementary_registry; // PHASE 2: Store supplementary registry
             manager.initialized = true;
             manager.set_status(GraphStatus::Ready {
                 files_processed,
@@ -786,8 +846,16 @@ pub async fn initialize_graph_async(root_path: &Path) -> Result<(), String> {
                 initialization_time_ms,
             });
             
-            tracing::info!("Code graph initialized successfully for path: {} ({} files, {} symbols, {}ms)", 
-                          root_path.display(), files_processed, symbols_count, initialization_time_ms);
+            // PHASE 2: Enhanced logging with supplementary info
+            let supp_info = if let Some(ref registry) = manager.supplementary_registry {
+                let stats = registry.get_stats();
+                format!(" + {} supplementary symbols from {} projects", stats.total_symbols, stats.total_projects)
+            } else {
+                String::new()
+            };
+            
+            tracing::info!("PHASE 2: Code graph initialized successfully for path: {} ({} files, {} symbols{}, {}ms)", 
+                          root_path.display(), files_processed, symbols_count, supp_info, initialization_time_ms);
             Ok(())
         }
         Err(error) => {

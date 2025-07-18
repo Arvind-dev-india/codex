@@ -562,29 +562,29 @@ impl SupplementarySymbolRegistry {
         let mut combined_relationships = Vec::new();
 
         // Add AST relationships (higher priority, higher confidence)
-        for ast_rel in ast_relationships {
+        for ast_rel in &ast_relationships {
             combined_relationships.push(CrossProjectRelationship {
-                main_symbol_fqn: Some(ast_rel.main_symbol_fqn),
-                cross_project_symbol_fqn: ast_rel.cross_project_symbol_fqn,
-                relationship_type: ast_rel.relationship_type,
+                main_symbol_fqn: Some(ast_rel.main_symbol_fqn.clone()),
+                cross_project_symbol_fqn: ast_rel.cross_project_symbol_fqn.clone(),
+                relationship_type: ast_rel.relationship_type.clone(),
                 confidence: ast_rel.confidence,
                 detection_method: "ast_analysis".to_string(),
-                file_path: ast_rel.file_path,
-                project_name: ast_rel.project_name,
-                ast_patterns: Some(ast_rel.ast_patterns_detected),
+                file_path: ast_rel.file_path.clone(),
+                project_name: ast_rel.project_name.clone(),
+                ast_patterns: Some(ast_rel.ast_patterns_detected.clone()),
             });
         }
 
         // Add traditional relationships only if no AST relationships found
-        for trad_rel in traditional_relationships {
+        for trad_rel in &traditional_relationships {
             combined_relationships.push(CrossProjectRelationship {
                 main_symbol_fqn: None, // Traditional matching doesn't provide main symbol context
-                cross_project_symbol_fqn: trad_rel.cross_project_symbol_fqn,
+                cross_project_symbol_fqn: trad_rel.cross_project_symbol_fqn.clone(),
                 relationship_type: "definition".to_string(), // Traditional matching only finds definitions
                 confidence: trad_rel.confidence,
-                detection_method: trad_rel.match_type,
-                file_path: trad_rel.file_path,
-                project_name: trad_rel.project_name,
+                detection_method: trad_rel.match_type.clone(),
+                file_path: trad_rel.file_path.clone(),
+                project_name: trad_rel.project_name.clone(),
                 ast_patterns: None,
             });
         }
@@ -660,7 +660,7 @@ impl SupplementarySymbolRegistry {
                     
                     ast_relationships.push(ASTRelationshipResult {
                         main_symbol_fqn: main_symbol.fqn.clone(),
-                        cross_project_symbol_fqn: cross_fqn.clone(),
+                        cross_project_symbol_fqn: cross_fqn.to_string(),
                         relationship_type: relationship_type.clone(),
                         confidence,
                         ast_patterns_detected: vec!["tree_sitter_analysis".to_string()], // TODO: Add actual patterns
