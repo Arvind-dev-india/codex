@@ -1203,143 +1203,48 @@ pub fn handle_analyze_code(args: Value) -> Option<Result<Value, String>> {
     })
 }
 
-/// Handle the find_symbol_references tool call
+/// Handle the find_symbol_references tool call - PHASE 3: Using unified interface
 pub fn handle_find_symbol_references(args: Value) -> Option<Result<Value, String>> {
     Some(match serde_json::from_value::<FindSymbolReferencesInput>(args) {
         Ok(input) => {
-            tracing::debug!("Finding references for symbol: {}", input.symbol_name);
+            tracing::debug!("PHASE 3: Finding references for symbol: {}", input.symbol_name);
             
-            // Use the pre-initialized global graph (no need to rebuild)
             if super::graph_manager::is_graph_initialized() {
-                // Use the cached global graph to find references
-                let references = super::graph_manager::find_symbol_references(&input.symbol_name);
-                tracing::debug!("Found {} references using graph manager", references.len());
-                
-                let mut reference_infos: Vec<_> = references.iter().map(|r| {
-                    json!({
-                        "file_path": r.reference_file,
-                        "line": r.reference_line,
-                        "column": r.reference_col,
-                        "reference_type": match r.reference_type {
-                            super::context_extractor::ReferenceType::Call => "call",
-                            super::context_extractor::ReferenceType::Declaration => "declaration",
-                            super::context_extractor::ReferenceType::Implementation => "implementation",
-                            super::context_extractor::ReferenceType::Import => "import",
-                            super::context_extractor::ReferenceType::Inheritance => "inheritance",
-                            super::context_extractor::ReferenceType::Usage => "usage",
-                        },
-                        "project_type": "main"
-                    })
-                }).collect();
-                
-                // ENHANCEMENT: Also search supplementary registry for cross-project references
-                // with enhanced same-named symbol resolution
                 let manager = super::graph_manager::get_graph_manager();
                 if let Ok(manager) = manager.read() {
-                    if let Some(registry) = manager.get_supplementary_registry() {
-                        // Get main project symbols with this name for relationship analysis
-                        let main_symbols = manager.get_all_symbols();
-                        let main_symbols_with_name: Vec<_> = main_symbols
-                            .values()
-                            .filter(|s| s.name == input.symbol_name)
-                            .collect();
-                        
-                        // Get cross-project symbols with exact name match
-                        let cross_symbols_with_name: Vec<_> = registry.symbols
-                            .iter()
-                            .filter(|(_, s)| s.name == input.symbol_name)
-                            .collect();
-                        
-                        // Analyze relationships between same-named symbols
-                        for main_symbol in &main_symbols_with_name {
-                            for (cross_fqn, cross_symbol) in &cross_symbols_with_name {
-                                // Detect if main symbol uses/wraps the cross-project symbol
-                                let relationship_type = detect_symbol_relationship(main_symbol, cross_symbol);
-                                
-                                reference_infos.push(json!({
-                                    "file_path": cross_symbol.file_path,
-                                    "line": cross_symbol.start_line,
-                                    "column": 0,
-                                    "reference_type": relationship_type,
-                                    "project_type": "cross-project",
-                                    "project_name": cross_symbol.project_name,
-                                    "main_symbol_fqn": main_symbol.fqn,
-                                    "cross_symbol_fqn": cross_fqn,
-                                    "relationship_detected": true
-                                }));
-                            }
-                        }
-                        
-                        // Also add any other cross-project symbols that contain the name (fallback)
-                        for (fqn, symbol) in &registry.symbols {
-                            if symbol.name.contains(&input.symbol_name) && symbol.name != input.symbol_name {
-                                reference_infos.push(json!({
-                                    "file_path": symbol.file_path,
-                                    "line": symbol.start_line,
-                                    "column": 0,
-                                    "reference_type": "partial_match",
-                                    "project_type": "cross-project",
-                                    "project_name": symbol.project_name,
-                                    "relationship_detected": false
-                                }));
-                            }
-                        }
-                    }
-                }
-                
-                tracing::debug!("Found {} total references (including cross-project)", reference_infos.len());
+                    // Get main symbols, references, and supplementary registry
+                    let main_symbols = manager.get_all_symbols();
+                    let supplementary_registry = manager.get_supplementary_registry();
                     
-                Ok(json!({
-                    "references": reference_infos
-                }))
-            } else {
-                tracing::warn!("Graph not initialized, falling back to text-based search");
-                // Determine the search directory
-                let search_dir = if input.directory.is_empty() {
-                    std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+                    // Get main references from repo mapper
+                    let main_references = if let Some(repo_mapper) = manager.get_repo_mapper() {
+                        repo_mapper.get_all_references()
+                    } else {
+                        &[]
+                    };
+                    
+                    // Create unified query interface
+                    let query_interface = super::unified_relationship_query::UnifiedRelationshipQuery::new(
+                        &main_symbols,
+                        main_references,
+                        supplementary_registry
+                    );
+                    
+                    // Single unified query - no scattered logic!
+                    let unified_result = query_interface.query_symbol_relationships(&input.symbol_name);
+                    
+                    // Convert to tool response format
+                    let response = unified_result.to_references_json();
+                    
+                    tracing::info!("PHASE 3: Unified query found {} references", 
+                                 response.get("references").and_then(|r| r.as_array()).map(|a| a.len()).unwrap_or(0));
+                    
+                    Ok(response)
                 } else {
-                    std::path::PathBuf::from(&input.directory)
-                };
-                
-                // Fall back to regex-based search if Tree-sitter fails
-                let mut references = Vec::new();
-                
-                // Search for files in the directory
-                if let Ok(entries) = std::fs::read_dir(&search_dir) {
-                    for entry in entries.flatten() {
-                        if let Ok(metadata) = entry.metadata() {
-                            if metadata.is_dir() {
-                                // Recursively search subdirectories
-                                search_directory_for_references(&entry.path(), &input.symbol_name, &mut references);
-                            } else if let Some(extension) = entry.path().extension() {
-                                if let Some(ext_str) = extension.to_str() {
-                                    if ["rs", "py", "js", "ts", "java", "cpp", "c", "cs", "go", "h", "hpp", "cc", "cxx"].contains(&ext_str) {
-                                        search_file_for_references(&entry.path(), &input.symbol_name, &mut references);
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    Err("Failed to acquire graph manager lock".to_string())
                 }
-                
-                // Also search the src directory if it exists
-                let src_dir = search_dir.join("src");
-                if src_dir.exists() {
-                    search_directory_for_references(&src_dir, &input.symbol_name, &mut references);
-                }
-                
-                tracing::debug!("Found {} references using text search", references.len());
-                
-                Ok(json!({
-                    "references": references.into_iter().map(|r| {
-                        json!({
-                            "file": r.file_path,
-                            "line": r.line,
-                            "column": r.column,
-                            "reference_type": r.reference_type,
-                        })
-                    }).collect::<Vec<_>>()
-                }))
+            } else {
+                Err("Graph not initialized".to_string())
             }
         },
         Err(e) => Err(format!("Invalid arguments: {}", e)),
@@ -1730,141 +1635,48 @@ fn find_definition_in_line(line: &str, symbol_name: &str, file_extension: &str, 
     None
 }
 
-/// Handle the find_symbol_definitions tool call
+/// Handle the find_symbol_definitions tool call - PHASE 3: Using unified interface
 pub fn handle_find_symbol_definitions(args: Value) -> Option<Result<Value, String>> {
     Some(match serde_json::from_value::<FindSymbolDefinitionsInput>(args) {
         Ok(input) => {
-            // Determine the search directory
-            let search_dir = if input.directory.is_empty() {
-                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
-            } else {
-                std::path::PathBuf::from(&input.directory)
-            };
+            tracing::debug!("PHASE 3: Finding definitions for symbol: {}", input.symbol_name);
             
-            // Use the pre-initialized global graph (no need to rebuild)
             if super::graph_manager::is_graph_initialized() {
-                // Use the cached global graph to find definitions
-                let definitions = super::graph_manager::find_symbol_definitions(&input.symbol_name);
-                
-                let mut definition_infos: Vec<_> = definitions.iter().map(|d| {
-                    json!({
-                        "symbol": &input.symbol_name,
-                        "file_path": d.file_path,
-                        "start_line": d.start_line,
-                        "end_line": d.end_line,
-                        "symbol_type": d.symbol_type.to_string(),
-                        "project_type": "main"
-                    })
-                }).collect();
-                
-                // ENHANCEMENT: Also search supplementary registry for cross-project definitions
-                // with enhanced same-named symbol resolution
                 let manager = super::graph_manager::get_graph_manager();
                 if let Ok(manager) = manager.read() {
-                    if let Some(registry) = manager.get_supplementary_registry() {
-                        // Get main project symbols with this name for relationship analysis
-                        let main_symbols = manager.get_all_symbols();
-                        let main_symbols_with_name: Vec<_> = main_symbols
-                            .values()
-                            .filter(|s| s.name == input.symbol_name)
-                            .collect();
-                        
-                        // Get cross-project symbols with exact name match
-                        let cross_symbols_with_name: Vec<_> = registry.symbols
-                            .iter()
-                            .filter(|(_, s)| s.name == input.symbol_name)
-                            .collect();
-                        
-                        // Analyze relationships between same-named symbols
-                        for (cross_fqn, cross_symbol) in &cross_symbols_with_name {
-                            let mut related_main_symbols = Vec::new();
-                            
-                            for main_symbol in &main_symbols_with_name {
-                                let relationship_type = detect_symbol_relationship(main_symbol, cross_symbol);
-                                if relationship_type != "unrelated" {
-                                    related_main_symbols.push(json!({
-                                        "main_fqn": main_symbol.fqn,
-                                        "relationship": relationship_type
-                                    }));
-                                }
-                            }
-                            
-                            definition_infos.push(json!({
-                                "symbol": &input.symbol_name,
-                                "file_path": cross_symbol.file_path,
-                                "start_line": cross_symbol.start_line,
-                                "end_line": cross_symbol.end_line,
-                                "symbol_type": cross_symbol.symbol_type,
-                                "project_type": "cross-project",
-                                "project_name": cross_symbol.project_name,
-                                "cross_symbol_fqn": cross_fqn,
-                                "related_main_symbols": related_main_symbols,
-                                "relationship_detected": !related_main_symbols.is_empty()
-                            }));
-                        }
-                        
-                        // Also add any other cross-project symbols that contain the name (fallback)
-                        for (fqn, symbol) in &registry.symbols {
-                            if symbol.name.contains(&input.symbol_name) && symbol.name != input.symbol_name {
-                                definition_infos.push(json!({
-                                    "symbol": &input.symbol_name,
-                                    "file_path": symbol.file_path,
-                                    "start_line": symbol.start_line,
-                                    "end_line": symbol.end_line,
-                                    "symbol_type": symbol.symbol_type,
-                                    "project_type": "cross-project",
-                                    "project_name": symbol.project_name,
-                                    "relationship_detected": false
-                                }));
-                            }
-                        }
-                    }
+                    // Get main symbols, references, and supplementary registry
+                    let main_symbols = manager.get_all_symbols();
+                    let supplementary_registry = manager.get_supplementary_registry();
+                    
+                    // Get main references from repo mapper
+                    let main_references = if let Some(repo_mapper) = manager.get_repo_mapper() {
+                        repo_mapper.get_all_references()
+                    } else {
+                        &[]
+                    };
+                    
+                    // Create unified query interface
+                    let query_interface = super::unified_relationship_query::UnifiedRelationshipQuery::new(
+                        &main_symbols,
+                        main_references,
+                        supplementary_registry
+                    );
+                    
+                    // Single unified query - no scattered logic!
+                    let unified_result = query_interface.query_symbol_relationships(&input.symbol_name);
+                    
+                    // Convert to tool response format
+                    let response = unified_result.to_definitions_json();
+                    
+                    tracing::info!("PHASE 3: Unified query found {} definitions", 
+                                 response.get("definitions").and_then(|r| r.as_array()).map(|a| a.len()).unwrap_or(0));
+                    
+                    Ok(response)
+                } else {
+                    Err("Failed to acquire graph manager lock".to_string())
                 }
-                
-                tracing::debug!("Found {} total definitions (including cross-project)", definition_infos.len());
-                    
-                Ok(json!({
-                    "definitions": definition_infos
-                }))
             } else {
-                // Fall back to regex-based search if Tree-sitter fails
-                    let mut definitions = Vec::new();
-                    
-                    // Search for files in the directory
-                    if let Ok(entries) = std::fs::read_dir(&search_dir) {
-                        for entry in entries.flatten() {
-                            if let Ok(metadata) = entry.metadata() {
-                                if metadata.is_dir() {
-                                    // Recursively search subdirectories
-                                    search_directory_for_definitions(&entry.path(), &input.symbol_name, &mut definitions);
-                                } else if let Some(extension) = entry.path().extension() {
-                                    if let Some(ext_str) = extension.to_str() {
-                                        if ["rs", "py", "js", "ts", "java", "cpp", "c", "cs", "go", "h", "hpp", "cc", "cxx"].contains(&ext_str) {
-                                            search_file_for_definitions(&entry.path(), &input.symbol_name, &mut definitions);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    
-                    // Also search the src directory if it exists
-                    let src_dir = search_dir.join("src");
-                    if src_dir.exists() {
-                        search_directory_for_definitions(&src_dir, &input.symbol_name, &mut definitions);
-                    }
-                    
-                    Ok(json!({
-                        "definitions": definitions.into_iter().map(|d| {
-                            json!({
-                                "symbol": &input.symbol_name,
-                                "file": d.file_path,
-                                "start_line": d.start_line,
-                                "end_line": d.end_line,
-                                "symbol_type": d.symbol_type,
-                            })
-                        }).collect::<Vec<_>>()
-                    }))
+                Err("Graph not initialized".to_string())
             }
         },
         Err(e) => Err(format!("Invalid arguments: {}", e)),
